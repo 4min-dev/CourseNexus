@@ -1,0 +1,37 @@
+import { useQuery } from "@tanstack/react-query";
+import type { User } from "@shared/schema";
+
+export function useAuth() {
+  const MODE = import.meta.env.MODE
+
+  if (MODE === 'development') return {
+    user: undefined,
+    isLoading: false,
+    isAuthenticated: true,
+  };
+
+  const { data: user, isLoading, isError } = useQuery<User | null>({
+    queryKey: ["/api/auth/user"],
+    queryFn: async () => {
+      const res = await fetch("/api/auth/user", {
+        credentials: "include",
+      });
+
+      // If 401, return null (not authenticated) instead of throwing
+      if (res.status === 401) {
+        return null;
+      }
+
+      return res.json();
+    },
+    retry: false,
+    staleTime: 60000, // Кэшировать данные пользователя на 1 минуту
+    refetchOnWindowFocus: true, // Обновлять при возврате на вкладку
+  });
+
+  return {
+    user: user || undefined,
+    isLoading,
+    isAuthenticated: !!user && !isError,
+  };
+}

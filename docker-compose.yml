@@ -1,0 +1,37 @@
+services:
+  app:
+    build:
+      context: .
+      target: dev
+    container_name: coursenexus_app_dev
+    ports:
+      - "5002:5002"
+    env_file:
+      - .env
+    environment:
+      - NODE_ENV=development
+      - PORT=5002
+      - DB_DRIVER=pg
+      - DATABASE_URL=postgresql://coursenexus:coursenexus@db:5432/coursenexus
+      - PUBLIC_OBJECT_SEARCH_PATHS=${PUBLIC_OBJECT_SEARCH_PATHS:-/dev-bucket/public}
+      - PRIVATE_OBJECT_DIR=${PRIVATE_OBJECT_DIR:-/dev-bucket/private}
+      - BUNNY_STORAGE_ZONE=${BUNNY_STORAGE_ZONE:-your-zone}
+      - BUNNY_STORAGE_API_KEY=${BUNNY_STORAGE_API_KEY:-dev-key}
+      - BUNNY_STORAGE_HOST=${BUNNY_STORAGE_HOST:-storage.bunnycdn.com}
+    volumes:
+      - .:/app
+      - /app/node_modules
+    depends_on:
+      - db
+
+  db:
+    image: postgres:16-alpine
+    container_name: coursenexus_db
+    environment:
+      - POSTGRES_DB=coursenexus
+      - POSTGRES_USER=coursenexus
+      - POSTGRES_PASSWORD=coursenexus
+    ports:
+      - "55432:5432"
+    volumes:
+      - ./database_data:/var/lib/postgresql/data

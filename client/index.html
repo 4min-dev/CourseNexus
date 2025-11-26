@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="ru" class="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1, viewport-fit=cover" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="format-detection" content="telephone=no" />
+    <title>В Курсе ? - Обучение для продавцов на маркетплейсах</title>
+    <meta name="description" content="Профессиональные курсы по работе с Wildberries, Ozon и другими маркетплейсами. Обучение от экспертов с реальными результатами." />
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Exo+2:wght@600;700;800;900&family=Orbitron:wght@600;700;800;900&family=Russo+One&display=swap" rel="stylesheet">
+    
+    <link rel="modulepreload" href="/src/entry.tsx">
+    <link rel="modulepreload" href="/src/App.tsx">
+    <style>
+      #app-loader {
+        position: fixed;
+        inset: 0;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        background: linear-gradient(135deg, #0a0a0a 0%, #1a1a2e 50%, #16213e 100%);
+        z-index: 9999;
+      }
+      
+      .loader-logo {
+        font-family: 'Russo One', sans-serif;
+        font-size: 3rem;
+        font-weight: 900;
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 50%, #f093fb 100%);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        background-clip: text;
+        margin-bottom: 2rem;
+        animation: pulse 2s ease-in-out infinite;
+        white-space: nowrap;
+      }
+      
+      .loader-spinner {
+        width: 50px;
+        height: 50px;
+        border: 4px solid rgba(102, 126, 234, 0.1);
+        border-top-color: #667eea;
+        border-radius: 50%;
+        animation: spin 1s linear infinite;
+      }
+      
+      .loader-text {
+        margin-top: 1.5rem;
+        color: rgba(255, 255, 255, 0.6);
+        font-family: 'Inter', sans-serif;
+        font-size: 0.875rem;
+        animation: fadeInOut 1.5s ease-in-out infinite;
+      }
+      
+      @keyframes spin {
+        to { transform: rotate(360deg); }
+      }
+      
+      @keyframes pulse {
+        0%, 100% { opacity: 1; transform: scale(1); }
+        50% { opacity: 0.8; transform: scale(1.05); }
+      }
+      
+      @keyframes fadeInOut {
+        0%, 100% { opacity: 0.4; }
+        50% { opacity: 1; }
+      }
+      
+      #root:not(:empty) ~ #app-loader {
+        display: none;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    
+    <div id="app-loader">
+      <div class="loader-logo">В КУРСЕ ?</div>
+      <div class="loader-spinner"></div>
+      <div class="loader-text">Загрузка платформы...</div>
+    </div>
+    <script>
+      (function() {
+        let viteWs = null;
+        const originalWebSocket = window.WebSocket;
+        window.WebSocket = class extends originalWebSocket {
+          constructor(url, protocols) {
+            super(url, protocols);
+            const urlStr = url?.toString() || '';
+            if (urlStr.includes(window.location.host) && urlStr.includes('token=')) {
+              viteWs = this;
+              console.log('[HMR Keepalive] Vite HMR WebSocket intercepted');
+            }
+          }
+        };
+        
+        setInterval(() => {
+          if (viteWs && viteWs.readyState === 1) {
+            try {
+              viteWs.send('{"type":"ping"}');
+            } catch (e) {
+              console.log('[HMR Keepalive] Ping failed:', e.message);
+            }
+          }
+        }, 20000);
+      })();
+    </script>
+    <script type="module" src="/src/entry.tsx"></script>
+  </body>
+</html>
