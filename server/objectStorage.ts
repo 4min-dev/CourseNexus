@@ -25,7 +25,7 @@ interface BunnyObjectMeta {
 }
 
 export class ObjectStorageService {
-  constructor() {}
+  constructor() { }
 
   private getConfig() {
     return getBunnyConfig();

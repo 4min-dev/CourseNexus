@@ -84,54 +84,54 @@ function Router() {
   return (
     <Switch>
       {/* Public routes */}
-      <Route path="/" component={!isAuthenticated ? () => <Redirect to="/shop" /> : Landing} />
-      <Route path="/login" component={!isAuthenticated ? () => <Redirect to="/shop" /> : Login} />
-      <Route path="/register" component={!isAuthenticated ? () => <Redirect to="/shop" /> : Register} />
+      <Route path="/" component={isAuthenticated ? () => <Redirect to="/shop" /> : Landing} />
+      <Route path="/login" component={isAuthenticated ? () => <Redirect to="/shop" /> : Login} />
+      <Route path="/register" component={isAuthenticated ? () => <Redirect to="/shop" /> : Register} />
       <Route path="/reset-password" component={ResetPassword} />
       <Route path="/logo-demo">{() => <Suspense fallback={<PageLoader />}><LogoDemo /></Suspense>}</Route>
 
       {/* Protected routes with AuthGuard */}
       <Route path="/shop">
-        {() => <Shop />}
+        {() => <AuthGuard><Shop /></AuthGuard>}
       </Route>
       <Route path="/course/:id">
-        {() => <Suspense fallback={<PageLoader />}><CourseDetail /></Suspense>}
+        {() => <Suspense fallback={<PageLoader />}><AuthGuard><CourseDetail /></AuthGuard></Suspense>}
       </Route>
       <Route path="/library">
-        {() => <Library />}
+        {() => <AuthGuard><Library /></AuthGuard>}
       </Route>
       <Route path="/library/vip-select/:packageId">
-        {() => <Suspense fallback={<PageLoader />}><VipCourseSelect /></Suspense>}
+        {() => <Suspense fallback={<PageLoader />}><AuthGuard><VipCourseSelect /></AuthGuard></Suspense>}
       </Route>
       <Route path="/library/:id">
-        {() => <Suspense fallback={<PageLoader />}><LibraryCourse /></Suspense>}
+        {() => <Suspense fallback={<PageLoader />}><AuthGuard><LibraryCourse /></AuthGuard></Suspense>}
       </Route>
       <Route path="/favorites">
-        {() => <Suspense fallback={<PageLoader />}><Favorites /></Suspense>}
+        {() => <Suspense fallback={<PageLoader />}><AuthGuard><Favorites /></AuthGuard></Suspense>}
       </Route>
       <Route path="/bonuses">
-        {() => <Suspense fallback={<PageLoader />}><Bonuses /></Suspense>}
+        {() => <Suspense fallback={<PageLoader />}><AuthGuard><Bonuses /></AuthGuard></Suspense>}
       </Route>
       <Route path="/referral-info">
-        {() => <Suspense fallback={<PageLoader />}><ReferralInfo /></Suspense>}
+        {() => <Suspense fallback={<PageLoader />}><AuthGuard><ReferralInfo /></AuthGuard></Suspense>}
       </Route>
       <Route path="/profile">
-        {() => <Suspense fallback={<PageLoader />}><Profile /></Suspense>}
+        {() => <Suspense fallback={<PageLoader />}><AuthGuard><Profile /></AuthGuard></Suspense>}
       </Route>
       <Route path="/vip">
-        {() => <Suspense fallback={<PageLoader />}><Vip /></Suspense>}
+        {() => <Suspense fallback={<PageLoader />}><AuthGuard><Vip /></AuthGuard></Suspense>}
       </Route>
       <Route path="/trade-in">
-        {() => <Suspense fallback={<PageLoader />}><TradeIn /></Suspense>}
+        {() => <Suspense fallback={<PageLoader />}><AuthGuard><TradeIn /></AuthGuard></Suspense>}
       </Route>
       <Route path="/package/:packageId">
-        {() => <Suspense fallback={<PageLoader />}><PackagePurchase /></Suspense>}
+        {() => <Suspense fallback={<PageLoader />}><AuthGuard><PackagePurchase /></AuthGuard></Suspense>}
       </Route>
       <Route path="/sniper">
-        {() => <Suspense fallback={<PageLoader />}><SniperPage /></Suspense>}
+        {() => <Suspense fallback={<PageLoader />}><AuthGuard><SniperPage /></AuthGuard></Suspense>}
       </Route>
       <Route path="/notifications">
-        {() => <Suspense fallback={<PageLoader />}><NotificationsPage /></Suspense>}
+        {() => <Suspense fallback={<PageLoader />}><AuthGuard><NotificationsPage /></AuthGuard></Suspense>}
       </Route>
       <Route path="/partners/:id">
         {() => <Suspense fallback={<PageLoader />}><PartnerDetail /></Suspense>}
@@ -140,72 +140,72 @@ function Router() {
         {() => <Suspense fallback={<PageLoader />}><Partners /></Suspense>}
       </Route>
       <Route path="/programs">
-        {() => <Suspense fallback={<PageLoader />}><Programs /></Suspense>}
+        {() => <Suspense fallback={<PageLoader />}><AuthGuard><Programs /></AuthGuard></Suspense>}
       </Route>
       <Route path="/program/:id">
-        {() => <Suspense fallback={<PageLoader />}><ProgramDetail /></Suspense>}
+        {() => <Suspense fallback={<PageLoader />}><AuthGuard><ProgramDetail /></AuthGuard></Suspense>}
       </Route>
       <Route path="/help">
-        {() => <Suspense fallback={<PageLoader />}><Help /></Suspense>}
+        {() => <Suspense fallback={<PageLoader />}><AuthGuard><Help /></AuthGuard></Suspense>}
       </Route>
 
       {/* Admin routes with AuthGuard and Lazy Loading */}
       <Route path="/admin">
-        {() => <Redirect to="/admin/categories" />}
+        {() => <AuthGuard><Redirect to="/admin/categories" /></AuthGuard>}
       </Route>
       <Route path="/admin/categories">
-        {() => <Suspense fallback={<PageLoader />}><AdminCategories /></Suspense>}
+        {() => <Suspense fallback={<PageLoader />}><AuthGuard><AdminCategories /></AuthGuard></Suspense>}
       </Route>
       <Route path="/admin/categories/:categoryId/subcategories">
-        {() => <Suspense fallback={<PageLoader />}><AdminSubcategories /></Suspense>}
+        {() => <Suspense fallback={<PageLoader />}><AuthGuard><AdminSubcategories /></AuthGuard></Suspense>}
       </Route>
       <Route path="/admin/categories/:categoryId/subcategories/:subcategoryId/courses">
-        {() => <Suspense fallback={<PageLoader />}><AdminCourses /></Suspense>}
+        {() => <Suspense fallback={<PageLoader />}><AuthGuard><AdminCourses /></AuthGuard></Suspense>}
       </Route>
       <Route path="/admin/courses">
-        {() => <Suspense fallback={<PageLoader />}><AdminAllCourses /></Suspense>}
+        {() => <Suspense fallback={<PageLoader />}><AuthGuard><AdminAllCourses /></AuthGuard></Suspense>}
       </Route>
       <Route path="/admin/courses/:courseId/edit">
-        {() => <Suspense fallback={<PageLoader />}><AdminCourseEdit /></Suspense>}
+        {() => <Suspense fallback={<PageLoader />}><AuthGuard><AdminCourseEdit /></AuthGuard></Suspense>}
       </Route>
       <Route path="/admin/users">
-        {() => <Suspense fallback={<PageLoader />}><AdminUsers /></Suspense>}
+        {() => <Suspense fallback={<PageLoader />}><AuthGuard><AdminUsers /></AuthGuard></Suspense>}
       </Route>
       <Route path="/admin/analytics">
-        {() => <Suspense fallback={<PageLoader />}><AdminAnalytics /></Suspense>}
+        {() => <Suspense fallback={<PageLoader />}><AuthGuard><AdminAnalytics /></AuthGuard></Suspense>}
       </Route>
       <Route path="/admin/menu">
-        {() => <Suspense fallback={<PageLoader />}><AdminMenu /></Suspense>}
+        {() => <Suspense fallback={<PageLoader />}><AuthGuard><AdminMenu /></AuthGuard></Suspense>}
       </Route>
       <Route path="/admin/settings">
-        {() => <Suspense fallback={<PageLoader />}><AdminSettings /></Suspense>}
+        {() => <Suspense fallback={<PageLoader />}><AuthGuard><AdminSettings /></AuthGuard></Suspense>}
       </Route>
       <Route path="/admin/vip">
-        {() => <Suspense fallback={<PageLoader />}><AdminVip /></Suspense>}
+        {() => <Suspense fallback={<PageLoader />}><AuthGuard><AdminVip /></AuthGuard></Suspense>}
       </Route>
       <Route path="/admin/info-banners">
-        {() => <Suspense fallback={<PageLoader />}><AdminInfoBanners /></Suspense>}
+        {() => <Suspense fallback={<PageLoader />}><AuthGuard><AdminInfoBanners /></AuthGuard></Suspense>}
       </Route>
       <Route path="/admin/packages">
-        {() => <Suspense fallback={<PageLoader />}><AdminPackages /></Suspense>}
+        {() => <Suspense fallback={<PageLoader />}><AuthGuard><AdminPackages /></AuthGuard></Suspense>}
       </Route>
       <Route path="/admin/landing">
-        {() => <Suspense fallback={<PageLoader />}><AdminLanding /></Suspense>}
+        {() => <Suspense fallback={<PageLoader />}><AuthGuard><AdminLanding /></AuthGuard></Suspense>}
       </Route>
       <Route path="/admin/trade-in">
-        {() => <Suspense fallback={<PageLoader />}><AdminTradeIn /></Suspense>}
+        {() => <Suspense fallback={<PageLoader />}><AuthGuard><AdminTradeIn /></AuthGuard></Suspense>}
       </Route>
       <Route path="/admin/notifications">
-        {() => <Suspense fallback={<PageLoader />}><AdminNotifications /></Suspense>}
+        {() => <Suspense fallback={<PageLoader />}><AuthGuard><AdminNotifications /></AuthGuard></Suspense>}
       </Route>
       <Route path="/admin/moderation">
-        {() => <Suspense fallback={<PageLoader />}><AdminModeration /></Suspense>}
+        {() => <Suspense fallback={<PageLoader />}><AuthGuard><AdminModeration /></AuthGuard></Suspense>}
       </Route>
       <Route path="/admin/partners">
-        {() => <Suspense fallback={<PageLoader />}><AdminPartners /></Suspense>}
+        {() => <Suspense fallback={<PageLoader />}><AuthGuard><AdminPartners /></AuthGuard></Suspense>}
       </Route>
       <Route path="/admin/programs">
-        {() => <Suspense fallback={<PageLoader />}><AdminPrograms /></Suspense>}
+        {() => <Suspense fallback={<PageLoader />}><AuthGuard><AdminPrograms /></AuthGuard></Suspense>}
       </Route>
 
       <Route component={NotFound} />

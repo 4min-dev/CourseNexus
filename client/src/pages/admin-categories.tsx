@@ -134,6 +134,7 @@ export default function AdminCategories() {
       toast({ title: "Ошибка", description: "Заполните название категории", variant: "destructive" });
       return;
     }
+
     const dataToSend = {
       name: formData.name,
       ...(formData.nameEn && { nameEn: formData.nameEn }),

@@ -19,6 +19,7 @@ import { ObjectUploader } from "@/components/ObjectUploader";
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
+import { NowCdnUploader } from "@/components/ui/NowCdnS3Uploader";
 
 interface Course {
   id: string;
@@ -1223,15 +1224,14 @@ export default function AdminCourseEdit() {
                           Рекомендуемое разрешение: 1280×720 (16:9)
                         </p>
                       </div>
-                      <ObjectUploader
-                        onGetUploadParameters={handleThumbnailUpload}
-                        onComplete={handleThumbnailUploadComplete}
-                        buttonVariant="outline"
-                        buttonClassName="h-9"
-                      >
-                        <Upload className="mr-2 h-4 w-4" />
-                        Загрузить
-                      </ObjectUploader>
+                      <NowCdnUploader
+                        inputId="thumbnailUploader"
+                        acceptedTypes="image/*"
+                        onUploadSuccess={({ fileUrl, fileName }) => {
+                          setUploadedThumbnail({ fileName, fileUrl });
+                          setCourseFormData(prev => ({ ...prev, thumbnailImage: fileUrl }));
+                        }}
+                      />
                     </div>
 
                     {(uploadedThumbnail || courseFormData.thumbnailImage) && (
@@ -1737,17 +1737,20 @@ export default function AdminCourseEdit() {
             <div className="border rounded-md p-4 space-y-3">
               <div className="flex items-center justify-between">
                 <Label>Видео урока (необязательно)</Label>
-                <ObjectUploader
-                  onGetUploadParameters={handleFileUpload}
-                  onUploadStart={handleVideoUploadStart}
-                  onComplete={handleVideoUploadComplete}
-                  onProgress={(progress) => setUploadProgress(progress)}
-                  buttonVariant="outline"
-                  buttonClassName="h-9"
-                >
-                  <Upload className="mr-2 h-4 w-4" />
-                  Загрузить видео
-                </ObjectUploader>
+                <NowCdnUploader
+                  acceptedTypes="video/*"
+                  buttonText="Загрузить видео"
+                  inputId="videos-upload-input"
+                  onUploadSuccess={({ fileUrl, fileName }) => {
+                    const video = document.createElement("video");
+                    video.src = fileUrl;
+                    video.onloadedmetadata = () => {
+                      const duration = Math.ceil(video.duration / 60);
+                      setUploadedVideo({ fileName, fileUrl, duration });
+                      setLessonFormData(prev => ({ ...prev, videoUrl: fileUrl, duration }));
+                    };
+                  }}
+                />
               </div>
 
               {uploadedVideo && (
@@ -1795,16 +1798,15 @@ export default function AdminCourseEdit() {
             <div className="border-t pt-4">
               <div className="flex items-center justify-between mb-3">
                 <Label>Файлы урока</Label>
-                <ObjectUploader
-                  maxNumberOfFiles={10}
-                  onGetUploadParameters={handleFileUpload}
-                  onComplete={handleFileUploadComplete}
-                  buttonVariant="outline"
-                  buttonClassName="h-9"
-                >
-                  <Upload className="mr-2 h-4 w-4" />
-                  Загрузить файл
-                </ObjectUploader>
+                <NowCdnUploader
+                  acceptedTypes=".pdf,.doc,.docx,.zip,.rar,.txt"
+                  buttonText="Загрузить файлы"
+                  inputId="files-upload-input"
+                  onUploadSuccess={({ fileName, fileUrl }) => {
+                    const fileType = getFileType("", fileName);
+                    setUploadedFiles(prev => [...prev, { fileName, fileUrl, fileType }]);
+                  }}
+                />
               </div>
 
               {uploadedFiles.length > 0 && (
@@ -1890,17 +1892,20 @@ export default function AdminCourseEdit() {
             <div className="border rounded-md p-4 space-y-3">
               <div className="flex items-center justify-between">
                 <Label>Видео урока (необязательно)</Label>
-                <ObjectUploader
-                  onGetUploadParameters={handleFileUpload}
-                  onUploadStart={handleVideoUploadStart}
-                  onComplete={handleVideoUploadComplete}
-                  onProgress={(progress) => setUploadProgress(progress)}
-                  buttonVariant="outline"
-                  buttonClassName="h-9"
-                >
-                  <Upload className="mr-2 h-4 w-4" />
-                  Загрузить видео
-                </ObjectUploader>
+                <NowCdnUploader
+                  acceptedTypes="video/*"
+                  buttonText="Загрузить видео"
+                  inputId="videos-upload-input"
+                  onUploadSuccess={({ fileUrl, fileName }) => {
+                    const video = document.createElement("video");
+                    video.src = fileUrl;
+                    video.onloadedmetadata = () => {
+                      const duration = Math.ceil(video.duration / 60);
+                      setUploadedVideo({ fileName, fileUrl, duration });
+                      setLessonFormData(prev => ({ ...prev, videoUrl: fileUrl, duration }));
+                    };
+                  }}
+                />
               </div>
 
               {/* Show processing status for video */}
@@ -1997,21 +2002,15 @@ export default function AdminCourseEdit() {
             <div className="border-t pt-4">
               <div className="flex items-center justify-between mb-3">
                 <Label>Файлы урока</Label>
-                <ObjectUploader
-                  maxNumberOfFiles={10}
-                  onGetUploadParameters={handleFileUpload}
-                  onComplete={(file) => {
-                    handleFileUploadComplete(file);
-                    if (editingLesson) {
-                      setTimeout(() => refetchLessonFiles(), 500);
-                    }
+                <NowCdnUploader
+                  acceptedTypes=".pdf,.doc,.docx,.zip,.rar,.txt"
+                  buttonText="Загрузить файлы"
+                  inputId="files-upload-input"
+                  onUploadSuccess={({ fileName, fileUrl }) => {
+                    const fileType = getFileType("", fileName);
+                    setUploadedFiles(prev => [...prev, { fileName, fileUrl, fileType }]);
                   }}
-                  buttonVariant="outline"
-                  buttonClassName="h-9"
-                >
-                  <Upload className="mr-2 h-4 w-4" />
-                  Загрузить файл
-                </ObjectUploader>
+                />
               </div>
 
               {lessonFiles && lessonFiles.length > 0 && (

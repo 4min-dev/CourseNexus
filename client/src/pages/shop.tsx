@@ -451,7 +451,7 @@ function PackageCard({ pkg, idx }: { pkg: CoursePackage; idx: number }) {
                     rating={Number(previewCourse.rating || 0)}
                     reviewsCount={Number(previewCourse.reviewsCount || 0)}
                   />
-                  <ViewingCounter courseId={previewCourse.id} />
+                  <ViewingCounter value={course.reviewsCount} courseId={previewCourse.id} />
                 </div>
 
                 {/* Badges */}
@@ -1869,7 +1869,7 @@ export default function Shop() {
                                     reviewsCount={Number(course.reviewsCount || 0)}
                                     size="sm"
                                   />
-                                  <ViewingCounter courseId={course.id} />
+                                  <ViewingCounter value={course.reviewsCount} courseId={course.id} />
                                 </div>
 
                                 <div className="flex flex-wrap gap-2">
@@ -2134,7 +2134,7 @@ export default function Shop() {
                                   reviewsCount={Number(course.reviewsCount || 0)}
                                   size="sm"
                                 />
-                                <ViewingCounter courseId={course.id} />
+                                <ViewingCounter value={course.reviewsCount} courseId={course.id} />
                               </div>
 
                               <div className="flex flex-wrap gap-2">
@@ -2161,7 +2161,11 @@ export default function Shop() {
 
                               {course.description && (
                                 <p className="text-base text-muted-foreground line-clamp-2 leading-relaxed">
-                                  {htmlToText(course.description)}
+                                  <div
+                                    className="prose prose-sm dark:prose-invert max-w-none text-muted-foreground"
+                                    data-testid="text-course-description"
+                                    dangerouslySetInnerHTML={{ __html: course.description || '' }}
+                                  />
                                 </p>
                               )}
 

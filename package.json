@@ -11,6 +11,7 @@
     "db:push": "drizzle-kit push"
   },
   "dependencies": {
+    "@aws-sdk/s3-request-presigner": "^3.940.0",
     "@google-cloud/storage": "^7.17.1",
     "@hookform/resolvers": "^3.10.0",
     "@jridgewell/trace-mapping": "^0.3.25",
@@ -60,6 +61,7 @@
     "@uppy/react": "^5.1.0",
     "@uppy/xhr-upload": "^5.0.2",
     "artillery": "^2.0.21",
+    "aws-sdk": "^2.1692.0",
     "axios": "^1.13.2",
     "bcrypt": "^6.0.0",
     "busboy": "^1.6.0",

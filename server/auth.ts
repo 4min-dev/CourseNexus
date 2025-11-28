@@ -48,11 +48,11 @@ export async function autoCompleteWelcomeTask(userId: string): Promise<void> {
           eq(userTasks.taskId, welcomeTask[0].id)
         ))
         .limit(1);
-      
+
       if (existing.length === 0) {
         const task = welcomeTask[0];
         const fantiksReward = task.reward;
-        
+
         // Выполнить все операции атомарно в транзакции
         await db.transaction(async (tx) => {
           // Создать запись о выполнении задания с начисленной наградой
@@ -65,7 +65,7 @@ export async function autoCompleteWelcomeTask(userId: string): Promise<void> {
             rewardClaimed: true,
             fantiksEarned: fantiksReward,
           });
-          
+
           // Начислить фантики пользователю
           await tx
             .update(users)
@@ -73,7 +73,7 @@ export async function autoCompleteWelcomeTask(userId: string): Promise<void> {
               fantiks: sql`${users.fantiks} + ${fantiksReward}`,
             })
             .where(eq(users.id, userId));
-          
+
           // Залогировать начисление фантиков
           await tx.insert(balanceTransactions).values({
             userId,
@@ -105,7 +105,7 @@ export async function registerUser(data: {
   registrationUserAgent?: string;
 }) {
   const normalizedEmail = data.email.toLowerCase().trim();
-  
+
   const existingUser = await storage.getUserByEmail(normalizedEmail);
   if (existingUser) {
     throw new Error('User with this email already exists');
@@ -114,7 +114,7 @@ export async function registerUser(data: {
   const passwordHash = await hashPassword(data.password);
   const referralCode = generateReferralCode();
   const promoCode = generatePromoCode();
-  
+
   // Проверяем, приглашен ли пользователь рефералом
   let referrer = null;
   if (data.referralCodeUsed) {
@@ -144,7 +144,7 @@ export async function registerUser(data: {
       referrerId: referrer.id,
       referredUserId: user.id,
     });
-    
+
     // Начислить 300 фантиков рефереру за регистрацию (атомарно)
     await db.transaction(async (tx) => {
       await tx
@@ -154,7 +154,7 @@ export async function registerUser(data: {
           updatedAt: new Date(),
         })
         .where(sql`${users.id} = ${referrer.id}`);
-      
+
       await tx.insert(balanceTransactions).values({
         userId: referrer.id,
         amount: '300',
@@ -177,7 +177,7 @@ export async function registerUser(data: {
 
 export async function loginUser(email: string, password: string) {
   const normalizedEmail = email.toLowerCase().trim();
-  
+
   const user = await storage.getUserByEmail(normalizedEmail);
   if (!user || !user.passwordHash) {
     throw new Error('Invalid email or password');
@@ -228,13 +228,13 @@ export async function loginOrRegisterWithTelegram(telegramData: {
   if (!user) {
     const referralCode = generateReferralCode();
     const promoCode = generatePromoCode();
-    
+
     // Проверяем, приглашен ли пользователь рефералом
     let referrer = null;
     if (referralCodeUsed) {
       referrer = await storage.getUserByReferralCode(referralCodeUsed);
     }
-    
+
     user = await storage.createUserWithTelegram({
       telegramId: telegramData.id,
       firstName: telegramData.first_name,
@@ -259,7 +259,7 @@ export async function loginOrRegisterWithTelegram(telegramData: {
         referrerId: referrer.id,
         referredUserId: user.id,
       });
-      
+
       // Начислить 300 фантиков рефереру за регистрацию (атомарно)
       const newUserFullName = `${user.firstName} ${user.lastName || ''}`;
       await db.transaction(async (tx) => {
@@ -270,7 +270,7 @@ export async function loginOrRegisterWithTelegram(telegramData: {
             updatedAt: new Date(),
           })
           .where(sql`${users.id} = ${referrer.id}`);
-        
+
         await tx.insert(balanceTransactions).values({
           userId: referrer.id,
           amount: '300',

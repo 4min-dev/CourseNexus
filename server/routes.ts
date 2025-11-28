@@ -19,7 +19,20 @@ import {
 } from "./telegram-bot";
 import { devAuthBypass } from "./middlewares/devAuthBypass";
 import { buildStorageUrl } from "./bunnyStorage";
+import { S3Client } from "@aws-sdk/client-s3";
+import { PutObjectCommand } from "@aws-sdk/client-s3";
+import multer from "multer";
+const upload = multer({ storage: multer.memoryStorage() });
 
+const s3Client = new S3Client({
+  region: "ru-central-1",
+  endpoint: "https://storage.yandexcloud.net",
+  credentials: {
+    accessKeyId: process.env.NOWCDN_KEY!,
+    secretAccessKey: process.env.NOWCDN_SECRET!,
+  },
+  forcePathStyle: false,
+});
 
 const metadataCache = new Map<string, { data: any; timestamp: number }>();
 const CACHE_TTL = 60000;
@@ -7019,6 +7032,46 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.status(500).json({ message: "Failed to get filter popularity" });
     }
   });
+
+  app.get("/api/debug-buckets", async (req, res) => {
+    try {
+      const { ListBucketsCommand } = await import("@aws-sdk/client-s3");
+      const command = new ListBucketsCommand({});
+      const response = await s3Client.send(command);
+      res.json({ buckets: response.Buckets });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message, code: err.Code });
+    }
+  });
+
+  app.post(
+    "/api/upload",
+    upload.single("file"),
+    async (req, res) => {
+      try {
+        if (!req.file) return res.status(400).json({ error: "No file" });
+
+        const key = `${Date.now()}_${req.file.originalname.replace(/[^a-zA-Z0-9._-]/g, "_")}`;
+
+        await s3Client.send(
+          new PutObjectCommand({
+            Bucket: process.env.NOWCDN_BUCKET!,
+            Key: key,
+            Body: req.file.buffer,
+            ContentType: req.file.mimetype,
+            ACL: "public-read",
+          })
+        );
+
+        const url = `https://storage.yandexcloud.net/${process.env.NOWCDN_BUCKET}/${key}`;
+
+        res.json({ url, fileName: req.file.originalname });
+      } catch (err: any) {
+        console.error(err);
+        res.status(500).json({ error: err.message });
+      }
+    }
+  );
 
   const httpServer = createServer(app);
   return httpServer;
