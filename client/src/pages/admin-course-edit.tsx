@@ -96,6 +96,7 @@ export default function AdminCourseEdit() {
   const [, setLocation] = useLocation();
   const { toast } = useToast();
 
+  const [videoFile, setVideoFile] = useState<File | null>(null);
   const [isAddSectionDialogOpen, setIsAddSectionDialogOpen] = useState(false);
   const [isAddLessonDialogOpen, setIsAddLessonDialogOpen] = useState(false);
   const [isEditLessonDialogOpen, setIsEditLessonDialogOpen] = useState(false);
@@ -343,6 +344,61 @@ export default function AdminCourseEdit() {
     }
   }, [sections, editingLesson]);
 
+  const startBackgroundVideoUpload = async (lessonId: string, file: File) => {
+    const formData = new FormData();
+    formData.append("file", file);
+    formData.append("type", "video");
+
+    const xhr = new XMLHttpRequest();
+
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable) {
+        const percent = Math.round((e.loaded / e.total) * 100);
+        setUploadProgress(percent);
+
+        // Обновляем прогресс в базе (опционально, каждые 5%)
+        if (percent % 5 === 0 || percent === 100) {
+          apiRequest("PUT", `/api/admin/lessons/${lessonId}`, {
+            uploadProgress: percent,
+          }).catch(() => { });
+        }
+      }
+    };
+
+    xhr.onload = async () => {
+      if (xhr.status === 200) {
+        const { url } = JSON.parse(xhr.responseText);
+
+        // Видео загружено → запускаем конвертацию
+        await apiRequest("POST", `/api/admin/lessons/${lessonId}/video`, {
+          videoUrl: url,
+          originalFileName: file.name,
+        });
+
+        queryClient.invalidateQueries({ queryKey: ["/api/admin/courses", courseId, "sections"] });
+        toast({ title: "Видео загружено и поставлено на обработку" });
+      } else {
+        await apiRequest("PUT", `/api/admin/lessons/${lessonId}`, {
+          processingStatus: 'failed',
+          errorMessage: 'Ошибка загрузки видео',
+        });
+        toast({ title: "Ошибка загрузки видео", variant: "destructive" });
+      }
+      setUploadProgress(0);
+    };
+
+    xhr.onerror = () => {
+      apiRequest("PUT", `/api/admin/lessons/${lessonId}`, {
+        processingStatus: 'failed',
+        errorMessage: 'Сеть недоступна',
+      });
+      toast({ title: "Ошибка сети", variant: "destructive" });
+    };
+
+    xhr.open("POST", "/api/upload");
+    xhr.send(formData);
+  };
+
   // Update course mutation
   const updateCourseMutation = useMutation({
     mutationFn: async (data: any) => {
@@ -413,34 +469,29 @@ export default function AdminCourseEdit() {
       const response = await apiRequest("POST", `/api/admin/sections/${sectionId}/lessons`, lessonData);
       return await response.json();
     },
+
     onSuccess: async (newLesson: any) => {
-      const videoPromise = videoUploadPromise;
-      const filesToUpload = [...uploadedFiles];
       const lessonId = newLesson?.id;
 
       toast({ title: "Урок создан" });
       setIsAddLessonDialogOpen(false);
-      // ... остальное как есть ...
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/courses", courseId, "sections"] });
 
-      // ← ← ← ← ← ← ← ← ← ← ← ← ← ← ← ← ← ← ←
-      // ВОТ ЭТОТ БЛОК У ТЕБЯ ПОЧТИ ЕСТЬ, НО ОН НЕ РАБОТАЕТ!
-      if (uploadedVideo && lessonId) {
+      // ←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←
+      // ГЛАВНОЕ ИЗМЕНЕНИЕ: сразу создаём урок + запускаем загрузку в фоне
+      if (videoFile && lessonId) {
         // Сразу ставим статус uploading
         await apiRequest("PUT", `/api/admin/lessons/${lessonId}`, {
-          processingStatus: 'uploading'
+          processingStatus: 'uploading',
+          uploadProgress: 0,
         });
 
-        // Отправляем в очередь
-        await apiRequest("POST", `/api/admin/lessons/${lessonId}/video`, {
-          videoUrl: uploadedVideo.fileUrl,
-          originalFileName: uploadedVideo.fileName,
-        });
-
-        queryClient.invalidateQueries({ queryKey: ["/api/admin/courses", courseId, "sections"] });
-        toast({ title: "Видео поставлено в очередь на обработку" });
+        // Запускаем загрузку в фоне
+        startBackgroundVideoUpload(lessonId, videoFile);
       }
-      // ← ← ← ← ← ← ← ← ← ← ← ← ← ← ← ← ← ← ←
+      // ←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←
     },
+
     onError: () => {
       toast({ title: "Ошибка при создании урока", variant: "destructive" });
     },
@@ -1676,23 +1727,33 @@ export default function AdminCourseEdit() {
                 <NowCdnUploader
                   acceptedTypes="video/*"
                   buttonText="Загрузить видео"
-                  inputId="videos-upload-input"
-                  onUploadSuccess={async ({ fileUrl, fileName }) => {
-                    // 1. Сохраняем локально (как было)
-                    const video = document.createElement("video");
-                    video.src = fileUrl;
-                    video.onloadedmetadata = () => {
-                      const duration = Math.ceil(video.duration / 60);
-                      setUploadedVideo({ fileName, fileUrl, duration });
-                      setLessonFormData(prev => ({ ...prev, videoUrl: fileUrl, duration }));
-                    };
-
-                    // 2. НОВОЕ: сразу ставим в очередь после успешной загрузки!
-                    // Но только после создания урока (см. шаг 2)
-                    // Поэтому просто сохраняем в состояние — дальше используем в handleAddLesson
+                  inputId="video-upload"
+                  onFileSelect={(file) => {
+                    setVideoFile(file);
+                    setUploadProgress(0);
+                  }}
+                  onProgress={setUploadProgress}
+                  onUploadSuccess={({ fileUrl, fileName }) => {
+                    // Опционально: можно что-то делать после загрузки
+                    toast({ title: "Видео загружено" });
                   }}
                 />
               </div>
+
+              {uploadProgress > 0 && uploadProgress < 100 && (
+                <div className="mt-2">
+                  <div className="flex justify-between text-sm mb-1">
+                    <span>Загрузка видео...</span>
+                    <span>{uploadProgress}%</span>
+                  </div>
+                  <div className="w-full bg-gray-200 rounded-full h-2">
+                    <div
+                      className="bg-blue-600 h-2 rounded-full transition-all duration-300"
+                      style={{ width: `${uploadProgress}%` }}
+                    />
+                  </div>
+                </div>
+              )}
 
               {uploadedVideo && (
                 <div className="p-3 bg-muted rounded-md space-y-2">
@@ -1786,11 +1847,26 @@ export default function AdminCourseEdit() {
             </div>
 
             <Button
-              onClick={handleAddLesson}
-              disabled={!lessonFormData.title || createLessonMutation.isPending}
-              data-testid="button-submit-lesson"
+              onClick={() => {
+                if (!lessonFormData.title) return;
+                if (!videoFile) {
+                  toast({ title: "Выберите видео", variant: "destructive" });
+                  return;
+                }
+
+                const section = sections?.find(s => s.id === selectedSectionId);
+                const nextOrder = (section?.lessons?.length || 0) + 1;
+
+                createLessonMutation.mutate({
+                  sectionId: selectedSectionId!,
+                  title: lessonFormData.title,
+                  description: lessonFormData.description || undefined,
+                  order: nextOrder,
+                });
+              }}
+              disabled={createLessonMutation.isPending || !videoFile}
             >
-              Создать
+              {createLessonMutation.isPending ? "Создаём урок..." : "Создать урок"}
             </Button>
           </div>
         </DialogContent>

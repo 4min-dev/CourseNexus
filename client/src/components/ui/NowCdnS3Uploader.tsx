@@ -1,3 +1,4 @@
+// components/ui/NowCdnS3Uploader.tsx (или где он у тебя лежит)
 import { Upload } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
@@ -5,8 +6,10 @@ import { useState } from "react";
 
 interface NowCdnUploaderProps {
     onUploadSuccess: (data: { fileName: string; fileUrl: string }) => void;
+    onFileSelect?: (file: File) => void;        // НОВОЕ
+    onProgress?: (percent: number) => void;     // НОВОЕ
     buttonText?: string;
-    inputId: string,
+    inputId: string;
     acceptedTypes?: string;
     className?: string;
     multiple?: boolean;
@@ -14,8 +17,9 @@ interface NowCdnUploaderProps {
 
 export function NowCdnUploader({
     onUploadSuccess,
+    onFileSelect,
+    onProgress,
     buttonText = "Загрузить файл",
-
     inputId,
     acceptedTypes,
     className,
@@ -24,49 +28,55 @@ export function NowCdnUploader({
     const [uploading, setUploading] = useState(false);
     const [progress, setProgress] = useState(0);
 
-    const handleUpload = async (files: FileList | null) => {
+    const handleFileChange = (files: FileList | null) => {
         if (!files?.length) return;
+
+        // Вызываем сразу при выборе файла
+        if (onFileSelect && files[0]) {
+            onFileSelect(files[0]);
+        }
+
+        // Если multiple — можно обработать несколько, но пока берём первый
+        const file = files[0];
+        if (!file) return;
+
         setUploading(true);
         setProgress(0);
 
-        for (const file of multiple ? files : [files[0]]) {
-            const formData = new FormData();
-            formData.append("file", file);
+        const formData = new FormData();
+        formData.append("file", file);
 
-            try {
-                const xhr = new XMLHttpRequest();
+        const xhr = new XMLHttpRequest();
 
-                xhr.upload.onprogress = (e) => {
-                    if (e.lengthComputable) {
-                        const percent = Math.round((e.loaded / e.total) * 100);
-                        setProgress(percent);
-                    }
-                };
-
-                await new Promise((resolve, reject) => {
-                    xhr.onload = () => {
-                        if (xhr.status === 200) {
-                            const data = JSON.parse(xhr.responseText);
-                            onUploadSuccess({ fileName: data.fileName, fileUrl: data.url });
-                            resolve(null);
-                        } else {
-                            reject(new Error("Upload failed"));
-                        }
-                    };
-                    xhr.onerror = reject;
-                    xhr.open("POST", "/api/upload");
-                    xhr.send(formData);
-                });
-            } catch (err) {
-                alert("Ошибка загрузки файла: " + file.name);
+        xhr.upload.onprogress = (e) => {
+            if (e.lengthComputable) {
+                const percent = Math.round((e.loaded / e.total) * 100);
+                setProgress(percent);
+                onProgress?.(percent);
             }
-        }
+        };
 
-        setProgress(100);
-        setTimeout(() => {
-            setProgress(0);
+        xhr.onload = () => {
+            if (xhr.status === 200) {
+                const data = JSON.parse(xhr.responseText);
+                onUploadSuccess({ fileName: data.fileName, fileUrl: data.url });
+            } else {
+                alert("Ошибка загрузки");
+            }
+            setProgress(100);
+            setTimeout(() => {
+                setProgress(0);
+                setUploading(false);
+            }, 800);
+        };
+
+        xhr.onerror = () => {
+            alert("Ошибка сети");
             setUploading(false);
-        }, 800);
+        };
+
+        xhr.open("POST", "/api/upload");
+        xhr.send(formData);
     };
 
     return (
@@ -77,7 +87,7 @@ export function NowCdnUploader({
                 className="hidden"
                 accept={acceptedTypes}
                 multiple={multiple}
-                onChange={(e) => handleUpload(e.target.files)}
+                onChange={(e) => handleFileChange(e.target.files)}
                 disabled={uploading}
             />
             <label htmlFor={inputId}>
