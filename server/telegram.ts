@@ -2,7 +2,7 @@ import axios from 'axios';
 import FormData from 'form-data';
 import { createReadStream } from 'fs';
 import { resolve } from 'path';
-import { ObjectStorageService } from './objectStorage';
+import { objectStorage } from './objectStorage';
 import { fetchObject } from './bunnyStorage';
 
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;

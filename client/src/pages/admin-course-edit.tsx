@@ -416,94 +416,30 @@ export default function AdminCourseEdit() {
     onSuccess: async (newLesson: any) => {
       const videoPromise = videoUploadPromise;
       const filesToUpload = [...uploadedFiles];
-      const lessonId = newLesson?.id; // Save lesson ID immediately
+      const lessonId = newLesson?.id;
 
-      // Set uploading lesson ID to show progress
-      if (videoPromise) {
-        setUploadingLessonId(lessonId);
-      }
-
-      // Close dialog and reset form immediately
       toast({ title: "Урок создан" });
       setIsAddLessonDialogOpen(false);
-      setLessonFormData({ title: "", description: "", videoUrl: "", duration: 0 });
-      setUploadedVideo(null);
-      setUploadedFiles([]);
-      setVideoUploadPromise(null);
-      // Clear session ID to prevent stale uploads from updating UI
-      setCurrentLessonSessionId(null);
+      // ... остальное как есть ...
 
-      // Invalidate to show the new lesson in the list
-      queryClient.invalidateQueries({ queryKey: ["/api/admin/courses", courseId, "sections"] });
-
-      // Handle video upload in background
-      if (videoPromise && lessonId) {
-        // First update lesson status to uploading
-        apiRequest("PUT", `/api/admin/lessons/${lessonId}`, {
+      // ← ← ← ← ← ← ← ← ← ← ← ← ← ← ← ← ← ← ←
+      // ВОТ ЭТОТ БЛОК У ТЕБЯ ПОЧТИ ЕСТЬ, НО ОН НЕ РАБОТАЕТ!
+      if (uploadedVideo && lessonId) {
+        // Сразу ставим статус uploading
+        await apiRequest("PUT", `/api/admin/lessons/${lessonId}`, {
           processingStatus: 'uploading'
-        })
-          .then(() => {
-            // Refresh UI to show uploading status
-            queryClient.invalidateQueries({ queryKey: ["/api/admin/courses", courseId, "sections"] });
-          })
-          .catch(error => {
-            console.error("Error updating lesson status to uploading:", error?.message || error);
-            toast({ title: "Не удалось обновить статус урока", variant: "destructive" });
-          });
+        });
 
-        // Wait for video upload to complete
-        videoPromise
-          .then(async (videoInfo) => {
-            // Clear uploading lesson ID and progress
-            setUploadingLessonId(null);
-            setUploadProgress(0);
+        // Отправляем в очередь
+        await apiRequest("POST", `/api/admin/lessons/${lessonId}/video`, {
+          videoUrl: uploadedVideo.fileUrl,
+          originalFileName: uploadedVideo.fileName,
+        });
 
-            // Queue video for processing
-            return apiRequest("POST", `/api/admin/lessons/${lessonId}/video`, {
-              videoUrl: videoInfo.fileUrl,
-              originalFileName: videoInfo.fileName,
-            }).then(() => {
-              // Refresh UI to show queued/processing status
-              queryClient.invalidateQueries({ queryKey: ["/api/admin/courses", courseId, "sections"] });
-            });
-          })
-          .catch(error => {
-            console.error("Error processing video:", error);
-            toast({ title: "Ошибка обработки видео", variant: "destructive" });
-
-            // Clear uploading lesson ID and progress
-            setUploadingLessonId(null);
-            setUploadProgress(0);
-
-            // Update lesson status to failed
-            apiRequest("PUT", `/api/admin/lessons/${lessonId}`, {
-              processingStatus: 'failed',
-              errorMessage: 'Не удалось загрузить видео'
-            })
-              .then(() => {
-                // Refresh UI to show failed status
-                queryClient.invalidateQueries({ queryKey: ["/api/admin/courses", courseId, "sections"] });
-              })
-              .catch(err => console.error("Error updating lesson status to failed:", err?.message || err));
-          });
+        queryClient.invalidateQueries({ queryKey: ["/api/admin/courses", courseId, "sections"] });
+        toast({ title: "Видео поставлено в очередь на обработку" });
       }
-
-      // Create files in background (non-blocking)
-      if (filesToUpload.length > 0 && lessonId) {
-        for (const file of filesToUpload) {
-          apiRequest("POST", "/api/admin/course-files", {
-            courseId: courseId!,
-            lessonId: lessonId,
-            fileName: file.fileName,
-            fileUrl: file.fileUrl,
-            fileType: file.fileType,
-            displayOrder: 0,
-          }).catch(error => {
-            console.error("Error uploading file:", error);
-          });
-        }
-        queryClient.invalidateQueries({ queryKey: ["/api/admin/courses", courseId, "files"] });
-      }
+      // ← ← ← ← ← ← ← ← ← ← ← ← ← ← ← ← ← ← ←
     },
     onError: () => {
       toast({ title: "Ошибка при создании урока", variant: "destructive" });
@@ -1741,7 +1677,8 @@ export default function AdminCourseEdit() {
                   acceptedTypes="video/*"
                   buttonText="Загрузить видео"
                   inputId="videos-upload-input"
-                  onUploadSuccess={({ fileUrl, fileName }) => {
+                  onUploadSuccess={async ({ fileUrl, fileName }) => {
+                    // 1. Сохраняем локально (как было)
                     const video = document.createElement("video");
                     video.src = fileUrl;
                     video.onloadedmetadata = () => {
@@ -1749,6 +1686,10 @@ export default function AdminCourseEdit() {
                       setUploadedVideo({ fileName, fileUrl, duration });
                       setLessonFormData(prev => ({ ...prev, videoUrl: fileUrl, duration }));
                     };
+
+                    // 2. НОВОЕ: сразу ставим в очередь после успешной загрузки!
+                    // Но только после создания урока (см. шаг 2)
+                    // Поэтому просто сохраняем в состояние — дальше используем в handleAddLesson
                   }}
                 />
               </div>

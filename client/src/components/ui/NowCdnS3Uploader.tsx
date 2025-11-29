@@ -15,6 +15,7 @@ interface NowCdnUploaderProps {
 export function NowCdnUploader({
     onUploadSuccess,
     buttonText = "Загрузить файл",
+
     inputId,
     acceptedTypes,
     className,

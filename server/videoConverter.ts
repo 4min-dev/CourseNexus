@@ -1,87 +1,93 @@
+// server/videoConverter.ts
 import { spawn } from 'child_process';
-import { createWriteStream, createReadStream, unlinkSync, existsSync } from 'fs';
-import { tmpdir } from 'os';
+import { createWriteStream, unlinkSync, existsSync, createReadStream } from 'fs';
 import { join } from 'path';
+import { tmpdir } from 'os';
 import { randomUUID } from 'crypto';
-import { ObjectStorageService } from './objectStorage';
-import { fetchObject } from './bunnyStorage';
-
-export interface VideoConversionResult {
-  success: boolean;
-  convertedUrl?: string;
-  error?: string;
-  duration?: number;
-}
+import fetch from 'node-fetch';
+import { db } from './db';
+import { lessons } from '@shared/schema';
+import { eq } from 'drizzle-orm';
+import { s3Client } from './s3Client';
 
 export class VideoConverter {
-  private objectStorage: ObjectStorageService;
-
-  constructor() {
-    this.objectStorage = new ObjectStorageService();
-  }
-
-  /**
-   * Convert video to web-optimized MP4 format
-   * @param sourceUrl - URL of the source video in Object Storage
-   * @param userId - User ID for ACL ownership
-   * @returns Conversion result with new URL
-   */
-  async convertVideo(sourceUrl: string, userId: string): Promise<VideoConversionResult> {
-    const tempInputPath = join(tmpdir(), `input-${randomUUID()}.video`);
-    const tempOutputPath = join(tmpdir(), `output-${randomUUID()}.mp4`);
-    const startTime = Date.now();
+  async convertVideo(
+    sourceUrl: string,
+    lessonId: string,
+    userId: string
+  ): Promise<{ success: boolean; convertedUrl?: string; duration?: number; error?: string }> {
+    const tempInput = join(tmpdir(), `input-${randomUUID()}.mp4`);
+    const tempOutput = join(tmpdir(), `output-${randomUUID()}.mp4`);
 
     try {
-      console.log('[VideoConverter] Starting conversion for:', sourceUrl);
+      console.log('[VideoConverter] Скачиваем видео с CDNNow:', sourceUrl);
+      await this.downloadFromYandexCloud(sourceUrl, tempInput);
 
+      const duration = await this.getDuration(tempInput);
+      console.log(`[VideoConverter] Длительность: ${duration} мин`);
 
-      await this.downloadVideo(sourceUrl, tempInputPath);
-      console.log('[VideoConverter] Downloaded to:', tempInputPath);
+      console.log('[VideoConverter] Конвертируем...');
+      await this.ffmpegConvert(tempInput, tempOutput);
 
+      // Загружаем конвертированное видео обратно в тот же бакет
+      const convertedKey = `processed/${lessonId}-${Date.now()}.mp4`;
+      const convertedUrl = await this.uploadToYandexCloud(tempOutput, convertedKey);
 
-      const duration = await this.getDuration(tempInputPath);
-      console.log(`[VideoConverter] Detected duration: ${duration} minutes`);
-
-
-      const ffmpegStart = Date.now();
-      await this.ffmpegConvert(tempInputPath, tempOutputPath);
-      const ffmpegTime = ((Date.now() - ffmpegStart) / 1000).toFixed(1);
-      console.log(`[VideoConverter] Converted video in ${ffmpegTime}s`);
-
-
-      const convertedUrl = await this.uploadConvertedVideo(tempOutputPath, userId);
-      console.log('[VideoConverter] Uploaded to:', convertedUrl);
-
-
-      await this.deleteOriginalVideo(sourceUrl);
-      console.log('[VideoConverter] Deleted original video:', sourceUrl);
-
-
-      this.cleanup(tempInputPath, tempOutputPath);
-
-      const totalTime = ((Date.now() - startTime) / 1000).toFixed(1);
-      console.log(`[VideoConverter] Total conversion time: ${totalTime}s`);
-
-      return {
-        success: true,
-        convertedUrl,
+      // Обновляем урок
+      await db.update(lessons).set({
+        videoUrl: convertedUrl,
         duration,
-      };
-    } catch (error) {
-      console.error('[VideoConverter] Error:', error);
-      this.cleanup(tempInputPath, tempOutputPath);
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Unknown error',
-      };
+        processingStatus: 'ready',
+        uploadProgress: 100,
+        errorMessage: null,
+      }).where(eq(lessons.id, lessonId));
+
+      console.log('[VideoConverter] Готово! URL:', convertedUrl);
+      this.cleanup(tempInput, tempOutput);
+
+      return { success: true, convertedUrl, duration };
+    } catch (error: any) {
+      console.error('[VideoConverter] Ошибка:', error.message);
+
+      await db.update(lessons).set({
+        processingStatus: 'failed',
+        errorMessage: error.message || 'Ошибка конвертации',
+      }).where(eq(lessons.id, lessonId));
+
+      this.cleanup(tempInput, tempOutput);
+      return { success: false, error: error.message };
     }
   }
 
-  /**
-   * Get video duration in minutes using ffprobe
-   */
-  private getDuration(inputPath: string): Promise<number> {
+  private async downloadFromYandexCloud(url: string, outputPath: string) {
+    const response = await fetch(url);
+    if (!response.ok || !response.body) throw new Error(`Не удалось скачать видео: ${response.status}`);
+
     return new Promise((resolve, reject) => {
+      const stream = createWriteStream(outputPath);
+      // @ts-ignore — Node 18+ поддерживает
+      response.body!.pipe(stream);
+      stream.on('finish', resolve);
+      stream.on('error', reject);
+    });
+  }
+
+  private async uploadToYandexCloud(filePath: string, key: string) {
+    const { PutObjectCommand } = await import('@aws-sdk/client-s3');
+
+    await s3Client.send(new PutObjectCommand({
+      Bucket: process.env.NOWCDN_BUCKET!,
+      Key: key,
+      Body: createReadStream(filePath),
+      ContentType: 'video/mp4',
+      ACL: 'public-read',
+    }));
+
+    return `https://storage.yandexcloud.net/${process.env.NOWCDN_BUCKET}/${key}`;
+  }
+
+  private getDuration(inputPath: string): Promise<number> {
+    return new Promise((resolve) => {
       const ffprobe = spawn('ffprobe', [
         '-v', 'error',
         '-show_entries', 'format=duration',
@@ -90,209 +96,50 @@ export class VideoConverter {
       ]);
 
       let output = '';
-
-      ffprobe.stdout.on('data', (data) => {
-        output += data.toString();
+      ffprobe.stdout.on('data', (d) => output += d.toString());
+      ffprobe.on('close', () => {
+        const seconds = parseFloat(output.trim()) || 60;
+        resolve(Math.max(1, Math.ceil(seconds / 60)));
       });
-
-      ffprobe.stderr.on('data', (data) => {
-        console.error('[VideoConverter] ffprobe stderr:', data.toString());
-      });
-
-      ffprobe.on('close', (code) => {
-        if (code === 0) {
-          const durationSeconds = parseFloat(output.trim());
-          if (!isNaN(durationSeconds) && durationSeconds > 0) {
-            const durationMinutes = Math.max(1, Math.ceil(durationSeconds / 60));
-            console.log(`[VideoConverter] Duration from ffprobe: ${durationSeconds.toFixed(2)}s = ${durationMinutes} minutes`);
-            resolve(durationMinutes);
-          } else {
-            console.warn('[VideoConverter] Invalid duration from ffprobe, defaulting to 1 minute');
-            resolve(1);
-          }
-        } else {
-          console.error('[VideoConverter] ffprobe failed, defaulting to 1 minute');
-          resolve(1);
-        }
-      });
-
-      ffprobe.on('error', (error) => {
-        console.error('[VideoConverter] ffprobe spawn error:', error);
-        resolve(1);
-      });
+      ffprobe.on('error', () => resolve(1));
     });
   }
 
-  private async downloadVideo(sourceUrl: string, outputPath: string): Promise<void> {
-    return new Promise(async (resolve, reject) => {
-      try {
-        const file = await this.objectStorage.getObjectEntityFile(sourceUrl);
-        const response = await fetchObject(file.path);
-        if (!response.ok || !response.body) {
-          throw new Error(`Failed to fetch source video: ${response.status}`);
-        }
-        const stream = response.body as any;
-        const writeStream = createWriteStream(outputPath);
-
-        stream.on('error', reject);
-        writeStream.on('error', reject);
-        writeStream.on('finish', resolve);
-
-        stream.pipe(writeStream);
-      } catch (error) {
-        reject(error);
-      }
-    });
-  }
-
-  private ffmpegConvert(inputPath: string, outputPath: string): Promise<void> {
+  private ffmpegConvert(input: string, output: string): Promise<void> {
     return new Promise((resolve, reject) => {
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
       const args = [
-        '-i', inputPath,
-        '-map', '0:v:0',
-        '-map', '0:a:0?',
-        '-vf', 'scale=trunc(iw/2)*2:trunc(ih/2)*2',
-        '-movflags', '+faststart',
+        '-i', input,
         '-c:v', 'libx264',
-        '-profile:v', 'baseline',
-        '-level', '3.1',
-        '-preset', 'superfast',
-        '-tune', 'zerolatency',
-        '-b:v', '800k',
-        '-maxrate', '1000k',
-        '-bufsize', '2000k',
-        '-g', '30',
-        '-keyint_min', '15',
-        '-sc_threshold', '0',
-        '-pix_fmt', 'yuv420p',
+        '-preset', 'fast',
+        '-crf', '23',
+        '-movflags', '+faststart',
         '-c:a', 'aac',
-        '-ar', '44100',
-        '-b:a', '96k',
+        '-b:a', '128k',
+        '-vf', 'scale=trunc(iw/2)*2:trunc(ih/2)*2',
         '-y',
-        outputPath
+        output
       ];
 
-      console.log('[VideoConverter] Running ffmpeg:', args.join(' '));
-
       const ffmpeg = spawn('ffmpeg', args);
-      let lastProgress = '';
-
       ffmpeg.stderr.on('data', (data) => {
-        const output = data.toString();
-
-
-        const timeMatch = output.match(/time=(\d+):(\d+):(\d+)/);
-        if (timeMatch) {
-          const progress = `${timeMatch[1]}:${timeMatch[2]}:${timeMatch[3]}`;
-          if (progress !== lastProgress) {
-            console.log(`[VideoConverter] Progress: ${progress}`);
-            lastProgress = progress;
-          }
-        }
-
-
-        if (output.includes('error') || output.includes('Error')) {
-          console.error('[VideoConverter] ffmpeg error:', output);
+        const line = data.toString();
+        if (line.includes('time=')) {
+          console.log('[FFmpeg]', line.trim());
         }
       });
 
       ffmpeg.on('close', (code) => {
-        if (code === 0) {
-          console.log('[VideoConverter] ffmpeg conversion successful');
-          resolve();
-        } else {
-          reject(new Error(`ffmpeg exited with code ${code}`));
-        }
-      });
-
-      ffmpeg.on('error', (error) => {
-        reject(new Error(`ffmpeg spawn error: ${error.message}`));
+        if (code === 0) resolve();
+        else reject(new Error(`FFmpeg exited with code ${code}`));
       });
     });
-  }
-
-  private async uploadConvertedVideo(filePath: string, userId: string): Promise<string> {
-    const { uploadURL, headers } = await this.objectStorage.getObjectEntityUploadURL();
-    const uploadHeaders = { ...(headers || {}), "Content-Type": "video/mp4" };
-
-    const uploadResponse = await fetch(uploadURL, {
-      method: "PUT",
-      headers: uploadHeaders,
-      body: createReadStream(filePath),
-    });
-
-    if (!uploadResponse.ok) {
-      const text = await uploadResponse.text();
-      throw new Error(`Failed to upload converted video to Bunny: ${uploadResponse.status} ${text}`);
-    }
-
-    const url = new URL(uploadURL);
-    const objectId = url.pathname.split('/').pop();
-    if (!objectId) {
-      throw new Error('Unable to parse uploaded video id');
-    }
-
-    const privateDir = this.objectStorage
-      .getPrivateObjectDir()
-      .replace(/^\//, '');
-    const storagePath = `${privateDir}/uploads/${objectId}`;
-
-    const { setObjectAclPolicy } = await import('./objectAcl');
-    await setObjectAclPolicy({ path: storagePath }, {
-      owner: userId,
-      visibility: 'private',
-    });
-
-    return `/objects/.private/uploads/${objectId}`;
-  }
-
-  private async deleteOriginalVideo(sourceUrl: string): Promise<void> {
-    try {
-      const file = await this.objectStorage.getObjectEntityFile(sourceUrl);
-      await this.objectStorage.deleteObjectEntity(sourceUrl);
-      console.log('[VideoConverter] Deleted original file from storage');
-    } catch (error) {
-      console.error('[VideoConverter] Failed to delete original video:', error);
-
-    }
   }
 
   private cleanup(...paths: string[]) {
-    for (const path of paths) {
+    paths.forEach(path => {
       if (existsSync(path)) {
-        try {
-          unlinkSync(path);
-          console.log('[VideoConverter] Cleaned up:', path);
-        } catch (error) {
-          console.error('[VideoConverter] Failed to cleanup:', path, error);
-        }
+        try { unlinkSync(path); } catch { }
       }
-    }
+    });
   }
 }

@@ -32,6 +32,6 @@ export function useAuth() {
   return {
     user: user || undefined,
     isLoading,
-    isAuthenticated: !!user && !isError,
+    isAuthenticated: user && !isError,
   };
 }
