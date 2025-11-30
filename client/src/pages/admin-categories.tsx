@@ -358,7 +358,7 @@ export default function AdminCategories() {
                             </div>
                           </CardHeader>
                           <CardContent className="pt-0">
-                            <Link href={`/admin/categories/${child.id}/subcategories`}>
+                            <Link href={`/admin/categories/${child.id}/subcategories?parentId=${mainCategory.id}`}>
                               <Button
                                 className="w-full"
                                 variant="outline"

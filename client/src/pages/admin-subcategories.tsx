@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { Link, useParams, useLocation } from "wouter";
+import { Link, useParams, useLocation, useSearchParams } from "wouter";
 import AdminLayout from "@/components/AdminLayout";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -34,6 +34,8 @@ export default function AdminSubcategories() {
   const { toast } = useToast();
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
   const [formData, setFormData] = useState({ name: "", nameEn: "", description: "" });
+  const [searchParams] = useSearchParams()
+  const parentId = searchParams.get('parentId')
 
   // Fetch category
   const { data: category } = useQuery<Category>({
@@ -157,7 +159,7 @@ export default function AdminSubcategories() {
                   </div>
                 </CardHeader>
                 <CardContent>
-                  <Link href={`/admin/categories/${categoryId}/subcategories/${subcategory.id}/courses`}>
+                  <Link href={`/admin/categories/${categoryId}/subcategories/${subcategory.id}/courses?parentId=${parentId}`}>
                     <Button
                       className="w-full"
                       variant="outline"

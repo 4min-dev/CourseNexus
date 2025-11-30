@@ -2141,17 +2141,38 @@ export default function Shop() {
                                 <Badge variant="outline" className="text-sm font-medium">
                                   {getPlatformName(course.platform || "")}
                                 </Badge>
-                                {Array.isArray(course.level) ? (
-                                  course.level.map((lvl, idx) => (
-                                    <Badge key={idx} variant="outline" className="text-sm font-medium">
-                                      {getLevelName(lvl)}
-                                    </Badge>
-                                  ))
-                                ) : course.level ? (
-                                  <Badge variant="outline" className="text-sm font-medium">
-                                    {getLevelName(course.level)}
-                                  </Badge>
-                                ) : null}
+
+                                {/* Уровни (level) — теперь это подкатегории по ID */}
+                                {Array.isArray(course.level) && course.level.length > 0 && (
+                                  <>
+                                    {course.level
+                                      .map((levelId) => {
+                                        const subCategory = subcategories?.find(sub => sub.id === levelId);
+                                        return subCategory ? (
+                                          <Badge key={levelId} variant="outline" className="text-sm font-medium">
+                                            {subCategory.name}
+                                          </Badge>
+                                        ) : null;
+                                      })
+                                      .filter(Boolean)} {/* убираем null, если subcategory не найдена */}
+                                  </>
+                                )}
+
+                                {/* Резервный вариант, если level — строка (на случай старых данных) */}
+                                {!Array.isArray(course.level) && course.level && subcategories && (
+                                  <>
+                                    {(() => {
+                                      const subCategory = subcategories.find(sub => sub.id === course.level);
+                                      return subCategory ? (
+                                        <Badge variant="outline" className="text-sm font-medium">
+                                          {subCategory.name}
+                                        </Badge>
+                                      ) : null;
+                                    })()}
+                                  </>
+                                )}
+
+                                {/* Год */}
                                 {course.year && (
                                   <Badge variant="outline" className="text-sm font-medium">
                                     {course.year}

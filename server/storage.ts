@@ -1165,6 +1165,8 @@ export class DatabaseStorage implements IStorage {
       ORDER BY level
     `);
 
+    console.log('result.rows', result.rows)
+
     return result.rows
       .map(r => r.level)
       .filter((l): l is string => l !== null && l !== '');

@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { useParams, useLocation } from "wouter";
+import { useParams, useLocation, useSearchParams } from "wouter";
 import AdminLayout from "@/components/AdminLayout";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -161,8 +161,11 @@ export default function AdminCourseEdit() {
     fileUrl: string;
   } | null>(null);
 
-  const [selectedLevels, setSelectedLevels] = useState<string[]>([]);
+  const [selectedLevels, setSelectedLevels] = useState<any[]>([]);
   const [selectedSubcategories, setSelectedSubcategories] = useState<string[]>([]);
+  const [searchParams] = useSearchParams()
+  const categoryId = searchParams.get('categoryId')
+  const parentId = searchParams.get('parentId')
 
   // Fetch course
   const { data: course, isLoading: courseLoading } = useQuery<Course>({
@@ -250,6 +253,22 @@ export default function AdminCourseEdit() {
       return response.json();
     },
   });
+
+  const { data: subcategories = [] } = useQuery<Subcategory[]>({
+    queryKey: ["/api/subcategories", categoryId],
+    queryFn: async () => {
+      if (!categoryId) return [];
+      const res = await fetch(`/api/subcategories?categoryId=${categoryId}`, {
+        credentials: "include",
+      });
+
+      if (!res.ok) throw new Error("Failed to fetch subcategories");
+      return res.json();
+    },
+    enabled: !!categoryId,
+  });
+
+  console.log('subcategories', subcategories)
 
   // Fetch all subcategories
   const { data: allSubcategories = [] } = useQuery<Subcategory[]>({
@@ -694,20 +713,6 @@ export default function AdminCourseEdit() {
     });
   };
 
-  const handleAddLesson = () => {
-    if (!selectedSectionId) return;
-
-    const section = sections?.find(s => s.id === selectedSectionId);
-    const nextOrder = (section?.lessons?.length || 0) + 1;
-
-    createLessonMutation.mutate({
-      sectionId: selectedSectionId,
-      title: lessonFormData.title,
-      description: lessonFormData.description || undefined,
-      order: nextOrder,
-    });
-  };
-
   const handleOpenEditLesson = (lesson: Lesson) => {
     // Get the most up-to-date lesson data from sections (includes latest processingStatus)
     const currentLesson = sections
@@ -780,285 +785,6 @@ export default function AdminCourseEdit() {
     if (ext && ['pdf', 'doc', 'docx', 'txt', 'rtf'].includes(ext)) return 'document';
 
     return 'other';
-  };
-
-  const extractVideoDuration = async (videoUrl: string): Promise<number> => {
-    return new Promise((resolve, reject) => {
-      const video = document.createElement('video');
-      video.preload = 'metadata';
-      video.muted = true;
-      video.playsInline = true;
-
-      let metadataLoaded = false;
-
-      video.onloadedmetadata = () => {
-        metadataLoaded = true;
-        if (video.duration && !isNaN(video.duration) && isFinite(video.duration)) {
-          const durationInMinutes = Math.ceil(video.duration / 60);
-          resolve(durationInMinutes);
-        } else {
-          reject(new Error('Invalid video duration'));
-        }
-      };
-
-      video.onerror = (error) => {
-        console.error('Error loading video metadata:', error);
-        reject(new Error('Failed to load video'));
-      };
-
-      // Timeout after 10 seconds
-      setTimeout(() => {
-        if (!metadataLoaded) {
-          reject(new Error('Timeout loading video metadata'));
-        }
-      }, 10000);
-
-      // Set src without crossOrigin to avoid CORS issues
-      video.src = videoUrl;
-      video.load();
-    });
-  };
-
-  const buildUploadContext = (file?: any) => {
-    const activeSectionId = editingLesson?.sectionId || selectedSectionId || undefined;
-    const resolvedSectionTitle = activeSectionId
-      ? sections?.find(section => section.id === activeSectionId)?.title
-      : undefined;
-
-    return {
-      courseId,
-      sectionId: activeSectionId,
-      lessonId: editingLesson?.id || undefined,
-      sectionTitle: resolvedSectionTitle,
-      lessonTitle: editingLesson?.title || lessonFormData.title || undefined,
-      fileName: file?.name,
-    };
-  };
-
-  const handleFileUpload = async (file?: any) => {
-    try {
-      const response = await fetch('/api/objects/upload', {
-        method: 'POST',
-        credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(buildUploadContext(file)),
-      });
-      if (!response.ok) throw new Error('Failed to get upload URL');
-      const data = await response.json();
-      return { method: 'PUT' as const, url: data.uploadURL, headers: data.uploadHeaders };
-    } catch (error) {
-      console.error('Error getting upload URL:', error);
-      toast({ title: "Ошибка при получении URL загрузки", variant: "destructive" });
-      throw error;
-    }
-  };
-
-  const handleThumbnailUpload = async (file?: any) => {
-    try {
-      const response = await fetch('/api/objects/upload-public', {
-        method: 'POST',
-        credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          courseId,
-          fileName: file?.name,
-        }),
-      });
-      if (!response.ok) throw new Error('Failed to get public upload URL');
-      const data = await response.json();
-      return { method: 'PUT' as const, url: data.uploadURL, headers: data.uploadHeaders };
-    } catch (error) {
-      console.error('Error getting public upload URL:', error);
-      toast({ title: "Ошибка при получении URL загрузки", variant: "destructive" });
-      throw error;
-    }
-  };
-
-  const handleThumbnailUploadComplete = async (result: any) => {
-    if (result.successful && result.successful.length > 0) {
-      const uploadedFile = result.successful[0];
-      const uploadURL = uploadedFile.uploadURL;
-      const fileName = uploadedFile.name;
-      console.log('uploadURL', uploadURL)
-      try {
-        const aclPayload = {
-          owner: courseId,
-          visibility: "private"
-        };
-
-        const aclResponse = await fetch("/api/objects/acl", {
-          method: "PUT",
-          credentials: "include",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            fileURL: uploadedFile.path,
-            aclPolicy: aclPayload
-          }),
-        });
-
-        if (!aclResponse.ok) {
-          throw new Error('Failed to set public ACL');
-        }
-
-        const aclData = await aclResponse.json();
-        const publicPath = aclData.publicPath;
-
-        setUploadedThumbnail({
-          fileName,
-          fileUrl: publicPath,
-        });
-
-        setCourseFormData((prev) => ({
-          ...prev,
-          thumbnailImage: publicPath,
-        }));
-
-        toast({ title: "Изображение загружено" });
-      } catch (error) {
-        console.error('Error setting public ACL:', error);
-        toast({
-          title: "Ошибка",
-          description: "Не удалось установить права доступа",
-          variant: "destructive"
-        });
-      }
-    }
-  };
-
-  const handleVideoUploadStart = (uploadPromise: Promise<any>) => {
-    // Capture current session ID from ref (not state) to prevent stale updates
-    const uploadSessionId = lessonSessionCounterRef.current;
-
-    // Wrap upload promise with ACL setup
-    const videoProcessingPromise = uploadPromise.then(async (result: any) => {
-      if (result.successful && result.successful.length > 0) {
-        const uploadedFile = result.successful[0];
-        const uploadURL = uploadedFile.meta.uploadURL;
-        const fileName = uploadedFile.name;
-
-        const filePath = uploadURL.replace("https://storage.bunnycdn.com/vkurseio/dev-bucket", "");
-        const aclPayload = {
-          owner: courseId,
-          visibility: "private"
-        };
-
-        console.log('uploadedFile', uploadedFile)
-        console.log('uploadURL', uploadURL)
-
-        const aclResponse = await fetch("/api/objects/acl", {
-          method: "PUT",
-          credentials: "include",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            fileURL: filePath, // <- относительный путь в storage
-            aclPolicy: aclPayload
-          }),
-        });
-
-        if (!aclResponse.ok) throw new Error("Failed to set ACL");
-
-        const aclData = await aclResponse.json();
-        const videoPath = aclData.objectPath; // или publicPath если есть
-        return { fileName, fileUrl: videoPath, duration: 0 };
-      }
-      throw new Error("No files uploaded");
-    });
-
-    // Store promise immediately so lesson can be created right away
-    setVideoUploadPromise(videoProcessingPromise);
-
-    // Update UI after upload completes - only if session is still active
-    videoProcessingPromise
-      .then((videoInfo) => {
-        // Check if this upload still belongs to the current dialog session
-        // Use ref to compare with current session (not stale closure value)
-        if (uploadSessionId !== null && uploadSessionId === lessonSessionCounterRef.current) {
-          // Only update UI if this is still the active session
-          toast({
-            title: "Видео загружено",
-            description: "Готово к обработке",
-          });
-          setUploadedVideo(videoInfo);
-          setLessonFormData((prev) => ({
-            ...prev,
-            videoUrl: videoInfo.fileUrl,
-            duration: 0,
-          }));
-        }
-        // Note: Promise still resolves with videoInfo even if session changed
-        // This is important so createLessonMutation can use it to queue the video
-      })
-      .catch((error) => {
-        console.error('Error uploading video:', error);
-        // Show error only if session is still active (use ref for current value)
-        if (uploadSessionId !== null && uploadSessionId === lessonSessionCounterRef.current) {
-          toast({
-            title: "Ошибка",
-            description: "Не удалось загрузить видео",
-            variant: "destructive"
-          });
-        }
-      });
-  };
-
-  const handleVideoUploadComplete = async (result: any) => {
-    // This is called after upload finishes, but we already handled it in handleVideoUploadStart
-  };
-
-  const handleFileUploadComplete = async (result: any) => {
-    if (result.successful && result.successful.length > 0) {
-      const newFiles: Array<{
-        fileName: string;
-        fileUrl: string;
-        fileType: string;
-      }> = [];
-
-      for (const uploadedFile of result.successful) {
-        const uploadURL = uploadedFile.uploadURL;
-        const fileName = uploadedFile.name;
-        const mimeType = uploadedFile.type || '';
-        const fileType = getFileType(mimeType, fileName);
-
-        try {
-          const aclResponse = await fetch('/api/objects/acl', {
-            method: 'PUT',
-            credentials: 'include',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              fileURL: uploadedFile.path,
-              courseId: courseId,
-            }),
-          });
-
-          if (!aclResponse.ok) {
-            throw new Error('Failed to set ACL');
-          }
-
-          const aclData = await aclResponse.json();
-          const publicURL = aclData.publicURL || aclData.objectPath;
-
-          newFiles.push({
-            fileName,
-            fileUrl: publicURL,
-            fileType,
-          });
-        } catch (error) {
-          console.error('Error setting ACL:', error);
-          toast({
-            title: "Ошибка",
-            description: `Не удалось загрузить ${fileName}`,
-            variant: "destructive"
-          });
-        }
-      }
-
-      if (newFiles.length > 0) {
-        setUploadedFiles(prev => [...prev, ...newFiles]);
-        toast({
-          title: newFiles.length === 1 ? "Файл загружен" : `Загружено файлов: ${newFiles.length}`
-        });
-      }
-    }
   };
 
   const removeUploadedFile = (index: number) => {
@@ -1353,21 +1079,21 @@ export default function AdminCourseEdit() {
                 <div>
                   <Label className="mb-2 block">Уровень</Label>
                   <div className="space-y-2">
-                    {availableLevels.map((levelName) => (
-                      <div key={levelName} className="flex items-center gap-2">
+                    {subcategories.map((level) => (
+                      <div key={level.id} className="flex items-center gap-2">
                         <Checkbox
-                          id={`level-${levelName}`}
-                          checked={selectedLevels.includes(levelName)}
+                          id={`level-${level.id}`}
+                          checked={selectedLevels.includes(level.id)}
                           onCheckedChange={(checked) => {
                             if (checked) {
-                              setSelectedLevels([...selectedLevels, levelName]);
+                              setSelectedLevels([...selectedLevels, level.id]);
                             } else {
-                              setSelectedLevels(selectedLevels.filter(l => l !== levelName));
+                              setSelectedLevels(selectedLevels.filter(l => l !== level.id));
                             }
                           }}
-                          data-testid={`checkbox-level-${levelName}`}
+                          data-testid={`checkbox-level-${level.name}`}
                         />
-                        <Label htmlFor={`level-${levelName}`}>{levelName}</Label>
+                        <Label htmlFor={`level-${level.id}`}>{level.name}</Label>
                       </div>
                     ))}
                   </div>
@@ -1382,11 +1108,11 @@ export default function AdminCourseEdit() {
                     <div className="p-4 space-y-3">
                       {(() => {
                         // Разделяем на parent и child категории
-                        const parentCategories = categories.filter(cat => !cat.parentId);
+                        const parentCategories = categories.filter(cat => cat.id === parentId);
                         const childCategoriesByParent = categories.filter(cat => cat.parentId);
 
                         return parentCategories.map((parentCat) => {
-                          const childCats = childCategoriesByParent.filter(child => child.parentId === parentCat.id);
+                          const childCats = childCategoriesByParent.filter(child => child.id === categoryId);
                           if (childCats.length === 0) return null;
 
                           return (
@@ -1401,9 +1127,9 @@ export default function AdminCourseEdit() {
 
                                   // Найти те, что соответствуют выбранным уровням
                                   const relevantSubcats = childSubcats.filter(sub =>
-                                    selectedLevels.includes(sub.name)
+                                    selectedLevels.includes(sub.id)
                                   );
-                                  console.log(childCat)
+
                                   // Проверить, выбраны ли все релевантные подкатегории
                                   const allSelected = relevantSubcats.length > 0 &&
                                     relevantSubcats.every(sub => selectedSubcategories.includes(sub.id));

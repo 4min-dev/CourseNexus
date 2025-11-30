@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { Link, useParams, useLocation } from "wouter";
+import { Link, useParams, useLocation, useSearchParams } from "wouter";
 import AdminLayout from "@/components/AdminLayout";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -57,6 +57,8 @@ export default function AdminCourses() {
   const [courseTitle, setCourseTitle] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
   const [currentPage, setCurrentPage] = useState(1);
+  const [searchParams] = useSearchParams()
+  const parentId = searchParams.get('parentId')
 
   // Fetch category
   const { data: category } = useQuery<Category>({
@@ -101,6 +103,19 @@ export default function AdminCourses() {
   const startIndex = (currentPage - 1) * COURSES_PER_PAGE;
   const endIndex = startIndex + COURSES_PER_PAGE;
   const paginatedCourses = filteredCourses.slice(startIndex, endIndex);
+
+  const { data: subcategories = [] } = useQuery<Subcategory[]>({
+    queryKey: ["/api/subcategories", categoryId],
+    queryFn: async () => {
+      if (!categoryId) return [];
+      const res = await fetch(`/api/subcategories?categoryId=${categoryId}`, {
+        credentials: "include",
+      });
+      if (!res.ok) throw new Error("Failed to fetch subcategories");
+      return res.json();
+    },
+    enabled: !!categoryId,
+  });
 
   // Reset to page 1 when search changes
   useEffect(() => {
@@ -171,22 +186,16 @@ export default function AdminCourses() {
     },
   });
 
-  const getLevelName = (level: string | string[] | null) => {
-    if (!level) return "";
-
-    const names: Record<string, string> = {
-      beginner: "Для новичков",
-      intermediate: "Для опытных",
-      advanced: "Продвинутый",
-    };
-
-    // Handle array of levels
-    if (Array.isArray(level)) {
-      return level.map(l => names[l] || l).join(", ");
-    }
-
-    // Handle single string level (backward compatibility)
-    return names[level] || level;
+  const getSubcategoryNames = (levelIds: string[] | null | undefined): string => {
+    if (!levelIds || !Array.isArray(levelIds) || levelIds.length === 0) return "";
+    console.log('subcategories', subcategories)
+    return levelIds
+      .map((id) => {
+        const sub = subcategories.find((s) => s.id === id);
+        return sub?.name || id;
+      })
+      .filter(Boolean)
+      .join(", ");
   };
 
   const handleCreate = () => {
@@ -300,8 +309,10 @@ export default function AdminCourses() {
                               <span>
                                 {isFree ? "Бесплатно" : (price !== null ? `${formatPrice(price)} ₽` : "—")}
                               </span>
-                              {level && (
-                                <span className="text-muted-foreground">{getLevelName(level)}</span>
+                              {level && Array.isArray(level) && level.length > 0 && (
+                                <span className="text-muted-foreground">
+                                  {getSubcategoryNames(level)}
+                                </span>
                               )}
                               {year && (
                                 <span className="text-muted-foreground">{year}</span>
@@ -342,7 +353,7 @@ export default function AdminCourses() {
                               variant="ghost"
                               data-testid={`button-edit-course-${core.id ?? course.id}`}
                             >
-                              <Link href={`/admin/courses/${core.id ?? course.id}/edit?subcategoryId=${subcategoryId}`}>
+                              <Link href={`/admin/courses/${core.id ?? course.id}/edit?subcategoryId=${subcategoryId}&categoryId=${categoryId}&parentId=${parentId}`}>
                                 <Edit className="h-4 w-4" />
                               </Link>
                             </Button>
