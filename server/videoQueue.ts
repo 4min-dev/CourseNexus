@@ -97,9 +97,7 @@ class VideoProcessingQueue {
   async addToQueue(lessonId: string, videoUrl: string, originalFileName: string, userId: string) {
     console.log(`Adding lesson ${lessonId} to video processing queue`);
 
-
     this.queue.push({ lessonId, videoUrl, originalFileName, userId });
-
 
     await db.update(lessons)
       .set({
@@ -109,29 +107,40 @@ class VideoProcessingQueue {
       })
       .where(eq(lessons.id, lessonId));
 
-
     if (!this.isProcessing) {
-      this.processNext();
+      setImmediate(() => this.processNext());
     }
   }
 
   private async processNext() {
-    if (this.queue.length === 0) {
-      this.isProcessing = false;
+    if (this.isProcessing || this.queue.length === 0) {
+      if (this.queue.length === 0) this.isProcessing = false;
       return;
     }
 
     this.isProcessing = true;
-    const item = this.queue.shift()!;
 
-    await db.update(lessons).set({
-      processingStatus: 'processing',
-    }).where(eq(lessons.id, item.lessonId));
+    while (this.queue.length > 0) {
+      const item = this.queue.shift()!;
 
-    const converter = new VideoConverter();
-    await converter.convertVideo(item.videoUrl, item.lessonId, item.userId);
+      try {
+        await db.update(lessons)
+          .set({ processingStatus: 'processing' })
+          .where(eq(lessons.id, item.lessonId));
 
-    setTimeout(() => this.processNext(), 1000);
+        await this.converter.convertVideo(item.videoUrl, item.lessonId, item.userId);
+      } catch (error) {
+        console.error(`[VideoQueue] Error processing ${item.lessonId}:`, error);
+        await db.update(lessons)
+          .set({
+            processingStatus: 'failed',
+            errorMessage: error instanceof Error ? error.message : String(error)
+          })
+          .where(eq(lessons.id, item.lessonId));
+      }
+    }
+
+    this.isProcessing = false;
   }
 
   getQueueLength(): number {

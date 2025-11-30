@@ -85,8 +85,10 @@ export default function AdminCourses() {
     enabled: !!categoryId && !!subcategoryId,
   });
 
-  // Filter courses by search query
-  const filteredCourses = courses?.filter((course) => {
+
+  const clearedCourses = courses?.filter((course) => course.level?.includes(subcategoryId))
+
+  const filteredCourses = clearedCourses?.filter((course) => {
     const raw: any = course as any;
     const core: any = raw.courses ?? raw;
     const title = (core.title ?? "").toLowerCase();
@@ -149,7 +151,7 @@ export default function AdminCourses() {
       setIsAddDialogOpen(false);
       setCourseTitle("");
       // Redirect to course editor
-      setLocation(`/admin/courses/${course.id}/edit`);
+      setLocation(`/admin/courses/${course.id}/edit?subcategoryId=${subcategoryId}&categoryId=${categoryId}&parentId=${parentId}`);
     },
     onError: () => {
       toast({ title: "Ошибка", description: "Не удалось создать курс", variant: "destructive" });
@@ -219,7 +221,7 @@ export default function AdminCourses() {
           <Button
             variant="ghost"
             size="icon"
-            onClick={() => setLocation(`/admin/categories/${categoryId}/subcategories`)}
+            onClick={() => window.history.back()}
             data-testid="button-back"
           >
             <ArrowLeft className="h-5 w-5" />
@@ -227,7 +229,7 @@ export default function AdminCourses() {
           <div className="flex-1">
             <h1 className="text-3xl font-bold">Курсы</h1>
             <p className="text-muted-foreground">
-              {category?.name} → {subcategory?.name} • {courses?.length || 0} курсов
+              {category?.name} → {subcategory?.name} • {clearedCourses?.length || 0} курсов
             </p>
           </div>
           <Button onClick={() => setIsAddDialogOpen(true)} data-testid="button-add-course">

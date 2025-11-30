@@ -11,7 +11,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
 import { ShoppingCart, BookOpen, ArrowLeft, CheckCircle2, Star, Sparkles, Crown, Check, Gem, Package, TrendingDown, ArrowRight, ThumbsUp, ThumbsDown, Edit, Trash2, AlertCircle, Heart, Users, PlayCircle, Clock, Award, TrendingUp } from "lucide-react";
 import { Link } from "wouter";
-import type { Course, Review, Lesson } from "@shared/schema";
+import type { Course, Review, Lesson, Subcategory } from "@shared/schema";
 import { Header } from "@/components/header";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
@@ -459,6 +459,10 @@ export default function CourseDetail() {
     enabled: !!courseId,
   });
 
+  const { data: subcategories } = useQuery<Subcategory[]>({
+    queryKey: ["/api/subcategories"],
+  });
+
   const { data: vipTier, isLoading: isVipTierLoading, isError: isVipTierError } = useQuery<VipTier>({
     queryKey: ["/api/vip-tiers", course?.vipTier],
     queryFn: async () => {
@@ -789,19 +793,20 @@ export default function CourseDetail() {
                     <Award className="h-3 w-3 mr-1" />
                     {getPlatformName(course.platform)}
                   </Badge>
-                  {Array.isArray(course.level) ? (
-                    course.level.map((lvl, idx) => (
-                      <Badge key={idx} variant="outline" className="border-blue-500/30 bg-blue-500/10">
-                        <TrendingUp className="h-3 w-3 mr-1" />
-                        {getLevelName(lvl)}
-                      </Badge>
-                    ))
-                  ) : course.level ? (
-                    <Badge variant="outline" className="border-blue-500/30 bg-blue-500/10">
-                      <TrendingUp className="h-3 w-3 mr-1" />
-                      {getLevelName(course.level)}
-                    </Badge>
-                  ) : null}
+                  {Array.isArray(course.level) && course.level.length > 0 && (
+                    <>
+                      {course.level
+                        .map((levelId) => {
+                          const subCategory = subcategories?.find(sub => sub.id === levelId);
+                          return subCategory ? (
+                            <Badge key={levelId} variant="outline" className="text-sm font-medium">
+                              {subCategory.name}
+                            </Badge>
+                          ) : null;
+                        })
+                        .filter(Boolean)} {/* убираем null, если subcategory не найдена */}
+                    </>
+                  )}
                   <Badge variant="outline" className="border-orange-500/30 bg-orange-500/10">
                     <Clock className="h-3 w-3 mr-1" />
                     {course.year}
@@ -1040,14 +1045,20 @@ export default function CourseDetail() {
                   </div>
                   <div className="flex justify-between">
                     <span className="text-muted-foreground">Уровень:</span>
-                    <span className="font-medium">
-                      {Array.isArray(course.level)
-                        ? course.level.map(lvl => getLevelName(lvl)).join(', ')
-                        : course.level
-                          ? getLevelName(course.level)
-                          : '—'
-                      }
-                    </span>
+                    {Array.isArray(course.level) && course.level.length > 0 && (
+                      <>
+                        {course.level
+                          .map((levelId) => {
+                            const subCategory = subcategories?.find(sub => sub.id === levelId);
+                            return subCategory ? (
+                              <span className="font-medium">
+                                {subCategory.name}
+                              </span>
+                            ) : null;
+                          })
+                          .filter(Boolean)} {/* убираем null, если subcategory не найдена */}
+                      </>
+                    )}
                   </div>
                   <div className="flex justify-between">
                     <span className="text-muted-foreground">Год:</span>

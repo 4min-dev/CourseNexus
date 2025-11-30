@@ -11,6 +11,7 @@ import { db } from "./db";
 import { eq, and, or, isNotNull, sql, inArray, gte } from "drizzle-orm";
 import { extractVisitorMetadata, extractUtmParams } from "./visitor-metadata";
 import { sendTelegramMessage, generateVerificationCode } from "./telegram";
+import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import {
   verifyLinkingCode,
   deleteLinkingSession,
@@ -7033,14 +7034,36 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.get("/api/debug-buckets", async (req, res) => {
+  app.post("/api/upload-presign", async (req, res) => {
     try {
-      const { ListBucketsCommand } = await import("@aws-sdk/client-s3");
-      const command = new ListBucketsCommand({});
-      const response = await s3Client.send(command);
-      res.json({ buckets: response.Buckets });
+      const { fileName, fileType } = req.body;
+
+      if (!fileName) {
+        return res.status(400).json({ error: "fileName is required" });
+      }
+
+      const safeFileName = `${Date.now()}_${fileName.replace(/[^a-zA-Z0-9._-]/g, "_")}`;
+      const Key = `uploads/${safeFileName}`;
+
+      const command = new PutObjectCommand({
+        Bucket: process.env.NOWCDN_BUCKET!,
+        Key,
+        ContentType: fileType || "application/octet-stream",
+        ACL: "public-read",
+      });
+
+      const uploadUrl = await getSignedUrl(s3Client, command, { expiresIn: 120 });
+
+      const fileUrl = `https://storage.yandexcloud.net/${process.env.NOWCDN_BUCKET}/${Key}`;
+
+      res.json({
+        uploadUrl,
+        fileUrl,
+        fileName, // оригинальное имя (можно использовать на фронте)
+      });
     } catch (err: any) {
-      res.status(500).json({ error: err.message, code: err.Code });
+      console.error("Presign error:", err);
+      res.status(500).json({ error: err.message || "Presign failed" });
     }
   });
 
@@ -7065,7 +7088,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
         const url = `https://storage.yandexcloud.net/${process.env.NOWCDN_BUCKET}/${key}`;
 
-        res.json({ url, fileName: req.file.originalname });
+        const originalName = Buffer.from(req.file.originalname, "latin1").toString("utf8");
+
+
+        res.json({ url, fileName: originalName });
       } catch (err: any) {
         console.error(err);
         res.status(500).json({ error: err.message });

@@ -20,6 +20,7 @@ import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, Command
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
 import { NowCdnUploader } from "@/components/ui/NowCdnS3Uploader";
+import { uploadQueue } from "@/lib/upload-queue";
 
 interface Course {
   id: string;
@@ -142,7 +143,10 @@ export default function AdminCourseEdit() {
   } | null>(null);
 
   // Track video upload promises and progress
-  const [videoUploadPromise, setVideoUploadPromise] = useState<Promise<any> | null>(null);
+  const [videoUploadPromise, setVideoUploadPromise] = useState<{
+    promise: Promise<{ fileUrl: string; fileName: string }>;
+    lessonSessionId: number;
+  } | null>(null);
   const [uploadProgress, setUploadProgress] = useState<number>(0);
   const [uploadingLessonId, setUploadingLessonId] = useState<string | null>(null);
 
@@ -164,6 +168,7 @@ export default function AdminCourseEdit() {
   const [selectedLevels, setSelectedLevels] = useState<any[]>([]);
   const [selectedSubcategories, setSelectedSubcategories] = useState<string[]>([]);
   const [searchParams] = useSearchParams()
+  const subcategoryId = searchParams.get('subcategoryId')
   const categoryId = searchParams.get('categoryId')
   const parentId = searchParams.get('parentId')
 
@@ -181,7 +186,7 @@ export default function AdminCourseEdit() {
   });
 
   // Fetch sections with lessons
-  const { data: sections } = useQuery<Section[]>({
+  const { data: sections, refetch: refetchSections } = useQuery<Section[]>({
     queryKey: ["/api/admin/courses", courseId, "sections"],
     queryFn: async () => {
       const response = await fetch(`/api/admin/courses/${courseId}/sections`, {
@@ -313,7 +318,7 @@ export default function AdminCourseEdit() {
         hiddenInLibrary: course.hiddenInLibrary || false,
       });
       // Set selected levels from the course's level array
-      setSelectedLevels(Array.isArray(course.level) ? course.level : course.level ? [course.level] : []);
+      setSelectedLevels((Array.isArray(course.level) && course.level.length > 0) ? course.level : [...selectedLevels, subcategoryId])
 
       // Set uploaded thumbnail if course already has an image
       if (course.thumbnailImage) {
@@ -488,30 +493,60 @@ export default function AdminCourseEdit() {
       const response = await apiRequest("POST", `/api/admin/sections/${sectionId}/lessons`, lessonData);
       return await response.json();
     },
-
     onSuccess: async (newLesson: any) => {
       const lessonId = newLesson?.id;
+      if (!lessonId) {
+        toast({ title: "Урок создан, но ID не пришёл", variant: "destructive" });
+        return;
+      }
 
       toast({ title: "Урок создан" });
       setIsAddLessonDialogOpen(false);
       queryClient.invalidateQueries({ queryKey: ["/api/admin/courses", courseId, "sections"] });
 
-      // ←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←
-      // ГЛАВНОЕ ИЗМЕНЕНИЕ: сразу создаём урок + запускаем загрузку в фоне
-      if (videoFile && lessonId) {
-        // Сразу ставим статус uploading
-        await apiRequest("PUT", `/api/admin/lessons/${lessonId}`, {
-          processingStatus: 'uploading',
-          uploadProgress: 0,
-        });
+      // ← ВОТ ГЛАВНОЕ ИСПРАВЛЕНИЕ
+      if (videoFile) {
+        try {
+          // Ставим статус uploading — с обработкой ошибок
+          await apiRequest("PUT", `/api/admin/lessons/${lessonId}`, {
+            processingStatus: "uploading",
+            uploadProgress: 0,
+          });
+        } catch (err) {
+          console.error("Не удалось поставить статус uploading", err);
+          // Не падаем! Урок уже создан, загрузка всё равно пойдёт
+        }
 
-        // Запускаем загрузку в фоне
-        startBackgroundVideoUpload(lessonId, videoFile);
+        // Добавляем в очередь — тоже с try/catch
+        try {
+          uploadQueue.add({
+            lessonId,
+            file: videoFile,
+            fileName: videoFile.name,
+            onProgress: (percent) => {
+              // Обновляем прогресс только если урок ещё существует
+              apiRequest("PUT", `/api/admin/lessons/${lessonId}`, {
+                uploadProgress: percent,
+              }).catch(() => { }); // игнорируем ошибки прогресса
+            },
+          });
+
+          toast({
+            title: "Видео в очереди на загрузку",
+            description: `Позиция: ${uploadQueue.getQueueLength()}`,
+          });
+        } catch (err) {
+          console.error("Не удалось добавить в очередь", err);
+          toast({
+            title: "Видео не добавлено в очередь",
+            description: "Попробуйте загрузить позже",
+            variant: "destructive",
+          });
+        }
       }
-      // ←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←
     },
-
-    onError: () => {
+    onError: (error) => {
+      console.error("Ошибка создания урока:", error);
       toast({ title: "Ошибка при создании урока", variant: "destructive" });
     },
   });
@@ -1452,16 +1487,11 @@ export default function AdminCourseEdit() {
                 <Label>Видео урока (необязательно)</Label>
                 <NowCdnUploader
                   acceptedTypes="video/*"
-                  buttonText="Загрузить видео"
+                  buttonText="Выбрать видео"
                   inputId="video-upload"
                   onFileSelect={(file) => {
                     setVideoFile(file);
-                    setUploadProgress(0);
-                  }}
-                  onProgress={setUploadProgress}
-                  onUploadSuccess={({ fileUrl, fileName }) => {
-                    // Опционально: можно что-то делать после загрузки
-                    toast({ title: "Видео загружено" });
+                    toast({ title: "Видео добавлено в очередь" });
                   }}
                 />
               </div>
@@ -1559,15 +1589,12 @@ export default function AdminCourseEdit() {
 
             <Button
               onClick={() => {
-                if (!lessonFormData.title) return;
-                if (!videoFile) {
-                  toast({ title: "Выберите видео", variant: "destructive" });
+                if (!lessonFormData.title) {
+                  toast({ title: "Введите название урока", variant: "destructive" });
                   return;
                 }
-
                 const section = sections?.find(s => s.id === selectedSectionId);
                 const nextOrder = (section?.lessons?.length || 0) + 1;
-
                 createLessonMutation.mutate({
                   sectionId: selectedSectionId!,
                   title: lessonFormData.title,
@@ -1575,7 +1602,7 @@ export default function AdminCourseEdit() {
                   order: nextOrder,
                 });
               }}
-              disabled={createLessonMutation.isPending || !videoFile}
+              disabled={createLessonMutation.isPending}
             >
               {createLessonMutation.isPending ? "Создаём урок..." : "Создать урок"}
             </Button>
@@ -1622,16 +1649,11 @@ export default function AdminCourseEdit() {
                 <Label>Видео урока (необязательно)</Label>
                 <NowCdnUploader
                   acceptedTypes="video/*"
-                  buttonText="Загрузить видео"
-                  inputId="video-upload"
+                  buttonText="Выбрать видео"
+                  inputId="video-upload-lesson"
                   onFileSelect={(file) => {
-                    setVideoFile(file);
-                    setUploadProgress(0);
-                  }}
-                  onProgress={setUploadProgress}
-                  onUploadSuccess={({ fileUrl, fileName }) => {
-                    // Опционально: можно что-то делать после загрузки
-                    toast({ title: "Видео загружено" });
+                    setVideoFile(file); // сохраняем файл
+                    toast({ title: "Видео выбрано — можно создавать урок" });
                   }}
                 />
               </div>

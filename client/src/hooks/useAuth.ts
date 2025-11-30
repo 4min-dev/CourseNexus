@@ -2,14 +2,6 @@ import { useQuery } from "@tanstack/react-query";
 import type { User } from "@shared/schema";
 
 export function useAuth() {
-  const MODE = import.meta.env.MODE
-
-  if (MODE === 'development') return {
-    user: undefined,
-    isLoading: false,
-    isAuthenticated: true,
-  };
-
   const { data: user, isLoading, isError } = useQuery<User | null>({
     queryKey: ["/api/auth/user"],
     queryFn: async () => {
@@ -22,6 +14,10 @@ export function useAuth() {
         return null;
       }
 
+      if (!res.ok) {
+        throw new Error(`${res.status}: ${res.statusText}`);
+      }
+
       return res.json();
     },
     retry: false,
@@ -32,6 +28,6 @@ export function useAuth() {
   return {
     user: user || undefined,
     isLoading,
-    isAuthenticated: user && !isError,
+    isAuthenticated: !!user && !isError,
   };
 }

@@ -88,7 +88,7 @@ export class VideoConverter {
 
   private getDuration(inputPath: string): Promise<number> {
     return new Promise((resolve) => {
-      const ffprobe = spawn('ffprobe', [
+      const ffprobe = spawn('/usr/bin/ffprobe', [
         '-v', 'error',
         '-show_entries', 'format=duration',
         '-of', 'default=noprint_wrappers=1:nokey=1',
@@ -120,7 +120,7 @@ export class VideoConverter {
         output
       ];
 
-      const ffmpeg = spawn('ffmpeg', args);
+      const ffmpeg = spawn('/usr/bin/ffmpeg', args);
       ffmpeg.stderr.on('data', (data) => {
         const line = data.toString();
         if (line.includes('time=')) {
