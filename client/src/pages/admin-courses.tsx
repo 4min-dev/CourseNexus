@@ -91,7 +91,7 @@ export default function AdminCourses() {
     const instructor = (core.instructor ?? core.authorName ?? "").toLowerCase();
     const description = (core.description ?? "").toLowerCase();
     const query = searchQuery.toLowerCase();
-    
+
     return title.includes(query) || instructor.includes(query) || stripHtml(description).toLowerCase().includes(query);
   }) || [];
 
@@ -173,18 +173,18 @@ export default function AdminCourses() {
 
   const getLevelName = (level: string | string[] | null) => {
     if (!level) return "";
-    
+
     const names: Record<string, string> = {
       beginner: "Для новичков",
       intermediate: "Для опытных",
       advanced: "Продвинутый",
     };
-    
+
     // Handle array of levels
     if (Array.isArray(level)) {
       return level.map(l => names[l] || l).join(", ");
     }
-    
+
     // Handle single string level (backward compatibility)
     return names[level] || level;
   };
@@ -251,123 +251,123 @@ export default function AdminCourses() {
             ) : (
               <div className="grid gap-4">
                 {paginatedCourses.map((course, idx) => {
-              // ⚙️ нормализуем форму: либо плоский объект, либо из джойна { courses: {...} }
-              const raw: any = course as any;
-              const core: any = raw.courses ?? raw;
+                  // ⚙️ нормализуем форму: либо плоский объект, либо из джойна { courses: {...} }
+                  const raw: any = course as any;
+                  const core: any = raw.courses ?? raw;
 
-              const title = core.title ?? "";
-              const description = core.description ?? "";
-              const instructor = core.instructor ?? core.authorName ?? "";
-              const thumbnail =
-                core.thumbnailUrl ?? core.thumbnailImage ?? null;
-              const price =
-                core.price !== undefined && core.price !== null
-                  ? Number(core.price)
-                  : null;
-              const level = core.level ?? "";
-              const year = core.year ?? "";
-              const isFree = core.isFree ?? false;
+                  const title = core.title ?? "";
+                  const description = core.description ?? "";
+                  const instructor = core.instructor ?? core.authorName ?? "";
+                  const thumbnail =
+                    core.thumbnailUrl ?? core.thumbnailImage ?? null;
+                  const price =
+                    core.price !== undefined && core.price !== null
+                      ? Number(core.price)
+                      : null;
+                  const level = core.level ?? "";
+                  const year = core.year ?? "";
+                  const isFree = core.isFree ?? false;
 
-              return (
-                <Card
-                  key={`${core.id ?? course.id}-${idx}`}
-                  className={`hover-elevate transition-all ${core.hiddenInShop ? 'opacity-50' : ''}`}
-                  data-testid={`card-course-${core.id ?? course.id}`}
-                >
-                  <CardHeader>
-                    <div className="flex items-start gap-4">
-                      {thumbnail && (
-                        <img
-                          src={thumbnail}
-                          alt={title}
-                          className="w-24 h-24 object-cover rounded"
-                        />
-                      )}
-
-                      <div className="flex-1">
-                        <h3 className="text-xl font-bold mb-1">{title}</h3>
-                        {instructor && (
-                          <p className="text-sm text-muted-foreground mb-2">
-                            {instructor}
-                          </p>
-                        )}
-                        {description && (
-                          <p className="text-sm text-muted-foreground line-clamp-2">
-                            {stripHtml(description)}
-                          </p>
-                        )}
-                        <div className="flex items-center gap-4 mt-2 text-sm">
-                          <span>
-                            {isFree ? "Бесплатно" : (price !== null ? `${formatPrice(price)} ₽` : "—")}
-                          </span>
-                          {level && (
-                            <span className="text-muted-foreground">{getLevelName(level)}</span>
+                  return (
+                    <Card
+                      key={`${core.id ?? course.id}-${idx}`}
+                      className={`hover-elevate transition-all ${core.hiddenInShop ? 'opacity-50' : ''}`}
+                      data-testid={`card-course-${core.id ?? course.id}`}
+                    >
+                      <CardHeader>
+                        <div className="flex items-start gap-4">
+                          {thumbnail && (
+                            <img
+                              src={thumbnail}
+                              alt={title}
+                              className="w-24 h-24 object-cover rounded"
+                            />
                           )}
-                          {year && (
-                            <span className="text-muted-foreground">{year}</span>
-                          )}
+
+                          <div className="flex-1">
+                            <h3 className="text-xl font-bold mb-1">{title}</h3>
+                            {instructor && (
+                              <p className="text-sm text-muted-foreground mb-2">
+                                {instructor}
+                              </p>
+                            )}
+                            {description && (
+                              <p className="text-sm text-muted-foreground line-clamp-2">
+                                {stripHtml(description)}
+                              </p>
+                            )}
+                            <div className="flex items-center gap-4 mt-2 text-sm">
+                              <span>
+                                {isFree ? "Бесплатно" : (price !== null ? `${formatPrice(price)} ₽` : "—")}
+                              </span>
+                              {level && (
+                                <span className="text-muted-foreground">{getLevelName(level)}</span>
+                              )}
+                              {year && (
+                                <span className="text-muted-foreground">{year}</span>
+                              )}
+                            </div>
+                          </div>
+
+                          <div className="flex gap-2">
+                            <div
+                              className="flex items-center gap-2 px-2"
+                              onClick={(e) => {
+                                e.preventDefault();
+                                e.stopPropagation();
+                              }}
+                            >
+                              <Label
+                                htmlFor={`visibility-${core.id ?? course.id}`}
+                                className="text-sm cursor-pointer"
+                              >
+                                Активен в магазине
+                              </Label>
+                              <Switch
+                                id={`visibility-${core.id ?? course.id}`}
+                                checked={!core.hiddenInShop}
+                                onCheckedChange={(checked) => {
+                                  const cid = core.id ?? course.id;
+                                  if (cid) {
+                                    toggleVisibilityMutation.mutate(cid);
+                                  }
+                                }}
+                                data-testid={`switch-visibility-${core.id ?? course.id}`}
+                              />
+                            </div>
+
+                            <Button
+                              asChild
+                              size="icon"
+                              variant="ghost"
+                              data-testid={`button-edit-course-${core.id ?? course.id}`}
+                            >
+                              <Link href={`/admin/courses/${core.id ?? course.id}/edit?subcategoryId=${subcategoryId}`}>
+                                <Edit className="h-4 w-4" />
+                              </Link>
+                            </Button>
+
+                            <Button
+                              size="icon"
+                              variant="ghost"
+                              onClick={(e) => {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                const cid = core.id ?? course.id;
+                                if (cid && confirm(`Удалить курс "${title}"?`)) {
+                                  deleteMutation.mutate(cid);
+                                }
+                              }}
+                              data-testid={`button-delete-course-${core.id ?? course.id}`}
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          </div>
                         </div>
-                      </div>
-
-                      <div className="flex gap-2">
-                        <div 
-                          className="flex items-center gap-2 px-2"
-                          onClick={(e) => {
-                            e.preventDefault();
-                            e.stopPropagation();
-                          }}
-                        >
-                          <Label 
-                            htmlFor={`visibility-${core.id ?? course.id}`} 
-                            className="text-sm cursor-pointer"
-                          >
-                            Активен в магазине
-                          </Label>
-                          <Switch
-                            id={`visibility-${core.id ?? course.id}`}
-                            checked={!core.hiddenInShop}
-                            onCheckedChange={(checked) => {
-                              const cid = core.id ?? course.id;
-                              if (cid) {
-                                toggleVisibilityMutation.mutate(cid);
-                              }
-                            }}
-                            data-testid={`switch-visibility-${core.id ?? course.id}`}
-                          />
-                        </div>
-
-                        <Button
-                          asChild
-                          size="icon"
-                          variant="ghost"
-                          data-testid={`button-edit-course-${core.id ?? course.id}`}
-                        >
-                          <Link href={`/admin/courses/${core.id ?? course.id}/edit`}>
-                            <Edit className="h-4 w-4" />
-                          </Link>
-                        </Button>
-
-                        <Button
-                          size="icon"
-                          variant="ghost"
-                          onClick={(e) => {
-                            e.preventDefault();
-                            e.stopPropagation();
-                            const cid = core.id ?? course.id;
-                            if (cid && confirm(`Удалить курс "${title}"?`)) {
-                              deleteMutation.mutate(cid);
-                            }
-                          }}
-                          data-testid={`button-delete-course-${core.id ?? course.id}`}
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
-                      </div>
-                    </div>
-                  </CardHeader>
-                </Card>
-              );
-            })}
+                      </CardHeader>
+                    </Card>
+                  );
+                })}
               </div>
             )}
 

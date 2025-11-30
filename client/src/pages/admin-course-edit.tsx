@@ -1403,7 +1403,7 @@ export default function AdminCourseEdit() {
                                   const relevantSubcats = childSubcats.filter(sub =>
                                     selectedLevels.includes(sub.name)
                                   );
-
+                                  console.log(childCat)
                                   // Проверить, выбраны ли все релевантные подкатегории
                                   const allSelected = relevantSubcats.length > 0 &&
                                     relevantSubcats.every(sub => selectedSubcategories.includes(sub.id));
@@ -1740,21 +1740,6 @@ export default function AdminCourseEdit() {
                 />
               </div>
 
-              {uploadProgress > 0 && uploadProgress < 100 && (
-                <div className="mt-2">
-                  <div className="flex justify-between text-sm mb-1">
-                    <span>Загрузка видео...</span>
-                    <span>{uploadProgress}%</span>
-                  </div>
-                  <div className="w-full bg-gray-200 rounded-full h-2">
-                    <div
-                      className="bg-blue-600 h-2 rounded-full transition-all duration-300"
-                      style={{ width: `${uploadProgress}%` }}
-                    />
-                  </div>
-                </div>
-              )}
-
               {uploadedVideo && (
                 <div className="p-3 bg-muted rounded-md space-y-2">
                   <div className="flex items-center gap-2">
@@ -1912,15 +1897,15 @@ export default function AdminCourseEdit() {
                 <NowCdnUploader
                   acceptedTypes="video/*"
                   buttonText="Загрузить видео"
-                  inputId="videos-upload-input"
+                  inputId="video-upload"
+                  onFileSelect={(file) => {
+                    setVideoFile(file);
+                    setUploadProgress(0);
+                  }}
+                  onProgress={setUploadProgress}
                   onUploadSuccess={({ fileUrl, fileName }) => {
-                    const video = document.createElement("video");
-                    video.src = fileUrl;
-                    video.onloadedmetadata = () => {
-                      const duration = Math.ceil(video.duration / 60);
-                      setUploadedVideo({ fileName, fileUrl, duration });
-                      setLessonFormData(prev => ({ ...prev, videoUrl: fileUrl, duration }));
-                    };
+                    // Опционально: можно что-то делать после загрузки
+                    toast({ title: "Видео загружено" });
                   }}
                 />
               </div>
