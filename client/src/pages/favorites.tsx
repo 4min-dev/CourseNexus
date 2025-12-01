@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import { Card, CardContent, CardFooter, CardHeader } from "@/components/ui/card";
@@ -7,7 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Heart, BookOpen, ShoppingCart, Trash2, ArrowLeft } from "lucide-react";
-import type { Course } from "@shared/schema";
+import type { Category, Course, Subcategory } from "@shared/schema";
 import { Header } from "@/components/header";
 import { Sidebar } from "@/components/sidebar";
 import { Footer } from "@/components/footer";
@@ -43,6 +43,14 @@ export default function Favorites() {
     queryKey: ["/api/purchases"],
   });
 
+  const { data: categories } = useQuery<Category[]>({
+    queryKey: ["/api/categories"],
+  });
+
+  const { data: subcategories } = useQuery<Subcategory[]>({
+    queryKey: ["/api/subcategories"]
+  })
+
   const removeFavoriteMutation = useMutation({
     mutationFn: async (courseId: string) => {
       await apiRequest("DELETE", `/api/favorites/${courseId}`);
@@ -54,13 +62,51 @@ export default function Favorites() {
 
   const purchasedCourseIds = new Set(purchases?.map((p) => p.courseId) || []);
 
+  const categoryNameMap = useMemo(() => {
+    const map: Record<string, string> = {};
+
+    // Add category mappings (slug → Russian name)
+    if (categories) {
+      categories.forEach(cat => {
+        map[cat.slug] = cat.name;
+        // Also map English name to Russian (for backward compatibility)
+        map[cat.nameEn.toLowerCase()] = cat.name;
+      });
+    }
+
+    // Add subcategory mappings (slug → Russian name)
+    if (subcategories) {
+      subcategories.forEach(sub => {
+        map[sub.slug] = sub.name;
+        // Also map English name to Russian (for backward compatibility)
+        map[sub.nameEn.toLowerCase()] = sub.name;
+      });
+    }
+
+    return map;
+  }, [categories, subcategories]);
+
   const getPlatformName = (platform: string) => {
-    const names: Record<string, string> = {
-      Wildberries: "Wildberries",
-      Ozon: "Ozon",
-      "Yandex Market": "Яндекс.Маркет",
+    // Legacy marketplace names (hardcoded)
+    const legacyNames: Record<string, string> = {
+      wb: "Wildberries",
+      ozon: "Ozon",
+      yandex: "Яндекс.Маркет",
     };
-    return names[platform] || platform;
+
+    // Try legacy mapping first
+    if (legacyNames[platform]) {
+      return legacyNames[platform];
+    }
+
+    // Try category/subcategory mapping (by slug or nameEn)
+    const mappedName = categoryNameMap[platform.toLowerCase()];
+    if (mappedName) {
+      return mappedName;
+    }
+
+    // Fallback to original platform string
+    return platform;
   };
 
   const getLevelName = (level: string) => {
@@ -69,7 +115,7 @@ export default function Favorites() {
       "Средний": "Для опытных",
       "Продвинутый": "Продвинутый",
     };
-    
+
     return names[level] || level;
   };
 
@@ -80,10 +126,10 @@ export default function Favorites() {
   };
 
   return (
-    <div className="flex flex-col min-h-screen overflow-x-hidden">
+    <div className="flex flex-col min-h-screen overflow-x-hidden" >
       <Header onMenuToggle={() => setSidebarOpen(!sidebarOpen)} />
       <div className="flex flex-1">
-        <Sidebar 
+        <Sidebar
           isOpen={sidebarOpen}
           selectedCategories={selectedCategories}
           onCategoryChange={setSelectedCategories}
@@ -106,7 +152,7 @@ export default function Favorites() {
                 <ArrowLeft className="h-4 w-4" />
                 Назад в магазин
               </Button>
-              
+
               <div className="flex items-center gap-2 md:gap-3">
                 <Heart className="h-6 w-6 md:h-8 md:w-8 text-red-500 fill-red-500 flex-shrink-0" />
                 <div>
@@ -195,29 +241,34 @@ export default function Favorites() {
 
                         {/* Rating and viewing counter */}
                         <div className="flex items-center justify-between gap-2">
-                          <StarRating 
-                            rating={Number(course.rating || 0)} 
+                          <StarRating
+                            rating={Number(course.rating || 0)}
                             reviewsCount={Number(course.reviewsCount || 0)}
                             size="sm"
                           />
-                          <ViewingCounter courseId={course.id} />
+                          <ViewingCounter value={course.reviewsCount} courseId={course.id} />
                         </div>
 
                         <div className="flex flex-wrap gap-2">
                           <Badge variant="outline" className="text-xs font-medium">
                             {getPlatformName(course.platform || "")}
                           </Badge>
-                          {Array.isArray(course.level) ? (
-                            course.level.map((lvl, idx) => (
-                              <Badge key={idx} variant="outline" className="text-xs font-medium">
-                                {getLevelName(lvl)}
-                              </Badge>
-                            ))
-                          ) : course.level ? (
-                            <Badge variant="outline" className="text-xs font-medium">
-                              {getLevelName(course.level)}
-                            </Badge>
-                          ) : null}
+                          {Array.isArray(course.level) && course.level.length > 0 && (
+                            <div className="flex flex-wrap gap-2">
+                              {Array.from(
+                                new Set(
+                                  course.level
+                                    .map(id => subcategories.find(sub => sub.id === id))
+                                    .filter(Boolean)
+                                    .map(sub => sub.name)
+                                )
+                              ).map(levelName => (
+                                <Badge key={levelName} variant="outline" className="text-xs font-medium">
+                                  {levelName}
+                                </Badge>
+                              ))}
+                            </div>
+                          )}
                           {course.year && (
                             <Badge variant="outline" className="text-xs font-medium">
                               {course.year}
@@ -249,11 +300,10 @@ export default function Favorites() {
                           </div>
                         </div>
                         <Button
-                          className={`w-full font-semibold shadow-lg transition-all duration-200 ${
-                            isPurchased
-                              ? 'bg-blue-600 hover:bg-blue-700 shadow-blue-500/30'
-                              : 'shadow-primary/30'
-                          }`}
+                          className={`w-full font-semibold shadow-lg transition-all duration-200 ${isPurchased
+                            ? 'bg-blue-600 hover:bg-blue-700 shadow-blue-500/30'
+                            : 'shadow-primary/30'
+                            }`}
                           data-testid={`button-view-favorite-${course.id}`}
                           onClick={() => setLocation(`/course/${course.id}`)}
                         >
@@ -272,11 +322,11 @@ export default function Favorites() {
                   <p className="text-muted-foreground">
                     Добавьте курсы в избранное, нажав на значок сердечка
                   </p>
-                  <Button 
+                  <Button
                     onClick={() => {
                       const shopUrl = sessionStorage.getItem('shopUrl');
                       setLocation(shopUrl || '/shop');
-                    }} 
+                    }}
                     data-testid="button-go-to-shop"
                   >
                     Перейти в каталог
@@ -288,6 +338,6 @@ export default function Favorites() {
         </main>
       </div>
       <Footer />
-    </div>
+    </div >
   );
 }

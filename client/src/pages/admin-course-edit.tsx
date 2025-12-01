@@ -15,12 +15,12 @@ import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/hooks/use-toast";
 import { Plus, Trash2, ArrowLeft, Save, Play, FileText, ChevronDown, ChevronRight, Upload, X, Edit, RefreshCw, Check, ChevronsUpDown, AlertCircle } from "lucide-react";
 import { queryClient, apiRequest } from "@/lib/queryClient";
-import { ObjectUploader } from "@/components/ObjectUploader";
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
-import { NowCdnUploader } from "@/components/ui/NowCdnS3Uploader";
+import { NowCdnVideoUploader } from "@/components/ui/NowCdnS3VideoUploader";
 import { uploadQueue } from "@/lib/upload-queue";
+import { NowCdnUploader } from "@/components/ui/NowCdnS3Uploader";
 
 interface Course {
   id: string;
@@ -317,8 +317,6 @@ export default function AdminCourseEdit() {
         hiddenInShop: course.hiddenInShop || false,
         hiddenInLibrary: course.hiddenInLibrary || false,
       });
-      // Set selected levels from the course's level array
-      setSelectedLevels((Array.isArray(course.level) && course.level.length > 0) ? course.level : [...selectedLevels, subcategoryId])
 
       // Set uploaded thumbnail if course already has an image
       if (course.thumbnailImage) {
@@ -329,6 +327,31 @@ export default function AdminCourseEdit() {
       }
     }
   }, [course]);
+
+  useEffect(() => {
+    if (!subcategoryId || !allSubcategories.length) return;
+
+    const currentSubcat = allSubcategories.find(s => s.id === subcategoryId);
+    if (!currentSubcat) return;
+
+    const levelName = currentSubcat.name; // например "Для новичков"
+
+    // Находим ВСЕ подкатегории с таким же именем (уровнем)
+    const idsToSelect = allSubcategories
+      .filter(sub => sub.name === levelName)
+      .map(sub => sub.id);
+
+    setSelectedLevels(prev => {
+      // Если уже есть — не дублируем
+      const newLevels = [...prev];
+      idsToSelect.forEach(id => {
+        if (!newLevels.includes(id)) {
+          newLevels.push(id);
+        }
+      });
+      return newLevels;
+    });
+  }, [subcategoryId, allSubcategories]);
 
   // Load selected subcategories when fetched
   useEffect(() => {
@@ -486,7 +509,6 @@ export default function AdminCourseEdit() {
     },
   });
 
-  // Create lesson mutation (metadata only)
   const createLessonMutation = useMutation({
     mutationFn: async (data: { sectionId: string; title: string; description?: string; order: number }) => {
       const { sectionId, ...lessonData } = data;
@@ -496,54 +518,61 @@ export default function AdminCourseEdit() {
     onSuccess: async (newLesson: any) => {
       const lessonId = newLesson?.id;
       if (!lessonId) {
-        toast({ title: "Урок создан, но ID не пришёл", variant: "destructive" });
+        toast({ title: "Урок создан, но ID не получен", variant: "destructive" });
         return;
       }
 
       toast({ title: "Урок создан" });
-      setIsAddLessonDialogOpen(false);
-      queryClient.invalidateQueries({ queryKey: ["/api/admin/courses", courseId, "sections"] });
 
-      // ← ВОТ ГЛАВНОЕ ИСПРАВЛЕНИЕ
+      // 1. Добавляем видео в очередь (если есть)
       if (videoFile) {
         try {
-          // Ставим статус uploading — с обработкой ошибок
           await apiRequest("PUT", `/api/admin/lessons/${lessonId}`, {
             processingStatus: "uploading",
             uploadProgress: 0,
           });
-        } catch (err) {
-          console.error("Не удалось поставить статус uploading", err);
-          // Не падаем! Урок уже создан, загрузка всё равно пойдёт
-        }
+        } catch (e) { /* игнорируем, но логируем */ }
 
-        // Добавляем в очередь — тоже с try/catch
-        try {
-          uploadQueue.add({
-            lessonId,
-            file: videoFile,
-            fileName: videoFile.name,
-            onProgress: (percent) => {
-              // Обновляем прогресс только если урок ещё существует
-              apiRequest("PUT", `/api/admin/lessons/${lessonId}`, {
-                uploadProgress: percent,
-              }).catch(() => { }); // игнорируем ошибки прогресса
-            },
-          });
+        uploadQueue.add({
+          lessonId,
+          file: videoFile,
+          fileName: videoFile.name,
+          onProgress: (percent) => {
+            apiRequest("PUT", `/api/admin/lessons/${lessonId}`, { uploadProgress: percent }).catch(() => { });
+          },
+        });
 
-          toast({
-            title: "Видео в очереди на загрузку",
-            description: `Позиция: ${uploadQueue.getQueueLength()}`,
-          });
-        } catch (err) {
-          console.error("Не удалось добавить в очередь", err);
-          toast({
-            title: "Видео не добавлено в очередь",
-            description: "Попробуйте загрузить позже",
-            variant: "destructive",
-          });
-        }
+        toast({
+          title: "Видео в очереди на загрузку",
+          description: `Позиция в очереди: ${uploadQueue.getQueueLength()}`,
+        });
       }
+
+      // 2. Сохраняем прикреплённые файлы (PDF, ZIP и т.д.)
+      if (uploadedFiles.length > 0) {
+        for (const file of uploadedFiles) {
+          createFileMutation.mutate({
+            courseId: courseId!,
+            lessonId: lessonId, // теперь у нас есть ID урока!
+            fileName: file.fileName,
+            fileUrl: file.fileUrl,
+            fileType: file.fileType,
+            displayOrder: 0,
+          });
+        }
+        toast({ title: `Добавлено файлов: ${uploadedFiles.length}` });
+      }
+
+      // Обновляем UI
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/courses", courseId, "sections"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/courses", courseId, "files"] });
+
+      // Закрываем диалог и чистим форму
+      setIsAddLessonDialogOpen(false);
+      setLessonFormData({ title: "", description: "", videoUrl: "", duration: 0 });
+      setVideoFile(null);
+      setUploadedFiles([]);
+      setUploadedVideo(null);
     },
     onError: (error) => {
       console.error("Ошибка создания урока:", error);
@@ -850,7 +879,10 @@ export default function AdminCourseEdit() {
         <div className="flex items-center gap-4">
           <Button
             variant="ghost"
-            onClick={() => window.history.back()}
+            onClick={() => {
+              window.history.go(-1);
+              setTimeout(() => window.location.reload(), 0);
+            }}
             data-testid="button-back"
           >
             <ArrowLeft className="mr-2 h-4 w-4" />
@@ -1114,108 +1146,109 @@ export default function AdminCourseEdit() {
                 <div>
                   <Label className="mb-2 block">Уровень</Label>
                   <div className="space-y-2">
-                    {subcategories.map((level) => (
-                      <div key={level.id} className="flex items-center gap-2">
-                        <Checkbox
-                          id={`level-${level.id}`}
-                          checked={selectedLevels.includes(level.id)}
-                          onCheckedChange={(checked) => {
-                            if (checked) {
-                              setSelectedLevels([...selectedLevels, level.id]);
-                            } else {
-                              setSelectedLevels(selectedLevels.filter(l => l !== level.id));
-                            }
-                          }}
-                          data-testid={`checkbox-level-${level.name}`}
-                        />
-                        <Label htmlFor={`level-${level.id}`}>{level.name}</Label>
-                      </div>
-                    ))}
+                    {["Для новичков", "Для опытных", "Продвинутый", "Премиум"].map((levelName) => {
+                      // Находим хотя бы одну подкатегорию с таким именем
+                      const hasLevel = allSubcategories.some(sub => sub.name === levelName);
+
+                      return (
+                        <div key={levelName} className="flex items-center gap-2">
+                          <Checkbox
+                            id={`level-${levelName}`}
+                            checked={allSubcategories.some(sub =>
+                              sub.name === levelName && selectedLevels.includes(sub.id)
+                            )}
+                            onCheckedChange={(checked) => {
+                              if (checked) {
+                                // Добавляем ВСЕ подкатегории с таким именем
+                                const idsToAdd = allSubcategories
+                                  .filter(sub => sub.name === levelName)
+                                  .map(sub => sub.id);
+                                setSelectedLevels(prev => [...new Set([...prev, ...idsToAdd])]);
+                              } else {
+                                // Убираем ВСЕ подкатегории с таким именем
+                                const idsToRemove = allSubcategories
+                                  .filter(sub => sub.name === levelName)
+                                  .map(sub => sub.id);
+                                setSelectedLevels(prev => prev.filter(id => !idsToRemove.includes(id)));
+                              }
+                            }}
+                          />
+                          <Label htmlFor={`level-${levelName}`} className="cursor-pointer">
+                            {levelName}
+                          </Label>
+                        </div>
+                      );
+                    })}
                   </div>
                 </div>
 
-                <div>
-                  <Label className="mb-2 block">Подкатегории</Label>
-                  <p className="text-sm text-muted-foreground mb-3">
-                    Выберите категории для курса. Уровни применятся автоматически из секции "Уровень" выше.
-                  </p>
-                  <div className="border rounded-md max-h-[300px] overflow-y-auto overflow-x-hidden">
-                    <div className="p-4 space-y-3">
-                      {(() => {
-                        // Разделяем на parent и child категории
-                        const parentCategories = categories.filter(cat => cat.id === parentId);
-                        const childCategoriesByParent = categories.filter(cat => cat.parentId);
+                <div className="border rounded-md max-h-[400px] overflow-y-auto">
+                  <div className="p-4 space-y-6">
+                    {selectedLevels.length === 0 ? (
+                      <div className="text-center py-8 text-muted-foreground">
+                        <AlertCircle className="h-8 w-8 mx-auto mb-3 opacity-50" />
+                        <p>Сначала выберите хотя бы один уровень выше</p>
+                      </div>
+                    ) : (
+                      categories
+                        .filter(cat => !cat.parentId)
+                        .map((parentCat) => {
+                          const childCategories = categories.filter(cat => cat.parentId === parentCat.id);
 
-                        return parentCategories.map((parentCat) => {
-                          const childCats = childCategoriesByParent.filter(child => child.id === categoryId);
-                          if (childCats.length === 0) return null;
+                          const availableChildCats = childCategories.filter(childCat =>
+                            allSubcategories.some(sub =>
+                              sub.categoryId === childCat.id &&
+                              selectedLevels.some(selectedId =>
+                                allSubcategories.find(s => s.id === selectedId)?.name === sub.name
+                              )
+                            )
+                          );
+
+                          if (availableChildCats.length === 0) return null;
 
                           return (
-                            <div key={parentCat.id} className="border-b last:border-b-0 pb-3 last:pb-0">
-                              <div className="font-semibold text-sm mb-2 text-primary">
+                            <div key={parentCat.id} className="border-b last:border-b-0 pb-6 last:pb-0">
+                              <div className="font-semibold text-sm mb-3 text-primary">
                                 {parentCat.name}
                               </div>
-                              <div className="space-y-2 pl-4">
-                                {childCats.map((childCat) => {
-                                  // Найти все subcategories этой child category
-                                  const childSubcats = allSubcategories.filter(sub => sub.categoryId === childCat.id);
-
-                                  // Найти те, что соответствуют выбранным уровням
-                                  const relevantSubcats = childSubcats.filter(sub =>
-                                    selectedLevels.includes(sub.id)
+                              <div className="space-y-3 pl-4">
+                                {availableChildCats.map((childCat) => {
+                                  // Все подкатегории этой категории, у которых имя совпадает с выбранными уровнями
+                                  const relevantSubcats = allSubcategories.filter(sub =>
+                                    sub.categoryId === childCat.id &&
+                                    selectedLevels.some(selectedId =>
+                                      allSubcategories.find(s => s.id === selectedId)?.name === sub.name
+                                    )
                                   );
 
-                                  // Проверить, выбраны ли все релевантные подкатегории
-                                  const allSelected = relevantSubcats.length > 0 &&
-                                    relevantSubcats.every(sub => selectedSubcategories.includes(sub.id));
+                                  const allSelected = relevantSubcats.every(sub =>
+                                    selectedSubcategories.includes(sub.id)
+                                  );
+                                  const someSelected = relevantSubcats.some(sub =>
+                                    selectedSubcategories.includes(sub.id)
+                                  );
 
-                                  const handleChildCategoryToggle = (checked: boolean) => {
-                                    if (relevantSubcats.length === 0) {
-                                      toast({
-                                        title: "Выберите уровни",
-                                        description: "Сначала выберите хотя бы один уровень в секции 'Уровень' выше",
-                                        variant: "destructive"
-                                      });
-                                      return;
-                                    }
-
-                                    const subcatIds = relevantSubcats.map(sub => sub.id);
-
-                                    if (checked) {
-                                      // Добавить все релевантные подкатегории
-                                      const newSelected = [...selectedSubcategories];
-                                      subcatIds.forEach(id => {
-                                        if (!newSelected.includes(id)) {
-                                          newSelected.push(id);
-                                        }
-                                      });
-                                      setSelectedSubcategories(newSelected);
-                                    } else {
-                                      // Удалить все подкатегории этой child category
-                                      setSelectedSubcategories(
-                                        selectedSubcategories.filter(id => !subcatIds.includes(id))
-                                      );
-                                    }
+                                  const handleToggle = (checked: boolean) => {
+                                    const subcatIds = relevantSubcats.map(s => s.id);
+                                    setSelectedSubcategories(prev =>
+                                      checked
+                                        ? [...new Set([...prev, ...subcatIds])]
+                                        : prev.filter(id => !subcatIds.includes(id))
+                                    );
                                   };
 
                                   return (
                                     <div key={childCat.id} className="flex items-center gap-2">
                                       <Checkbox
-                                        id={`child-category-${childCat.id}`}
                                         checked={allSelected}
-                                        onCheckedChange={handleChildCategoryToggle}
-                                        data-testid={`checkbox-child-category-${childCat.slug}`}
+                                        indeterminate={!allSelected && someSelected}
+                                        onCheckedChange={handleToggle}
                                       />
-                                      <Label
-                                        htmlFor={`child-category-${childCat.id}`}
-                                        className="flex items-center gap-2 cursor-pointer"
-                                      >
+                                      <Label className="flex items-center gap-2 cursor-pointer font-normal">
                                         {childCat.name}
-                                        {relevantSubcats.length > 0 && (
-                                          <span className="text-xs text-muted-foreground">
-                                            ({relevantSubcats.map(s => s.name).join(', ')})
-                                          </span>
-                                        )}
+                                        <span className="text-xs text-muted-foreground">
+                                          ({relevantSubcats.map(s => s.name).join(', ')})
+                                        </span>
                                       </Label>
                                     </div>
                                   );
@@ -1223,21 +1256,11 @@ export default function AdminCourseEdit() {
                               </div>
                             </div>
                           );
-                        });
-                      })()}
-                    </div>
+                        })
+                    )}
                   </div>
-                  <Button
-                    className="mt-4"
-                    variant="outline"
-                    onClick={() => updateSubcategoriesMutation.mutate(selectedSubcategories)}
-                    disabled={updateSubcategoriesMutation.isPending}
-                    data-testid="button-save-subcategories"
-                  >
-                    <Save className="mr-2 h-4 w-4" />
-                    {updateSubcategoriesMutation.isPending ? "Сохранение..." : "Сохранить подкатегории"}
-                  </Button>
                 </div>
+
 
                 <Button
                   onClick={handleSaveBasicInfo}
@@ -1249,6 +1272,17 @@ export default function AdminCourseEdit() {
                 >
                   <Save className="mr-2 h-4 w-4" />
                   Сохранить
+                </Button>
+
+                <Button
+                  className="mt-4 ml-4"
+                  variant="outline"
+                  onClick={() => updateSubcategoriesMutation.mutate(selectedSubcategories)}
+                  disabled={updateSubcategoriesMutation.isPending}
+                  data-testid="button-save-subcategories"
+                >
+                  <Save className="mr-2 h-4 w-4" />
+                  {updateSubcategoriesMutation.isPending ? "Сохранение..." : "Сохранить подкатегории"}
                 </Button>
               </CardContent>
             </Card>
@@ -1485,7 +1519,7 @@ export default function AdminCourseEdit() {
             <div className="border rounded-md p-4 space-y-3">
               <div className="flex items-center justify-between">
                 <Label>Видео урока (необязательно)</Label>
-                <NowCdnUploader
+                <NowCdnVideoUploader
                   acceptedTypes="video/*"
                   buttonText="Выбрать видео"
                   inputId="video-upload"
@@ -1601,6 +1635,8 @@ export default function AdminCourseEdit() {
                   description: lessonFormData.description || undefined,
                   order: nextOrder,
                 });
+
+
               }}
               disabled={createLessonMutation.isPending}
             >
@@ -1647,13 +1683,13 @@ export default function AdminCourseEdit() {
             <div className="border rounded-md p-4 space-y-3">
               <div className="flex items-center justify-between">
                 <Label>Видео урока (необязательно)</Label>
-                <NowCdnUploader
+                <NowCdnVideoUploader
                   acceptedTypes="video/*"
                   buttonText="Выбрать видео"
-                  inputId="video-upload-lesson"
+                  inputId="video-upload"
                   onFileSelect={(file) => {
-                    setVideoFile(file); // сохраняем файл
-                    toast({ title: "Видео выбрано — можно создавать урок" });
+                    setVideoFile(file);
+                    toast({ title: "Видео добавлено в очередь" });
                   }}
                 />
               </div>

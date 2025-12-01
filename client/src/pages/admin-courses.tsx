@@ -190,11 +190,12 @@ export default function AdminCourses() {
 
   const getSubcategoryNames = (levelIds: string[] | null | undefined): string => {
     if (!levelIds || !Array.isArray(levelIds) || levelIds.length === 0) return "";
-    console.log('subcategories', subcategories)
+
     return levelIds
       .map((id) => {
         const sub = subcategories.find((s) => s.id === id);
-        return sub?.name || id;
+
+        return sub?.name
       })
       .filter(Boolean)
       .join(", ");

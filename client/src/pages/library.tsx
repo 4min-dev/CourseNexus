@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -8,7 +8,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Progress } from "@/components/ui/progress";
 import { BookOpen, Sparkles, Download, Package, Calendar, Crown } from "lucide-react";
 import { Link } from "wouter";
-import type { Course, Purchase } from "@shared/schema";
+import type { Category, Course, Purchase, Subcategory } from "@shared/schema";
 import { Header } from "@/components/header";
 import { Sidebar } from "@/components/sidebar";
 import { Footer } from "@/components/footer";
@@ -60,7 +60,7 @@ export default function Library() {
   const { user } = useAuth();
   const markedPurchasesRef = useRef<Set<string>>(new Set());
   const markedVipPackagesRef = useRef<Set<string>>(new Set());
-  
+
   const [selectedCategories, setSelectedCategories] = useState<{
     platform?: string;
     level?: string;
@@ -82,11 +82,11 @@ export default function Library() {
       if (selectedCategories.minRating !== undefined) params.append("minRating", selectedCategories.minRating.toString());
       if (selectedCategories.author) params.append("author", selectedCategories.author);
       if (searchQuery) params.append("search", searchQuery);
-      
+
       const url = `/api/library${params.toString() ? `?${params.toString()}` : ""}`;
-      const res = await fetch(url, { 
+      const res = await fetch(url, {
         credentials: "include",
-        cache: "no-store" 
+        cache: "no-store"
       });
       if (!res.ok) throw new Error(`${res.status}: ${res.statusText}`);
       return res.json();
@@ -94,12 +94,20 @@ export default function Library() {
     staleTime: 0,
   });
 
+  const { data: categories } = useQuery<Category[]>({
+    queryKey: ["/api/categories"],
+  });
+
+  const { data: subcategories } = useQuery<Subcategory[]>({
+    queryKey: ["/api/subcategories"]
+  })
+
   const { data: vipPackages, isLoading: vipLoading } = useQuery<VipPackage[]>({
     queryKey: ["/api/vip-packages"],
     queryFn: async () => {
-      const res = await fetch("/api/vip-packages", { 
+      const res = await fetch("/api/vip-packages", {
         credentials: "include",
-        cache: "no-store" 
+        cache: "no-store"
       });
       if (!res.ok) throw new Error(`${res.status}: ${res.statusText}`);
       return res.json();
@@ -110,9 +118,9 @@ export default function Library() {
   const { data: programPurchases, isLoading: programsLoading } = useQuery<ProgramPurchase[]>({
     queryKey: ["/api/program-purchases"],
     queryFn: async () => {
-      const res = await fetch("/api/program-purchases", { 
+      const res = await fetch("/api/program-purchases", {
         credentials: "include",
-        cache: "no-store" 
+        cache: "no-store"
       });
       if (!res.ok) {
         if (res.status === 401) return [];
@@ -144,12 +152,12 @@ export default function Library() {
   // Mark purchases as viewed when they appear on the current page
   useEffect(() => {
     if (!user || !paginatedLibrary || paginatedLibrary.length === 0) return;
-    
+
     // Extract purchase IDs from the current page that haven't been viewed AND not already marked
     const purchaseIds = paginatedLibrary
       .filter(item => !item.viewedInLibrary && !markedPurchasesRef.current.has(item.id))
       .map(item => item.id);
-    
+
     if (purchaseIds.length > 0) {
       // Add to marked set immediately to prevent duplicate requests
       purchaseIds.forEach(id => markedPurchasesRef.current.add(id));
@@ -160,12 +168,12 @@ export default function Library() {
   // Mark VIP packages as viewed when loaded
   useEffect(() => {
     if (!user || !vipPackages || vipPackages.length === 0) return;
-    
+
     // Extract VIP package IDs that haven't been viewed AND not already marked
     const vipPackageIds = vipPackages
       .filter(pkg => !pkg.viewedInLibrary && !markedVipPackagesRef.current.has(pkg.id))
       .map(pkg => pkg.id);
-    
+
     if (vipPackageIds.length > 0) {
       // Add to marked set immediately to prevent duplicate requests
       vipPackageIds.forEach(id => markedVipPackagesRef.current.add(id));
@@ -185,13 +193,51 @@ export default function Library() {
     }
   }, [library, totalPages, currentPage]);
 
+  const categoryNameMap = useMemo(() => {
+    const map: Record<string, string> = {};
+
+    // Add category mappings (slug → Russian name)
+    if (categories) {
+      categories.forEach(cat => {
+        map[cat.slug] = cat.name;
+        // Also map English name to Russian (for backward compatibility)
+        map[cat.nameEn.toLowerCase()] = cat.name;
+      });
+    }
+
+    // Add subcategory mappings (slug → Russian name)
+    if (subcategories) {
+      subcategories.forEach(sub => {
+        map[sub.slug] = sub.name;
+        // Also map English name to Russian (for backward compatibility)
+        map[sub.nameEn.toLowerCase()] = sub.name;
+      });
+    }
+
+    return map;
+  }, [categories, subcategories]);
+
   const getPlatformName = (platform: string) => {
-    const names: Record<string, string> = {
-      "Wildberries": "Wildberries",
-      "Ozon": "Ozon",
-      "Yandex Market": "Яндекс.Маркет",
+    // Legacy marketplace names (hardcoded)
+    const legacyNames: Record<string, string> = {
+      wb: "Wildberries",
+      ozon: "Ozon",
+      yandex: "Яндекс.Маркет",
     };
-    return names[platform] || platform;
+
+    // Try legacy mapping first
+    if (legacyNames[platform]) {
+      return legacyNames[platform];
+    }
+
+    // Try category/subcategory mapping (by slug or nameEn)
+    const mappedName = categoryNameMap[platform.toLowerCase()];
+    if (mappedName) {
+      return mappedName;
+    }
+
+    // Fallback to original platform string
+    return platform;
   };
 
   const getLevelName = (level: string) => {
@@ -200,7 +246,7 @@ export default function Library() {
       "Средний": "Для опытных",
       "Продвинутый": "Продвинутый",
     };
-    
+
     return names[level] || level;
   };
 
@@ -263,12 +309,12 @@ export default function Library() {
 
   return (
     <div className="min-h-screen bg-background relative">
-      <Header 
-        onSearchChange={setSearchQuery} 
+      <Header
+        onSearchChange={setSearchQuery}
         onMenuToggle={() => setSidebarOpen(!sidebarOpen)}
         onResetFilters={handleResetFilters}
       />
-      
+
       <div className="relative flex">
         <Sidebar
           selectedCategories={selectedCategories}
@@ -277,7 +323,7 @@ export default function Library() {
           showPriceFilter={false}
           catalogPath="/library"
         />
-        
+
         {sidebarOpen && (
           <div
             className="fixed inset-0 bg-background/80 backdrop-blur-sm z-30 lg:hidden"
@@ -302,7 +348,7 @@ export default function Library() {
                   {activeVipPackages.map(pkg => (
                     <Link key={pkg.id} href={`/library/vip-select/${pkg.id}`}>
                       <div>
-                        <Card 
+                        <Card
                           className={`group cursor-pointer transition-all duration-200 border-2 ${getTierBorderColor(pkg.tier)} hover:border-primary/50 hover:shadow-xl hover:shadow-primary/10 hover:-translate-y-1 bg-card`}
                           data-testid={`card-vip-package-${pkg.id}`}
                         >
@@ -319,7 +365,7 @@ export default function Library() {
                                 </div>
                               </div>
                             </div>
-                            
+
                             <div className="space-y-2.5">
                               <div className="flex items-center justify-between text-sm">
                                 <span>Курсы {new Date().getFullYear()} года:</span>
@@ -336,8 +382,8 @@ export default function Library() {
                             </div>
                           </CardHeader>
                           <CardContent>
-                            <Button 
-                              className="w-full" 
+                            <Button
+                              className="w-full"
                               variant="default"
                               size="lg"
                               data-testid={`button-select-courses-${pkg.id}`}
@@ -362,9 +408,9 @@ export default function Library() {
                   {programPurchases.map((purchase) => {
                     const program = purchase.program;
                     if (!program) return null;
-                    
+
                     return (
-                      <Card 
+                      <Card
                         key={purchase.id}
                         className="group overflow-hidden transition-all duration-200 border-2 hover:border-primary/50 hover:shadow-xl hover:shadow-primary/10 hover:-translate-y-1 bg-gradient-to-br from-background via-background to-purple/5"
                         data-testid={`card-library-program-${program.id}`}
@@ -382,7 +428,7 @@ export default function Library() {
                             </div>
                           )}
                         </div>
-                        
+
                         <CardHeader className="space-y-3 p-4 md:p-6">
                           <h3 className="font-bold text-base md:text-lg line-clamp-2 transition-colors duration-200">
                             {program.title}
@@ -399,7 +445,7 @@ export default function Library() {
                             Куплено: {new Date(purchase.purchaseDate).toLocaleDateString("ru-RU")}
                           </p>
                         </CardHeader>
-                        
+
                         <CardContent>
                           <Button
                             className="w-full gap-2"
@@ -444,70 +490,77 @@ export default function Library() {
                 <div className="space-y-3 md:space-y-4">
                   <h2 className="text-xl md:text-2xl font-bold">Мои курсы</h2>
                   <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 md:gap-6">
-                  {paginatedLibrary.map(({ course, purchaseDate }) => (
-                    <Link key={course.id} href={`/library/${course.id}`}>
-                      <div>
-                        <Card className="group overflow-hidden transition-all duration-200 cursor-pointer border-2 hover:border-primary/50 hover:shadow-xl hover:shadow-primary/10 hover:-translate-y-1 bg-gradient-to-br from-background via-background to-primary/5" data-testid={`card-library-course-${course.id}`}>
-                          <div className="aspect-video w-full bg-gradient-to-br from-primary/10 to-primary/5 relative overflow-hidden">
-                            {course.thumbnailImage ? (
-                              <img
-                                src={course.thumbnailImage}
-                                alt={course.title}
-                                className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-200"
-                              />
-                            ) : (
-                              <div className="w-full h-full flex items-center justify-center">
-                                <BookOpen className="h-16 w-16 text-primary/40 group-hover:text-primary/60 transition-colors duration-200" />
-                              </div>
-                            )}
-                          </div>
-                          
-                          <CardHeader className="space-y-3 p-4 md:p-6">
-                            <h3 className="font-bold text-lg md:text-xl line-clamp-2 transition-colors duration-200">
-                              {course.title}
-                            </h3>
-                            <div className="flex items-center gap-2">
-                              <Avatar className="h-8 w-8 border-2 border-primary/20">
-                                <AvatarImage src={course.authorImage || undefined} />
-                                <AvatarFallback className="bg-primary/10 text-primary font-semibold">
-                                  {course.authorName?.[0] || 'A'}
-                                </AvatarFallback>
-                              </Avatar>
-                              <div className="flex flex-col">
-                                <span className="text-xs text-muted-foreground">Автор</span>
-                                <span className="text-sm font-medium">{course.authorName || 'Автор'}</span>
-                              </div>
+                    {paginatedLibrary.map(({ course, purchaseDate }) => (
+                      <Link key={course.id} href={`/library/${course.id}`}>
+                        <div>
+                          <Card className="group overflow-hidden transition-all duration-200 cursor-pointer border-2 hover:border-primary/50 hover:shadow-xl hover:shadow-primary/10 hover:-translate-y-1 bg-gradient-to-br from-background via-background to-primary/5" data-testid={`card-library-course-${course.id}`}>
+                            <div className="aspect-video w-full bg-gradient-to-br from-primary/10 to-primary/5 relative overflow-hidden">
+                              {course.thumbnailImage ? (
+                                <img
+                                  src={course.thumbnailImage}
+                                  alt={course.title}
+                                  className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-200"
+                                />
+                              ) : (
+                                <div className="w-full h-full flex items-center justify-center">
+                                  <BookOpen className="h-16 w-16 text-primary/40 group-hover:text-primary/60 transition-colors duration-200" />
+                                </div>
+                              )}
                             </div>
-                            <div className="flex flex-wrap gap-2">
-                              <Badge variant="outline" className="text-xs font-medium">
-                                {getPlatformName(course.platform || '')}
-                              </Badge>
-                              {Array.isArray(course.level) ? (
-                                course.level.map((lvl, idx) => (
-                                  <Badge key={idx} variant="outline" className="text-xs font-medium">
-                                    {getLevelName(lvl)}
-                                  </Badge>
-                                ))
-                              ) : course.level ? (
+
+                            <CardHeader className="space-y-3 p-4 md:p-6">
+                              <h3 className="font-bold text-lg md:text-xl line-clamp-2 transition-colors duration-200">
+                                {course.title}
+                              </h3>
+                              <div className="flex items-center gap-2">
+                                <Avatar className="h-8 w-8 border-2 border-primary/20">
+                                  <AvatarImage src={course.authorImage || undefined} />
+                                  <AvatarFallback className="bg-primary/10 text-primary font-semibold">
+                                    {course.authorName?.[0] || 'A'}
+                                  </AvatarFallback>
+                                </Avatar>
+                                <div className="flex flex-col">
+                                  <span className="text-xs text-muted-foreground">Автор</span>
+                                  <span className="text-sm font-medium">{course.authorName || 'Автор'}</span>
+                                </div>
+                              </div>
+                              <div className="flex flex-wrap gap-2">
                                 <Badge variant="outline" className="text-xs font-medium">
-                                  {getLevelName(course.level)}
+                                  {getPlatformName(course.platform || "")}
                                 </Badge>
-                              ) : null}
-                              <Badge variant="outline" className="text-xs font-medium">
-                                {course.year}
-                              </Badge>
-                            </div>
-                          </CardHeader>
-                          
-                          <CardContent>
-                            <p className="text-xs text-muted-foreground">
-                              Куплено: {new Date(purchaseDate!).toLocaleDateString("ru-RU")}
-                            </p>
-                          </CardContent>
-                        </Card>
-                      </div>
-                    </Link>
-                  ))}
+                                {Array.isArray(course.level) && course.level.length > 0 && (
+                                  <div className="flex flex-wrap gap-2">
+                                    {Array.from(
+                                      new Set(
+                                        course.level
+                                          .map(id => subcategories.find(sub => sub.id === id))
+                                          .filter(Boolean)
+                                          .map(sub => sub.name)
+                                      )
+                                    ).map(levelName => (
+                                      <Badge key={levelName} variant="outline" className="text-xs font-medium">
+                                        {levelName}
+                                      </Badge>
+                                    ))}
+                                  </div>
+                                )}
+                                {course.year && (
+                                  <Badge variant="outline" className="text-xs font-medium">
+                                    {course.year}
+                                  </Badge>
+                                )}
+                              </div>
+                            </CardHeader>
+
+                            <CardContent>
+                              <p className="text-xs text-muted-foreground">
+                                Куплено: {new Date(purchaseDate!).toLocaleDateString("ru-RU")}
+                              </p>
+                            </CardContent>
+                          </Card>
+                        </div>
+                      </Link>
+                    ))}
                   </div>
                 </div>
 

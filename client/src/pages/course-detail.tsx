@@ -11,7 +11,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
 import { ShoppingCart, BookOpen, ArrowLeft, CheckCircle2, Star, Sparkles, Crown, Check, Gem, Package, TrendingDown, ArrowRight, ThumbsUp, ThumbsDown, Edit, Trash2, AlertCircle, Heart, Users, PlayCircle, Clock, Award, TrendingUp } from "lucide-react";
 import { Link } from "wouter";
-import type { Course, Review, Lesson, Subcategory } from "@shared/schema";
+import type { Course, Review, Lesson, Subcategory, Category } from "@shared/schema";
 import { Header } from "@/components/header";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
@@ -564,14 +564,14 @@ export default function CourseDetail() {
     enabled: !!courseId,
   });
 
+  const { data: categories } = useQuery<Category[]>({
+    queryKey: ["/api/categories"],
+  });
+
   const getPlatformName = (platform: string | null) => {
-    if (!platform) return "";
-    const names: Record<string, string> = {
-      wb: "Wildberries",
-      ozon: "Ozon",
-      yandex: "Яндекс.Маркет",
-    };
-    return names[platform] || platform;
+    const selectedPlatform = categories?.filter(cat => cat.slug === platform)[0].name
+
+    return selectedPlatform || platform
   };
 
   const getLevelName = (level: string) => {
@@ -794,18 +794,20 @@ export default function CourseDetail() {
                     {getPlatformName(course.platform)}
                   </Badge>
                   {Array.isArray(course.level) && course.level.length > 0 && (
-                    <>
-                      {course.level
-                        .map((levelId) => {
-                          const subCategory = subcategories?.find(sub => sub.id === levelId);
-                          return subCategory ? (
-                            <Badge key={levelId} variant="outline" className="text-sm font-medium">
-                              {subCategory.name}
-                            </Badge>
-                          ) : null;
-                        })
-                        .filter(Boolean)} {/* убираем null, если subcategory не найдена */}
-                    </>
+                    <div className="flex flex-wrap gap-2">
+                      {Array.from(
+                        new Set(
+                          course.level
+                            .map(id => subcategories.find(sub => sub.id === id))
+                            .filter(Boolean)
+                            .map(sub => sub.name)
+                        )
+                      ).map(levelName => (
+                        <Badge key={levelName} variant="outline" className="text-sm font-medium">
+                          {levelName}
+                        </Badge>
+                      ))}
+                    </div>
                   )}
                   <Badge variant="outline" className="border-orange-500/30 bg-orange-500/10">
                     <Clock className="h-3 w-3 mr-1" />
@@ -1046,18 +1048,20 @@ export default function CourseDetail() {
                   <div className="flex justify-between">
                     <span className="text-muted-foreground">Уровень:</span>
                     {Array.isArray(course.level) && course.level.length > 0 && (
-                      <>
-                        {course.level
-                          .map((levelId) => {
-                            const subCategory = subcategories?.find(sub => sub.id === levelId);
-                            return subCategory ? (
-                              <span className="font-medium">
-                                {subCategory.name}
-                              </span>
-                            ) : null;
-                          })
-                          .filter(Boolean)} {/* убираем null, если subcategory не найдена */}
-                      </>
+                      <div className="inline-flex flex-wrap items-center gap-2">
+                        {Array.from(
+                          new Set(
+                            course.level
+                              .map(id => subcategories.find(sub => sub.id === id))
+                              .filter(Boolean)
+                              .map(sub => sub.name)
+                          )
+                        ).map(levelName => (
+                          <span key={levelName} className="font-medium">
+                            {levelName}
+                          </span>
+                        ))}
+                      </div>
                     )}
                   </div>
                   <div className="flex justify-between">

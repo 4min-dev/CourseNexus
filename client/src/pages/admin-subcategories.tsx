@@ -159,7 +159,7 @@ export default function AdminSubcategories() {
                   </div>
                 </CardHeader>
                 <CardContent>
-                  <Link href={`/admin/categories/${categoryId}/subcategories/${subcategory.id}/courses?parentId=${parentId}`}>
+                  <a href={`/admin/categories/${categoryId}/subcategories/${subcategory.id}/courses?parentId=${parentId}`}>
                     <Button
                       className="w-full"
                       variant="outline"
@@ -167,7 +167,7 @@ export default function AdminSubcategories() {
                     >
                       Курсы →
                     </Button>
-                  </Link>
+                  </a>
                 </CardContent>
               </Card>
             ))}

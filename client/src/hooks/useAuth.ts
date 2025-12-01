@@ -10,7 +10,7 @@ export function useAuth() {
       });
 
       // If 401, return null (not authenticated) instead of throwing
-      if (res.status === 401) {
+      if (res.status === 401 || res.status === 404) {
         return null;
       }
 
