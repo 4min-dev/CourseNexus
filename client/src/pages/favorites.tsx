@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { useQuery, useMutation } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueries } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import { Card, CardContent, CardFooter, CardHeader } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -86,29 +86,6 @@ export default function Favorites() {
     return map;
   }, [categories, subcategories]);
 
-  const getPlatformName = (platform: string) => {
-    // Legacy marketplace names (hardcoded)
-    const legacyNames: Record<string, string> = {
-      wb: "Wildberries",
-      ozon: "Ozon",
-      yandex: "Яндекс.Маркет",
-    };
-
-    // Try legacy mapping first
-    if (legacyNames[platform]) {
-      return legacyNames[platform];
-    }
-
-    // Try category/subcategory mapping (by slug or nameEn)
-    const mappedName = categoryNameMap[platform.toLowerCase()];
-    if (mappedName) {
-      return mappedName;
-    }
-
-    // Fallback to original platform string
-    return platform;
-  };
-
   const getLevelName = (level: string) => {
     const names: Record<string, string> = {
       "Начинающий": "Для новичков",
@@ -124,6 +101,24 @@ export default function Favorites() {
     e.stopPropagation();
     removeFavoriteMutation.mutate(courseId);
   };
+
+  const platformQueries = useQueries({
+    queries: favorites?.map((course) => ({
+      queryKey: ['course-platforms', course.courseId],
+      queryFn: async () => {
+        const response = await fetch(`/api/admin/courses/${course.courseId}/subcategories`, {
+          credentials: 'include',
+        });
+        if (!response.ok) {
+          throw new Error('Failed to fetch subcategories');
+        }
+        return response.json();
+      },
+      enabled: !!course.id,
+      staleTime: 5 * 60 * 1000,
+      retry: 1,
+    })),
+  });
 
   return (
     <div className="flex flex-col min-h-screen overflow-x-hidden" >
@@ -185,9 +180,22 @@ export default function Favorites() {
               </div>
             ) : favorites && favorites.length > 0 ? (
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 md:gap-6">
-                {favorites.map(({ course }) => {
+                {favorites.map(({ course }, index) => {
                   const isPurchased = purchasedCourseIds.has(course.id);
                   const price = parseFloat(course.price || "0");
+
+                  const platformQuery = platformQueries[index];
+                  console.log('platformQuery', platformQuery.data)
+                  const subcategoryIds = platformQuery?.data ?? [];
+
+                  const getPlatforms = () => {
+                    if (!subcategoryIds.length || !subcategories || !categories) return [];
+                    const matched = subcategories.filter(sub => subcategoryIds.includes(sub.id));
+                    const categoryIds = [...new Set(matched.map(sub => sub.categoryId))];
+                    return categories.filter(cat => categoryIds.includes(cat.id));
+                  };
+
+                  const platforms = getPlatforms();
 
                   return (
                     <Card
@@ -250,9 +258,13 @@ export default function Favorites() {
                         </div>
 
                         <div className="flex flex-wrap gap-2">
-                          <Badge variant="outline" className="text-xs font-medium">
-                            {getPlatformName(course.platform || "")}
-                          </Badge>
+                          {platforms.length > 0 && platforms.map((platform) => (
+                            <Badge variant="outline" className="text-xs font-medium">
+                              {
+                                platform.name
+                              }
+                            </Badge>
+                          ))}
                           {Array.isArray(course.level) && course.level.length > 0 && (
                             <div className="flex flex-wrap gap-2">
                               {Array.from(

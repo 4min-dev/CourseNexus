@@ -189,7 +189,7 @@ export class ObjectStorageService {
 
     const safeSegments = [
       privateObjectDir,
-      "uploads",
+      "vkurse",
       ...(options?.pathSegments || []).map((segment) => this.sanitizePathSegment(segment)),
     ].filter((segment) => segment && segment.length > 0);
 

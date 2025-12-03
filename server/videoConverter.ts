@@ -9,8 +9,26 @@ import { db } from './db';
 import { lessons } from '@shared/schema';
 import { eq } from 'drizzle-orm';
 import { s3Client } from './s3Client';
+import { GetObjectCommand, HeadObjectCommand, S3Client } from '@aws-sdk/client-s3';
 
 export class VideoConverter {
+
+  private getS3Client() {
+    if (!process.env.CDNNOW_KEY || !process.env.CDNNOW_SECRET) {
+      throw new Error("CDNNOW_KEY или CDNNOW_SECRET не установлены в окружении воркера!");
+    }
+
+    return new S3Client({
+      region: "ru-central-1",
+      endpoint: "https://s3.ru-central-1.nowcdn.co",
+      credentials: {
+        accessKeyId: process.env.CDNNOW_KEY!,
+        secretAccessKey: process.env.CDNNOW_SECRET!,
+      },
+      forcePathStyle: true,
+    });
+  }
+
   async convertVideo(
     sourceUrl: string,
     lessonId: string,
@@ -19,9 +37,12 @@ export class VideoConverter {
     const tempInput = join(tmpdir(), `input-${randomUUID()}.mp4`);
     const tempOutput = join(tmpdir(), `output-${randomUUID()}.mp4`);
 
+    const clearSourceUrl = sourceUrl.replace('vkurse/vkurse', 'vkurse')
+
     try {
-      console.log('[VideoConverter] Скачиваем видео с CDNNow:', sourceUrl);
-      await this.downloadFromYandexCloud(sourceUrl, tempInput);
+
+      console.log('[VideoConverter] Скачиваем видео с CDNNow:', clearSourceUrl);
+      await this.downloadFromYandexCloud(clearSourceUrl, tempInput);
 
       const duration = await this.getDuration(tempInput);
       console.log(`[VideoConverter] Длительность: ${duration} мин`);
@@ -59,23 +80,54 @@ export class VideoConverter {
     }
   }
 
-  private async downloadFromYandexCloud(url: string, outputPath: string) {
-    const response = await fetch(url);
-    if (!response.ok || !response.body) throw new Error(`Не удалось скачать видео: ${response.status}`);
+  private async downloadFromYandexCloud(sourceUrl: string, outputPath: string) {
+    const url = new URL(sourceUrl);
+    const Key = url.pathname.slice(1);
+
+    const s3 = this.getS3Client(); // ← вот так
+
+    const command = new GetObjectCommand({
+      Bucket: process.env.NOWCDN_BUCKET!,
+      Key,
+    });
+    const response = await s3.send(command);
+
+    if (!response.Body) {
+      throw new Error("Empty body from S3");
+    }
 
     return new Promise((resolve, reject) => {
       const stream = createWriteStream(outputPath);
-      // @ts-ignore — Node 18+ поддерживает
-      response.body!.pipe(stream);
-      stream.on('finish', resolve);
-      stream.on('error', reject);
+      // Body может быть Readable | ReadableStream | Blob
+      const bodyStream = response.Body as any;
+      if (bodyStream.pipe) {
+        bodyStream.pipe(stream);
+      } else {
+        // для Node.js 18+ это ReadableStream
+        const reader = bodyStream.getReader();
+        const pump = async () => {
+          const { done, value } = await reader.read();
+          if (done) {
+            stream.end();
+            return;
+          }
+          stream.write(value);
+          pump();
+        };
+        pump();
+      }
+
+      stream.on("finish", resolve);
+      stream.on("error", reject);
     });
   }
 
   private async uploadToYandexCloud(filePath: string, key: string) {
     const { PutObjectCommand } = await import('@aws-sdk/client-s3');
 
-    await s3Client.send(new PutObjectCommand({
+    const s3 = this.getS3Client()
+
+    await s3.send(new PutObjectCommand({
       Bucket: process.env.NOWCDN_BUCKET!,
       Key: key,
       Body: createReadStream(filePath),
@@ -83,7 +135,7 @@ export class VideoConverter {
       ACL: 'public-read',
     }));
 
-    return `https://storage.yandexcloud.net/${process.env.NOWCDN_BUCKET}/${key}`;
+    return `https://p40911.nowcdn.co/${key}`;
   }
 
   private getDuration(inputPath: string): Promise<number> {

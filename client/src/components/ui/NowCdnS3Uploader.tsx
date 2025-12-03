@@ -4,9 +4,9 @@ import { Progress } from "@/components/ui/progress";
 import { useState } from "react";
 
 interface NowCdnUploaderProps {
-    onUploadSuccess: (data: { fileName: string; fileUrl: string }) => void;
+    onUploadSuccess: (data: { fileName: string; fileUrl: string }[]) => void;
     buttonText?: string;
-    inputId: string,
+    inputId: string;
     acceptedTypes?: string;
     className?: string;
     multiple?: boolean;
@@ -15,7 +15,6 @@ interface NowCdnUploaderProps {
 export function NowCdnUploader({
     onUploadSuccess,
     buttonText = "Загрузить файл",
-
     inputId,
     acceptedTypes,
     className,
@@ -24,49 +23,89 @@ export function NowCdnUploader({
     const [uploading, setUploading] = useState(false);
     const [progress, setProgress] = useState(0);
 
+    const getPresignedUrl = async (file: File) => {
+        const response = await fetch("/api/upload-presign", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                fileName: file.name,
+                fileType: file.type || "application/octet-stream",
+            }),
+        });
+
+        if (!response.ok) {
+            const err = await response.json().catch(() => ({}));
+            throw new Error(err.error || "Не удалось получить presigned URL");
+        }
+
+        return response.json(); // { uploadUrl, fileUrl, fileName }
+    };
+
     const handleUpload = async (files: FileList | null) => {
         if (!files?.length) return;
+
+        const fileArray = multiple ? Array.from(files) : [files[0]];
         setUploading(true);
         setProgress(0);
 
-        for (const file of multiple ? files : [files[0]]) {
-            const formData = new FormData();
-            formData.append("file", file);
+        const uploadedFiles: { fileName: string; fileUrl: string }[] = [];
+        let uploadedBytes = 0;
+        const totalBytes = fileArray.reduce((sum, f) => sum + f.size, 0);
 
-            try {
-                const xhr = new XMLHttpRequest();
+        try {
+            for (const [index, file] of fileArray.entries()) {
+                const { uploadUrl, fileUrl } = await getPresignedUrl(file);
 
-                xhr.upload.onprogress = (e) => {
-                    if (e.lengthComputable) {
-                        const percent = Math.round((e.loaded / e.total) * 100);
-                        setProgress(percent);
-                    }
-                };
+                await new Promise<void>((resolve, reject) => {
+                    const xhr = new XMLHttpRequest();
 
-                await new Promise((resolve, reject) => {
-                    xhr.onload = () => {
-                        if (xhr.status === 200) {
-                            const data = JSON.parse(xhr.responseText);
-                            onUploadSuccess({ fileName: data.fileName, fileUrl: data.url });
-                            resolve(null);
-                        } else {
-                            reject(new Error("Upload failed"));
+                    xhr.upload.onprogress = (e) => {
+                        if (e.lengthComputable) {
+                            // Считаем уже загруженные байты до этого файла
+                            const previousBytes = fileArray
+                                .slice(0, index)
+                                .reduce((sum, f) => sum + f.size, 0);
+
+                            const currentFileUploaded = e.loaded;
+                            const totalUploadedSoFar = previousBytes + currentFileUploaded;
+
+                            const percent = totalBytes > 0
+                                ? Math.round((totalUploadedSoFar / totalBytes) * 100)
+                                : 0;
+
+                            setProgress(percent);
                         }
                     };
-                    xhr.onerror = reject;
-                    xhr.open("POST", "/api/upload");
-                    xhr.send(formData);
-                });
-            } catch (err) {
-                alert("Ошибка загрузки файла: " + file.name);
-            }
-        }
 
-        setProgress(100);
-        setTimeout(() => {
-            setProgress(0);
-            setUploading(false);
-        }, 800);
+                    xhr.onload = () => {
+                        if (xhr.status >= 200 && xhr.status < 300) {
+                            resolve();
+                        } else {
+                            reject(new Error(`HTTP ${xhr.status}`));
+                        }
+                    };
+
+                    xhr.onerror = () => reject(new Error("Сетевая ошибка"));
+                    xhr.ontimeout = () => reject(new Error("Таймаут"));
+
+                    xhr.open("PUT", uploadUrl);
+                    xhr.setRequestHeader("Content-Type", file.type || "application/octet-stream");
+                    xhr.send(file);
+                });
+
+                uploadedFiles.push({ fileName: file.name, fileUrl });
+            }
+
+            onUploadSuccess(uploadedFiles);
+        } catch (err: any) {
+            alert(`Ошибка загрузки: ${err.message}`);
+        } finally {
+            setProgress(100);
+            setTimeout(() => {
+                setProgress(0);
+                setUploading(false);
+            }, 800);
+        }
     };
 
     return (
@@ -82,13 +121,14 @@ export function NowCdnUploader({
             />
             <label htmlFor={inputId}>
                 <Button variant="outline" disabled={uploading} asChild>
-                    <span className="flex items-center gap-2">
+                    <span className="flex items-center gap-2 cursor-pointer">
                         <Upload className="h-4 w-4" />
                         {uploading ? `Загрузка ${progress}%` : buttonText}
                     </span>
                 </Button>
             </label>
-            {uploading && <Progress value={progress} className="mt-2" />}
+
+            {uploading && <Progress value={progress} className="mt-2 w-full" />}
         </div>
     );
 }

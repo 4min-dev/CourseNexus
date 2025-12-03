@@ -90,7 +90,7 @@ interface SubcategoryWithCategory extends Subcategory {
   category: Category;
 }
 
-// Levels are now loaded dynamically from the API
+const BUCKET_NAME = "vkurse"
 
 export default function AdminCourseEdit() {
   const { courseId } = useParams<{ courseId: string }>();
@@ -328,28 +328,27 @@ export default function AdminCourseEdit() {
     }
   }, [course]);
 
+  // Автоматически выбираем все подкатегории с именем уровня из URL — НО НЕ СБРАСЫВАЕМ уже выбранные!
   useEffect(() => {
     if (!subcategoryId || !allSubcategories.length) return;
+
+    if (course?.level?.length > 0) {
+      setSelectedLevels(course?.level)
+    }
 
     const currentSubcat = allSubcategories.find(s => s.id === subcategoryId);
     if (!currentSubcat) return;
 
-    const levelName = currentSubcat.name; // например "Для новичков"
-
-    // Находим ВСЕ подкатегории с таким же именем (уровнем)
-    const idsToSelect = allSubcategories
+    const levelName = currentSubcat.name;
+    const idsToAdd = allSubcategories
       .filter(sub => sub.name === levelName)
       .map(sub => sub.id);
 
+    // ВАЖНО: НЕ ПЕРЕЗАПИСЫВАЕМ, а только ДОБАВЛЯЕМ недостающие
     setSelectedLevels(prev => {
-      // Если уже есть — не дублируем
-      const newLevels = [...prev];
-      idsToSelect.forEach(id => {
-        if (!newLevels.includes(id)) {
-          newLevels.push(id);
-        }
-      });
-      return newLevels;
+      const newSet = new Set(prev);
+      idsToAdd.forEach(id => newSet.add(id));
+      return Array.from(newSet);
     });
   }, [subcategoryId, allSubcategories]);
 
@@ -359,6 +358,14 @@ export default function AdminCourseEdit() {
       setSelectedSubcategories(courseSubcategoryIds);
     }
   }, [courseSubcategoryIds]);
+
+  useEffect(() => {
+    console.log('selectedLevels', selectedLevels)
+  }, [selectedLevels])
+
+  useEffect(() => {
+    console.log('selectedSubcatgories', selectedSubcategories)
+  }, [selectedSubcategories])
 
   // Poll for lesson status updates
   useEffect(() => {
@@ -390,61 +397,6 @@ export default function AdminCourseEdit() {
       setEditingLesson(updatedLesson);
     }
   }, [sections, editingLesson]);
-
-  const startBackgroundVideoUpload = async (lessonId: string, file: File) => {
-    const formData = new FormData();
-    formData.append("file", file);
-    formData.append("type", "video");
-
-    const xhr = new XMLHttpRequest();
-
-    xhr.upload.onprogress = (e) => {
-      if (e.lengthComputable) {
-        const percent = Math.round((e.loaded / e.total) * 100);
-        setUploadProgress(percent);
-
-        // Обновляем прогресс в базе (опционально, каждые 5%)
-        if (percent % 5 === 0 || percent === 100) {
-          apiRequest("PUT", `/api/admin/lessons/${lessonId}`, {
-            uploadProgress: percent,
-          }).catch(() => { });
-        }
-      }
-    };
-
-    xhr.onload = async () => {
-      if (xhr.status === 200) {
-        const { url } = JSON.parse(xhr.responseText);
-
-        // Видео загружено → запускаем конвертацию
-        await apiRequest("POST", `/api/admin/lessons/${lessonId}/video`, {
-          videoUrl: url,
-          originalFileName: file.name,
-        });
-
-        queryClient.invalidateQueries({ queryKey: ["/api/admin/courses", courseId, "sections"] });
-        toast({ title: "Видео загружено и поставлено на обработку" });
-      } else {
-        await apiRequest("PUT", `/api/admin/lessons/${lessonId}`, {
-          processingStatus: 'failed',
-          errorMessage: 'Ошибка загрузки видео',
-        });
-        toast({ title: "Ошибка загрузки видео", variant: "destructive" });
-      }
-      setUploadProgress(0);
-    };
-
-    xhr.onerror = () => {
-      apiRequest("PUT", `/api/admin/lessons/${lessonId}`, {
-        processingStatus: 'failed',
-        errorMessage: 'Сеть недоступна',
-      });
-      toast({ title: "Ошибка сети", variant: "destructive" });
-    };
-
-    xhr.open("POST", "/api/upload");
-    xhr.send(formData);
-  };
 
   // Update course mutation
   const updateCourseMutation = useMutation({
@@ -603,7 +555,6 @@ export default function AdminCourseEdit() {
       setEditingLesson(null);
       setUploadedVideo(null);
       setUploadedFiles([]);
-      setVideoUploadPromise(null);
       // Clear session ID to prevent stale uploads from updating UI
       setCurrentLessonSessionId(null);
 
@@ -626,10 +577,10 @@ export default function AdminCourseEdit() {
             // Clear uploading lesson ID and progress
             setUploadingLessonId(null);
             setUploadProgress(0);
-
+            console.log('videoInfo', videoInfo)
             // Queue video for processing
             return apiRequest("POST", `/api/admin/lessons/${lessonId}/video`, {
-              videoUrl: videoInfo.fileUrl,
+              videoUrl: `${BUCKET_NAME}/${videoInfo.fileUrl}`,
               originalFileName: videoInfo.fileName,
             }).then(() => {
               // Refresh UI to show queued/processing status
@@ -839,6 +790,7 @@ export default function AdminCourseEdit() {
   };
 
   const getFileType = (mimeType: string, fileName: string): string => {
+    console.log(fileName)
     if (mimeType.includes('video')) return 'video';
     if (mimeType.includes('pdf') || mimeType.includes('document') || mimeType.includes('text')) return 'document';
     if (mimeType.includes('zip') || mimeType.includes('rar') || mimeType.includes('7z') || mimeType.includes('tar')) return 'archive';
@@ -1195,53 +1147,63 @@ export default function AdminCourseEdit() {
                         .map((parentCat) => {
                           const childCategories = categories.filter(cat => cat.parentId === parentCat.id);
 
-                          const availableChildCats = childCategories.filter(childCat =>
+                          // Список дочерних категорий, у которых есть хотя бы одна подкатегория с выбранным уровнем
+                          const visibleChildCats = childCategories.filter(childCat =>
                             allSubcategories.some(sub =>
                               sub.categoryId === childCat.id &&
-                              selectedLevels.some(selectedId =>
-                                allSubcategories.find(s => s.id === selectedId)?.name === sub.name
-                              )
+                              selectedLevels.some(lvlId => {
+                                const lvlSub = allSubcategories.find(s => s.id === lvlId);
+                                return lvlSub?.name === sub.name;
+                              })
                             )
                           );
 
-                          if (availableChildCats.length === 0) return null;
+                          if (visibleChildCats.length === 0) return null;
 
                           return (
                             <div key={parentCat.id} className="border-b last:border-b-0 pb-6 last:pb-0">
                               <div className="font-semibold text-sm mb-3 text-primary">
                                 {parentCat.name}
                               </div>
+
                               <div className="space-y-3 pl-4">
-                                {availableChildCats.map((childCat) => {
-                                  // Все подкатегории этой категории, у которых имя совпадает с выбранными уровнями
+                                {visibleChildCats.map((childCat) => {
+                                  // Все подкатегории этой категории, которые соответствуют выбранным уровням
                                   const relevantSubcats = allSubcategories.filter(sub =>
                                     sub.categoryId === childCat.id &&
-                                    selectedLevels.some(selectedId =>
-                                      allSubcategories.find(s => s.id === selectedId)?.name === sub.name
-                                    )
+                                    selectedLevels.some(lvlId => {
+                                      const lvlSub = allSubcategories.find(s => s.id === lvlId);
+                                      return lvlSub?.name === sub.name;
+                                    })
                                   );
 
-                                  const allSelected = relevantSubcats.every(sub =>
+                                  // Сколько из них выбрано
+                                  const selectedCount = relevantSubcats.filter(sub =>
                                     selectedSubcategories.includes(sub.id)
-                                  );
-                                  const someSelected = relevantSubcats.some(sub =>
-                                    selectedSubcategories.includes(sub.id)
-                                  );
+                                  ).length;
+
+                                  const allSelected = selectedCount === relevantSubcats.length;
+                                  const someSelected = selectedCount > 0 && selectedCount < relevantSubcats.length;
 
                                   const handleToggle = (checked: boolean) => {
                                     const subcatIds = relevantSubcats.map(s => s.id);
-                                    setSelectedSubcategories(prev =>
-                                      checked
-                                        ? [...new Set([...prev, ...subcatIds])]
-                                        : prev.filter(id => !subcatIds.includes(id))
-                                    );
+
+                                    setSelectedSubcategories(prev => {
+                                      if (checked) {
+                                        // Добавляем только те, которых ещё нет
+                                        return [...new Set([...prev, ...subcatIds])];
+                                      } else {
+                                        // Убираем все из этой группы
+                                        return prev.filter(id => !subcatIds.includes(id));
+                                      }
+                                    });
                                   };
 
                                   return (
                                     <div key={childCat.id} className="flex items-center gap-2">
                                       <Checkbox
-                                        checked={allSelected}
-                                        indeterminate={!allSelected && someSelected}
+                                        checked={allSelected || someSelected}
+                                        indeterminate={someSelected}
                                         onCheckedChange={handleToggle}
                                       />
                                       <Label className="flex items-center gap-2 cursor-pointer font-normal">
@@ -1350,7 +1312,6 @@ export default function AdminCourseEdit() {
                                 setLessonFormData({ title: "", description: "", videoUrl: "", duration: 0 });
                                 setUploadedVideo(null);
                                 setUploadedFiles([]);
-                                setVideoUploadPromise(null);
                                 // Generate new session ID for this lesson dialog
                                 lessonSessionCounterRef.current += 1;
                                 setCurrentLessonSessionId(lessonSessionCounterRef.current);
@@ -1491,7 +1452,6 @@ export default function AdminCourseEdit() {
           setLessonFormData({ title: "", description: "", videoUrl: "", duration: 0 });
           setUploadedVideo(null);
           setUploadedFiles([]);
-          setVideoUploadPromise(null);
           setCurrentLessonSessionId(null);
         }
       }}>
@@ -1579,7 +1539,7 @@ export default function AdminCourseEdit() {
                   acceptedTypes=".pdf,.doc,.docx,.zip,.rar,.txt"
                   buttonText="Загрузить файлы"
                   inputId="files-upload-input"
-                  onUploadSuccess={({ fileName, fileUrl }) => {
+                  onUploadSuccess={([{ fileName, fileUrl }]) => {
                     const fileType = getFileType("", fileName);
                     setUploadedFiles(prev => [...prev, { fileName, fileUrl, fileType }]);
                   }}
@@ -1655,7 +1615,6 @@ export default function AdminCourseEdit() {
           setLessonFormData({ title: "", description: "", videoUrl: "", duration: 0 });
           setUploadedVideo(null);
           setUploadedFiles([]);
-          setVideoUploadPromise(null);
           setCurrentLessonSessionId(null);
         }
       }}>
@@ -1833,7 +1792,7 @@ export default function AdminCourseEdit() {
                   <p className="text-sm font-medium">Новые файлы (будут добавлены при сохранении):</p>
                   {uploadedFiles.map((file, index) => (
                     <div
-                      key={index}
+                      key={`${file.fileName}-${file.fileType}-${index}`}
                       className="flex items-center justify-between p-3 bg-muted rounded-md"
                       data-testid={`uploaded-file-edit-${index}`}
                     >

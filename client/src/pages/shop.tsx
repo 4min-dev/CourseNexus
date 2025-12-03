@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { createPortal } from "react-dom";
-import { useQuery, useMutation } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueries } from "@tanstack/react-query";
 import { useAuth } from "@/hooks/useAuth";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import { useLocation } from "wouter";
@@ -572,6 +572,22 @@ export default function Shop() {
     queryKey: ["/api/site-settings"],
   });
 
+  const useCoursePlatforms = (courseId: string | undefined) => {
+    return useQuery({
+      queryKey: ["/api/admin/courses", courseId, "subcategories"],
+      queryFn: async () => {
+        if (!courseId) throw new Error("No courseId");
+        const response = await fetch(`/api/admin/courses/${courseId}/subcategories`, {
+          credentials: "include",
+        });
+        if (!response.ok) throw new Error("Failed to fetch");
+        return response.json();
+      },
+      enabled: !!courseId,
+      staleTime: 1000 * 60 * 5,
+    });
+  };
+
   // Restore Telegram modal state from localStorage on mount
   useEffect(() => {
     if (!isAuthenticated || !user) {
@@ -881,6 +897,24 @@ export default function Shop() {
   const mobileEndIndex = visiblePageRange.end * COURSES_PER_PAGE;
   const mobileCourses = courses.slice(mobileStartIndex, mobileEndIndex) || [];
 
+  const platformQueries = useQueries({
+    queries: paginatedCourses.map((course) => ({
+      queryKey: ['course-platforms', course.id],
+      queryFn: async () => {
+        const response = await fetch(`/api/admin/courses/${course.id}/subcategories`, {
+          credentials: 'include',
+        });
+        if (!response.ok) {
+          throw new Error('Failed to fetch subcategories');
+        }
+        return response.json();
+      },
+      enabled: !!course.id,
+      staleTime: 5 * 60 * 1000,
+      retry: 1,
+    })),
+  });
+
   // Reset to page 1 when filters or search changes
   useEffect(() => {
     setCurrentPage(1);
@@ -1044,29 +1078,6 @@ export default function Shop() {
 
     return map;
   }, [categories, subcategories]);
-
-  const getPlatformName = (platform: string) => {
-    // Legacy marketplace names (hardcoded)
-    const legacyNames: Record<string, string> = {
-      wb: "Wildberries",
-      ozon: "Ozon",
-      yandex: "Яндекс.Маркет",
-    };
-
-    // Try legacy mapping first
-    if (legacyNames[platform]) {
-      return legacyNames[platform];
-    }
-
-    // Try category/subcategory mapping (by slug or nameEn)
-    const mappedName = categoryNameMap[platform.toLowerCase()];
-    if (mappedName) {
-      return mappedName;
-    }
-
-    // Fallback to original platform string
-    return platform;
-  };
 
   const getLevelName = (level: string) => {
     const names: Record<string, string> = {
@@ -1738,6 +1749,17 @@ export default function Shop() {
                       const isActive = activeMobileCourseId === course.id;
                       const shouldPlayVideo = isActive && hasPreviewVideo;
 
+                      const platformQuery = platformQueries[index];
+                      const subcategoryIds = platformQuery?.data ?? [];
+
+                      const getPlatforms = () => {
+                        if (!subcategoryIds.length || !subcategories || !categories) return [];
+                        const matched = subcategories.filter(sub => subcategoryIds.includes(sub.id));
+                        const categoryIds = [...new Set(matched.map(sub => sub.categoryId))];
+                        return categories.filter(cat => categoryIds.includes(cat.id));
+                      };
+
+                      const platforms = getPlatforms();
                       return (
                         <div key={course.id}>
                           <GlassCard
@@ -1873,9 +1895,12 @@ export default function Shop() {
                                 </div>
 
                                 <div className="flex flex-wrap gap-2">
-                                  <Badge variant="outline" className="text-sm font-medium">
-                                    {getPlatformName(course.platform || "")}
-                                  </Badge>
+                                  {platforms.map((platform) => (
+                                    <Badge key={platform.id} variant="outline" className="text-sm font-medium">
+                                      {platform.name}
+                                    </Badge>
+                                  ))}
+
                                   {Array.isArray(course.level) && course.level.length > 0 && (
                                     <div className="flex flex-wrap gap-2">
                                       {Array.from(
@@ -1995,12 +2020,26 @@ export default function Shop() {
 
                 {/* Desktop: Original Grid - UNTOUCHED */}
                 <div className="hidden md:grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6 items-stretch" style={{ gridAutoRows: '1fr' }}>
-                  {paginatedCourses.map((course) => {
+                  {paginatedCourses.map((course, index) => {
                     const isPurchased = purchasedCourseIds.has(course.id);
                     const isFavorited = favoritedCourseIds.has(course.id);
                     const price = parseFloat(course.price || "0");
                     const hasPreviewVideo = !!(course as any).previewVideoUrl;
                     const shouldPlayVideo = hoveredCourseId === course.id && hasPreviewVideo;
+
+                    // Данные из useQueries
+                    const platformQuery = platformQueries[index];
+                    const subcategoryIds = platformQuery?.data ?? [];
+
+                    // ←←← ЗАМЕНИ useMemo НА ОБЫЧНУЮ ФУНКЦИЮ
+                    const getPlatforms = () => {
+                      if (!subcategoryIds.length || !subcategories || !categories) return [];
+                      const matched = subcategories.filter(sub => subcategoryIds.includes(sub.id));
+                      const categoryIds = [...new Set(matched.map(sub => sub.categoryId))];
+                      return categories.filter(cat => categoryIds.includes(cat.id));
+                    };
+
+                    const platforms = getPlatforms(); // ← просто вызываем
 
                     return (
                       <div
@@ -2143,9 +2182,11 @@ export default function Shop() {
                               </div>
 
                               <div className="flex flex-wrap gap-2">
-                                <Badge variant="outline" className="text-sm font-medium">
-                                  {getPlatformName(course.platform || "")}
-                                </Badge>
+                                {platforms.map((platform) => (
+                                  <Badge key={platform.id} variant="outline" className="text-sm font-medium">
+                                    {platform.name}
+                                  </Badge>
+                                ))}
 
                                 {/* Уровни — показываем уникальные по имени */}
                                 {(() => {

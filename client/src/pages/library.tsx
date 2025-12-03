@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useMemo } from "react";
-import { useQuery, useMutation } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueries } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -307,6 +307,24 @@ export default function Library() {
 
   const activeVipPackages = vipPackages?.filter(pkg => !pkg.isActivated) || [];
 
+  const platformQueries = useQueries({
+    queries: paginatedLibrary.map((course) => ({
+      queryKey: ['course-platforms', course.courseId],
+      queryFn: async () => {
+        const response = await fetch(`/api/admin/courses/${course.courseId}/subcategories`, {
+          credentials: 'include',
+        });
+        if (!response.ok) {
+          throw new Error('Failed to fetch subcategories');
+        }
+        return response.json();
+      },
+      enabled: !!course.id,
+      staleTime: 5 * 60 * 1000,
+      retry: 1,
+    })),
+  });
+
   return (
     <div className="min-h-screen bg-background relative">
       <Header
@@ -490,77 +508,95 @@ export default function Library() {
                 <div className="space-y-3 md:space-y-4">
                   <h2 className="text-xl md:text-2xl font-bold">Мои курсы</h2>
                   <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 md:gap-6">
-                    {paginatedLibrary.map(({ course, purchaseDate }) => (
-                      <Link key={course.id} href={`/library/${course.id}`}>
-                        <div>
-                          <Card className="group overflow-hidden transition-all duration-200 cursor-pointer border-2 hover:border-primary/50 hover:shadow-xl hover:shadow-primary/10 hover:-translate-y-1 bg-gradient-to-br from-background via-background to-primary/5" data-testid={`card-library-course-${course.id}`}>
-                            <div className="aspect-video w-full bg-gradient-to-br from-primary/10 to-primary/5 relative overflow-hidden">
-                              {course.thumbnailImage ? (
-                                <img
-                                  src={course.thumbnailImage}
-                                  alt={course.title}
-                                  className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-200"
-                                />
-                              ) : (
-                                <div className="w-full h-full flex items-center justify-center">
-                                  <BookOpen className="h-16 w-16 text-primary/40 group-hover:text-primary/60 transition-colors duration-200" />
-                                </div>
-                              )}
-                            </div>
+                    {paginatedLibrary.map(({ course, purchaseDate }, index) => {
+                      const platformQuery = platformQueries[index];
+                      console.log('platformQuery', platformQuery.data)
+                      const subcategoryIds = platformQuery?.data ?? [];
 
-                            <CardHeader className="space-y-3 p-4 md:p-6">
-                              <h3 className="font-bold text-lg md:text-xl line-clamp-2 transition-colors duration-200">
-                                {course.title}
-                              </h3>
-                              <div className="flex items-center gap-2">
-                                <Avatar className="h-8 w-8 border-2 border-primary/20">
-                                  <AvatarImage src={course.authorImage || undefined} />
-                                  <AvatarFallback className="bg-primary/10 text-primary font-semibold">
-                                    {course.authorName?.[0] || 'A'}
-                                  </AvatarFallback>
-                                </Avatar>
-                                <div className="flex flex-col">
-                                  <span className="text-xs text-muted-foreground">Автор</span>
-                                  <span className="text-sm font-medium">{course.authorName || 'Автор'}</span>
-                                </div>
-                              </div>
-                              <div className="flex flex-wrap gap-2">
-                                <Badge variant="outline" className="text-xs font-medium">
-                                  {getPlatformName(course.platform || "")}
-                                </Badge>
-                                {Array.isArray(course.level) && course.level.length > 0 && (
-                                  <div className="flex flex-wrap gap-2">
-                                    {Array.from(
-                                      new Set(
-                                        course.level
-                                          .map(id => subcategories.find(sub => sub.id === id))
-                                          .filter(Boolean)
-                                          .map(sub => sub.name)
-                                      )
-                                    ).map(levelName => (
-                                      <Badge key={levelName} variant="outline" className="text-xs font-medium">
-                                        {levelName}
-                                      </Badge>
-                                    ))}
+                      const getPlatforms = () => {
+                        if (!subcategoryIds.length || !subcategories || !categories) return [];
+                        const matched = subcategories.filter(sub => subcategoryIds.includes(sub.id));
+                        const categoryIds = [...new Set(matched.map(sub => sub.categoryId))];
+                        return categories.filter(cat => categoryIds.includes(cat.id));
+                      };
+
+                      const platforms = getPlatforms();
+                      return (
+                        <Link key={course.id} href={`/library/${course.id}`}>
+                          <div>
+                            <Card className="group overflow-hidden transition-all duration-200 cursor-pointer border-2 hover:border-primary/50 hover:shadow-xl hover:shadow-primary/10 hover:-translate-y-1 bg-gradient-to-br from-background via-background to-primary/5" data-testid={`card-library-course-${course.id}`}>
+                              <div className="aspect-video w-full bg-gradient-to-br from-primary/10 to-primary/5 relative overflow-hidden">
+                                {course.thumbnailImage ? (
+                                  <img
+                                    src={course.thumbnailImage}
+                                    alt={course.title}
+                                    className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-200"
+                                  />
+                                ) : (
+                                  <div className="w-full h-full flex items-center justify-center">
+                                    <BookOpen className="h-16 w-16 text-primary/40 group-hover:text-primary/60 transition-colors duration-200" />
                                   </div>
                                 )}
-                                {course.year && (
-                                  <Badge variant="outline" className="text-xs font-medium">
-                                    {course.year}
-                                  </Badge>
-                                )}
                               </div>
-                            </CardHeader>
 
-                            <CardContent>
-                              <p className="text-xs text-muted-foreground">
-                                Куплено: {new Date(purchaseDate!).toLocaleDateString("ru-RU")}
-                              </p>
-                            </CardContent>
-                          </Card>
-                        </div>
-                      </Link>
-                    ))}
+                              <CardHeader className="space-y-3 p-4 md:p-6">
+                                <h3 className="font-bold text-lg md:text-xl line-clamp-2 transition-colors duration-200">
+                                  {course.title}
+                                </h3>
+                                <div className="flex items-center gap-2">
+                                  <Avatar className="h-8 w-8 border-2 border-primary/20">
+                                    <AvatarImage src={course.authorImage || undefined} />
+                                    <AvatarFallback className="bg-primary/10 text-primary font-semibold">
+                                      {course.authorName?.[0] || 'A'}
+                                    </AvatarFallback>
+                                  </Avatar>
+                                  <div className="flex flex-col">
+                                    <span className="text-xs text-muted-foreground">Автор</span>
+                                    <span className="text-sm font-medium">{course.authorName || 'Автор'}</span>
+                                  </div>
+                                </div>
+                                <div className="flex flex-wrap gap-2">
+                                  {
+                                    platforms.length > 0 && platforms.map((platform) => (
+                                      <Badge variant="outline" className="text-xs font-medium">
+                                        {platform.name}
+                                      </Badge>
+                                    ))
+                                  }
+                                  {Array.isArray(course.level) && course.level.length > 0 && (
+                                    <div className="flex flex-wrap gap-2">
+                                      {Array.from(
+                                        new Set(
+                                          course.level
+                                            .map(id => subcategories.find(sub => sub.id === id))
+                                            .filter(Boolean)
+                                            .map(sub => sub.name)
+                                        )
+                                      ).map(levelName => (
+                                        <Badge key={levelName} variant="outline" className="text-xs font-medium">
+                                          {levelName}
+                                        </Badge>
+                                      ))}
+                                    </div>
+                                  )}
+                                  {course.year && (
+                                    <Badge variant="outline" className="text-xs font-medium">
+                                      {course.year}
+                                    </Badge>
+                                  )}
+                                </div>
+                              </CardHeader>
+
+                              <CardContent>
+                                <p className="text-xs text-muted-foreground">
+                                  Куплено: {new Date(purchaseDate!).toLocaleDateString("ru-RU")}
+                                </p>
+                              </CardContent>
+                            </Card>
+                          </div>
+                        </Link>
+                      )
+                    })}
                   </div>
                 </div>
 

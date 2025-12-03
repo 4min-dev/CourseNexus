@@ -307,7 +307,7 @@ export function VideoPlayer({ src, onProgress, onProgressSave, onComplete, userE
     >
       <video
         ref={videoRef}
-        src={src}
+        src={src.replace('processed', 'vkurse/processed')}
         className="w-full aspect-video"
         onClick={togglePlay}
         preload="auto"

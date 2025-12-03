@@ -27,12 +27,12 @@ const upload = multer({ storage: multer.memoryStorage() });
 
 const s3Client = new S3Client({
   region: "ru-central-1",
-  endpoint: "https://storage.yandexcloud.net",
+  endpoint: "https://s3.ru-central-1.nowcdn.co",
   credentials: {
-    accessKeyId: process.env.NOWCDN_KEY!,
-    secretAccessKey: process.env.NOWCDN_SECRET!,
+    accessKeyId: process.env.CDNNOW_KEY!,
+    secretAccessKey: process.env.CDNNOW_SECRET!,
   },
-  forcePathStyle: false,
+  forcePathStyle: true,
 });
 
 const metadataCache = new Map<string, { data: any; timestamp: number }>();
@@ -47,6 +47,7 @@ const telegram2faTokens = new Map<string, { userId: string; expiresAt: Date }>()
 
 
 function transliterate(text: string): string {
+  console.log(text)
   const map: Record<string, string> = {
     'а': 'a', 'б': 'b', 'в': 'v', 'г': 'g', 'д': 'd', 'е': 'e', 'ё': 'yo', 'ж': 'zh', 'з': 'z',
     'и': 'i', 'й': 'y', 'к': 'k', 'л': 'l', 'м': 'm', 'н': 'n', 'о': 'o', 'п': 'p', 'р': 'r',
@@ -3141,8 +3142,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const { id } = req.params;
       const { videoUrl, originalFileName } = req.body;
 
-      if (!videoUrl || !originalFileName) {
-        return res.status(400).json({ message: "videoUrl and originalFileName are required" });
+      const url = videoUrl.replace(
+        'https://p40911.nowcdn.co/',
+        'https://p40911.nowcdn.co/vkurse/'
+      );
+
+
+      if (!url || !originalFileName) {
+        return res.status(400).json({ message: "url and originalFileName are required" });
       }
 
 
@@ -3157,8 +3164,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         uploadProgress: 0
       });
 
-
-      await videoQueue.addToQueue(id, videoUrl, originalFileName, userId);
+      console.log('body', req.body)
+      console.log("from :id/video POST")
+      await videoQueue.addToQueue(id, url, originalFileName, userId);
 
       res.json({ success: true, status: 'queued' });
     } catch (error) {
@@ -3260,6 +3268,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
               .where(eq(lessons.id, lesson.id));
             console.log(`[Mass Reprocess] Set uploadedBy=${currentUserId} for legacy lesson ${lesson.id}`);
           }
+
+          console.log('Lesson Video URL:', lesson.videoUrl)
 
           await videoQueue.addToQueue(lesson.id, lesson.videoUrl, 'video.mp4', userId);
           console.log(`Added lesson ${lesson.id} (${lesson.title}) to queue`);
@@ -5524,13 +5534,80 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.delete('/api/admin/packages/:id/courses/:courseId', isAuthenticated, isAdmin, async (req, res) => {
     try {
-      const { id, courseId } = req.params;
-      await storage.removeCourseFromPackage(id, courseId);
+      const { id: packageId, courseId } = req.params;
 
-      res.json({ success: true });
-    } catch (error) {
-      console.error("Error removing course from package:", error);
-      res.status(500).json({ message: "Failed to remove course from package" });
+      // 1. Удаляем связь курс ↔ пакет из БД
+      await storage.removeCourseFromPackage(packageId, courseId);
+
+      // 2. Находим все уроки этого курса
+      const lessonsInCourse = await db
+        .select({
+          videoUrl: lessons.videoUrl,
+        })
+        .from(lessons)
+        .innerJoin(sections, eq(sections.id, lessons.sectionId))
+        .where(eq(sections.courseId, courseId))
+        .where(not(eq(lessons.videoUrl, null))); // только уроки с загруженным видео
+
+      if (lessonsInCourse.length === 0) {
+        return res.json({ success: true, deletedFromCDN: 0 });
+      }
+
+      // 3. Создаём S3-клиент (один раз)
+      const s3 = new S3Client({
+        region: "ru-central-1",
+        endpoint: "https://s3.ru-central-1.nowcdn.co",
+        credentials: {
+          accessKeyId: process.env.CDNNOW_KEY!,
+          secretAccessKey: process.env.CDNNOW_SECRET!,
+        },
+        forcePathStyle: true,
+      });
+
+      const { DeleteObjectsCommand } = await import("@aws-sdk/client-s3");
+
+      // Собираем ключи для массового удаления (до 1000 за раз)
+      const objectsToDelete = lessonsInCourse
+        .map(l => l.videoUrl)
+        .filter(Boolean)
+        .map(url => {
+          try {
+            const parsed = new URL(url);
+            // Поддержка двух форматов:
+            // https://p40911.nowcdn.co/vkurse/xxx.mp4
+            // https://p40911.nowcdn.co/processed/xxx.mp4
+            return { Key: decodeURIComponent(parsed.pathname.slice(1)) };
+          } catch {
+            return null;
+          }
+        })
+        .filter(Boolean);
+
+      if (objectsToDelete.length > 0) {
+        await s3.send(
+          new DeleteObjectsCommand({
+            Bucket: process.env.NOWCDN_BUCKET!,
+            Delete: {
+              Objects: objectsToDelete,
+              Quiet: true, // не возвращать список удалённых (меньше трафика)
+            },
+          })
+        );
+
+        console.log(`Удалено ${objectsToDelete.length} видео-файлов курса ${courseId} из CDN`);
+      }
+
+      res.json({
+        success: true,
+        deletedFromCDN: objectsToDelete.length
+      });
+    } catch (error: any) {
+      console.error("Error removing course from package + CDN cleanup:", error);
+      // Даже если удаление из CDN упало — связь уже удалена, возвращаем успех
+      res.status(500).json({
+        message: "Failed to cleanup videos from CDN",
+        details: error.message
+      });
     }
   });
 
@@ -7043,7 +7120,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       const safeFileName = `${Date.now()}_${fileName.replace(/[^a-zA-Z0-9._-]/g, "_")}`;
-      const Key = `uploads/${safeFileName}`;
+      const Key = `vkurse/${safeFileName}`
 
       const command = new PutObjectCommand({
         Bucket: process.env.NOWCDN_BUCKET!,
@@ -7054,12 +7131,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const uploadUrl = await getSignedUrl(s3Client, command, { expiresIn: 120 });
 
-      const fileUrl = `https://storage.yandexcloud.net/${process.env.NOWCDN_BUCKET}/${Key}`;
+      const fileUrl = `https://p40911.nowcdn.co/${Key}`;
 
       res.json({
         uploadUrl,
         fileUrl,
-        fileName, // оригинальное имя (можно использовать на фронте)
+        fileName,
       });
     } catch (err: any) {
       console.error("Presign error:", err);
@@ -7081,12 +7158,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
             Bucket: process.env.NOWCDN_BUCKET!,
             Key: key,
             Body: req.file.buffer,
-            ContentType: req.file.mimetype,
-            ACL: "public-read",
+            ContentType: req.file.mimetype
           })
         );
 
-        const url = `https://storage.yandexcloud.net/${process.env.NOWCDN_BUCKET}/${key}`;
+        const url = `https://p40911.nowcdn.co/${key}`;
 
         const originalName = Buffer.from(req.file.originalname, "latin1").toString("utf8");
 

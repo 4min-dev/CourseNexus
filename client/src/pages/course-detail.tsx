@@ -17,7 +17,7 @@ import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { isUnauthorizedError } from "@/lib/authUtils";
 import { useAuth } from "@/hooks/useAuth";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Footer } from "@/components/footer";
 import { formatPrice } from "@/lib/formatPrice";
 import { VideoPlayer } from "@/components/VideoPlayer";
@@ -409,6 +409,47 @@ export default function CourseDetail() {
   const [showSuccessDialog, setShowSuccessDialog] = useState(false);
   const [useFantiks, setUseFantiks] = useState(false);
   const [payWithFantiks, setPayWithFantiks] = useState(false);
+  const [platforms, setPlatforms] = useState<Category[]>([])
+
+  const { data: subcategories } = useQuery<Subcategory[]>({
+    queryKey: ["/api/subcategories"],
+  });
+
+  const { data: categories } = useQuery<Category[]>({
+    queryKey: ["/api/categories"],
+  });
+
+  const { data: courseSubcategoryIds = [] } = useQuery<string[]>({
+    queryKey: ["/api/admin/courses", courseId, "subcategories"],
+    queryFn: async () => {
+      const response = await fetch(`/api/admin/courses/${courseId}/subcategories`, {
+        credentials: "include",
+      });
+      if (!response.ok) throw new Error("Failed to fetch");
+      return response.json();
+    },
+    enabled: !!courseId,
+  });
+
+  useEffect(() => {
+    if (!subcategories || !categories || !courseSubcategoryIds?.length) return;
+
+    // Шаг 1: Находим все подкатегории, привязанные к курсу
+    const matchedSubcategories = subcategories.filter(sub =>
+      courseSubcategoryIds.includes(sub.id)
+    );
+
+    // Шаг 2: Собираем уникальные categoryId из них
+    const targetCategoryIds = [...new Set(matchedSubcategories.map(sub => sub.categoryId))];
+
+    // Шаг 3: Находим родительские категории
+    const parentCategories = categories.filter(cat =>
+      targetCategoryIds.includes(cat.id)
+    );
+
+    setPlatforms(parentCategories)
+  }, [subcategories, categories, courseSubcategoryIds]);
+
 
   const { data: course, isLoading } = useQuery<Course>({
     queryKey: ["/api/courses", courseId],
@@ -457,10 +498,6 @@ export default function CourseDetail() {
   }>>({
     queryKey: ["/api/courses", courseId, "packages"],
     enabled: !!courseId,
-  });
-
-  const { data: subcategories } = useQuery<Subcategory[]>({
-    queryKey: ["/api/subcategories"],
   });
 
   const { data: vipTier, isLoading: isVipTierLoading, isError: isVipTierError } = useQuery<VipTier>({
@@ -563,16 +600,6 @@ export default function CourseDetail() {
     },
     enabled: !!courseId,
   });
-
-  const { data: categories } = useQuery<Category[]>({
-    queryKey: ["/api/categories"],
-  });
-
-  const getPlatformName = (platform: string | null) => {
-    const selectedPlatform = categories?.filter(cat => cat.slug === platform)[0].name
-
-    return selectedPlatform || platform
-  };
 
   const getLevelName = (level: string) => {
     const names: Record<string, string> = {
@@ -789,11 +816,15 @@ export default function CourseDetail() {
               <div className="relative space-y-4">
                 {/* Badges */}
                 <div className="flex flex-wrap gap-2">
-                  <Badge variant="outline" className="border-purple-500/30 bg-purple-500/10">
-                    <Award className="h-3 w-3 mr-1" />
-                    {getPlatformName(course.platform)}
-                  </Badge>
-                  {Array.isArray(course.level) && course.level.length > 0 && (
+                  {
+                    platforms.length > 0 && platforms.map((platform) => (
+                      <Badge key={platform.id} variant="outline" className="border-purple-500/30 bg-purple-500/10">
+                        <Award className="h-3 w-3 mr-1" />
+                        {platform.name}
+                      </Badge>
+                    ))
+                  }
+                  {(Array.isArray(course.level) && course.level.length > 0 && subcategories) && (
                     <div className="flex flex-wrap gap-2">
                       {Array.from(
                         new Set(
@@ -1043,7 +1074,13 @@ export default function CourseDetail() {
                 <div className="pt-4 border-t border-border space-y-2 text-sm">
                   <div className="flex justify-between">
                     <span className="text-muted-foreground">Платформа:</span>
-                    <span className="font-medium">{getPlatformName(course.platform)}</span>
+                    {
+                      platforms.length > 0 && platforms.map((platform) => (
+                        <span className="font-medium" key={platform.id}>
+                          {platform.name}
+                        </span>
+                      ))
+                    }
                   </div>
                   <div className="flex justify-between">
                     <span className="text-muted-foreground">Уровень:</span>
