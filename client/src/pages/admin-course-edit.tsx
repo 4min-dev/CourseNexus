@@ -485,6 +485,8 @@ export default function AdminCourseEdit() {
           });
         } catch (e) { /* игнорируем, но логируем */ }
 
+        console.log('videoFile', videoFile)
+
         uploadQueue.add({
           lessonId,
           file: videoFile,
@@ -534,83 +536,52 @@ export default function AdminCourseEdit() {
 
   // Update lesson mutation
   const updateLessonMutation = useMutation({
-    mutationFn: async (data: { lessonId: string; title: string; description?: string; videoUrl?: string | null; duration?: number }) => {
+    mutationFn: async (data: {
+      lessonId: string;
+      title: string;
+      description?: string;
+    }) => {
       const { lessonId, ...lessonData } = data;
       const response = await apiRequest("PUT", `/api/admin/lessons/${lessonId}`, lessonData);
       return await response.json();
     },
-    onSuccess: async (updatedLesson: any) => {
-      const videoPromise = videoUploadPromise;
-      const filesToUpload = [...uploadedFiles];
-      const lessonId = updatedLesson?.id; // Save lesson ID immediately
 
-      // Set uploading lesson ID to show progress
-      if (videoPromise) {
-        setUploadingLessonId(lessonId);
+    onSuccess: async (updatedLesson: any) => {
+      const lessonId = updatedLesson?.id;
+      if (!lessonId) {
+        toast({ title: "Урок обновлён, но ID не получен", variant: "destructive" });
+        return;
       }
 
-      // Close dialog and reset state immediately
       toast({ title: "Урок обновлен" });
-      setIsEditLessonDialogOpen(false);
-      setEditingLesson(null);
-      setUploadedVideo(null);
-      setUploadedFiles([]);
-      // Clear session ID to prevent stale uploads from updating UI
-      setCurrentLessonSessionId(null);
 
-      // Invalidate to show the updated lesson in the list
-      queryClient.invalidateQueries({ queryKey: ["/api/admin/courses", courseId, "sections"] });
+      // === 1. Если есть новое видео — добавляем его в очередь ===
+      if (videoFile) {
+        try {
+          await apiRequest("PUT", `/api/admin/lessons/${lessonId}`, {
+            processingStatus: "uploading",
+            uploadProgress: 0,
+          });
+        } catch (e) { }
 
-      // Process video in background (non-blocking)
-      if (videoPromise) {
-        // Update lesson status to uploading first
-        apiRequest("PUT", `/api/admin/lessons/${lessonId}`, {
-          processingStatus: 'uploading'
-        }).catch(error => {
-          console.error("Error updating lesson status to uploading:", error?.message || error);
-          toast({ title: "Не удалось обновить статус урока", variant: "destructive" });
+        uploadQueue.add({
+          lessonId,
+          file: videoFile,
+          fileName: videoFile.name,
+          onProgress: (percent) => {
+            apiRequest("PUT", `/api/admin/lessons/${lessonId}`, { uploadProgress: percent }).catch(() => { });
+          },
         });
 
-        // Wait for video upload to complete
-        videoPromise
-          .then(async (videoInfo) => {
-            // Clear uploading lesson ID and progress
-            setUploadingLessonId(null);
-            setUploadProgress(0);
-            console.log('videoInfo', videoInfo)
-            // Queue video for processing
-            return apiRequest("POST", `/api/admin/lessons/${lessonId}/video`, {
-              videoUrl: `${BUCKET_NAME}/${videoInfo.fileUrl}`,
-              originalFileName: videoInfo.fileName,
-            }).then(() => {
-              // Refresh UI to show queued/processing status
-              queryClient.invalidateQueries({ queryKey: ["/api/admin/courses", courseId, "sections"] });
-            });
-          })
-          .catch(error => {
-            console.error("Error processing video:", error);
-            toast({ title: "Ошибка обработки видео", variant: "destructive" });
-
-            // Clear uploading lesson ID and progress
-            setUploadingLessonId(null);
-            setUploadProgress(0);
-
-            // Update lesson status to failed
-            apiRequest("PUT", `/api/admin/lessons/${lessonId}`, {
-              processingStatus: 'failed',
-              errorMessage: 'Не удалось загрузить видео'
-            })
-              .then(() => {
-                // Refresh UI to show failed status
-                queryClient.invalidateQueries({ queryKey: ["/api/admin/courses", courseId, "sections"] });
-              })
-              .catch(err => console.error("Error updating lesson status to failed:", err?.message || err));
-          });
+        toast({
+          title: "Видео в очереди на загрузку",
+          description: `Позиция в очереди: ${uploadQueue.getQueueLength()}`,
+        });
       }
 
-      // Create files in background (non-blocking)
-      if (filesToUpload.length > 0 && lessonId) {
-        for (const file of filesToUpload) {
+      // === 2. Сохраняем прикрепленные файлы (PDF, ZIP и т.д.) ===
+      if (uploadedFiles.length > 0) {
+        for (const file of uploadedFiles) {
           createFileMutation.mutate({
             courseId: courseId!,
             lessonId: lessonId,
@@ -620,9 +591,22 @@ export default function AdminCourseEdit() {
             displayOrder: 0,
           });
         }
-        queryClient.invalidateQueries({ queryKey: ["/api/admin/courses", courseId, "files"] });
+
+        toast({ title: `Добавлено файлов: ${uploadedFiles.length}` });
       }
+
+      // === 3. Обновляем UI ===
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/courses", courseId, "sections"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/courses", courseId, "files"] });
+
+      // === 4. Закрываем диалог и чистим форму ===
+      setIsEditLessonDialogOpen(false);
+      setEditingLesson(null);
+      setUploadedVideo(null);
+      setUploadedFiles([]);
+      setVideoFile(null);
     },
+
     onError: () => {
       toast({ title: "Ошибка при обновлении урока", variant: "destructive" });
     },
@@ -771,16 +755,16 @@ export default function AdminCourseEdit() {
 
       // Create new files if any were uploaded
       if (uploadedFiles.length > 0) {
-        for (const file of uploadedFiles) {
-          await apiRequest("POST", "/api/admin/course-files", {
-            courseId: courseId!,
-            lessonId: editingLesson.id,
-            fileName: file.fileName,
-            fileUrl: file.fileUrl,
-            fileType: file.fileType,
-            displayOrder: 0,
-          });
-        }
+        // for (const file of uploadedFiles) {
+        //   await apiRequest("POST", "/api/admin/course-files", {
+        //     courseId: courseId!,
+        //     lessonId: editingLesson.id,
+        //     fileName: file.fileName,
+        //     fileUrl: file.fileUrl,
+        //     fileType: file.fileType,
+        //     displayOrder: 0,
+        //   });
+        // }
         queryClient.invalidateQueries({ queryKey: ["/api/admin/courses", courseId, "files"] });
         queryClient.invalidateQueries({ queryKey: ["/api/admin/courses", courseId, "lesson-files", editingLesson.id] });
       }
@@ -959,7 +943,7 @@ export default function AdminCourseEdit() {
                       <NowCdnUploader
                         inputId="thumbnailUploader"
                         acceptedTypes="image/*"
-                        onUploadSuccess={({ fileUrl, fileName }) => {
+                        onUploadSuccess={([{ fileUrl, fileName }]) => {
                           setUploadedThumbnail({ fileName, fileUrl });
                           setCourseFormData(prev => ({ ...prev, thumbnailImage: fileUrl }));
                         }}
@@ -1480,7 +1464,7 @@ export default function AdminCourseEdit() {
               <div className="flex items-center justify-between">
                 <Label>Видео урока (необязательно)</Label>
                 <NowCdnVideoUploader
-                  acceptedTypes="video/*"
+                  acceptedTypes="video/*,video/mp2t,.ts"
                   buttonText="Выбрать видео"
                   inputId="video-upload"
                   onFileSelect={(file) => {
@@ -1536,7 +1520,7 @@ export default function AdminCourseEdit() {
               <div className="flex items-center justify-between mb-3">
                 <Label>Файлы урока</Label>
                 <NowCdnUploader
-                  acceptedTypes=".pdf,.doc,.docx,.zip,.rar,.txt"
+                  acceptedTypes="all"
                   buttonText="Загрузить файлы"
                   inputId="files-upload-input"
                   onUploadSuccess={([{ fileName, fileUrl }]) => {
@@ -1589,11 +1573,14 @@ export default function AdminCourseEdit() {
                 }
                 const section = sections?.find(s => s.id === selectedSectionId);
                 const nextOrder = (section?.lessons?.length || 0) + 1;
+
+                console.log('ploadedVideo?.fileUrl ', lessonFormData)
+
                 createLessonMutation.mutate({
                   sectionId: selectedSectionId!,
                   title: lessonFormData.title,
                   description: lessonFormData.description || undefined,
-                  order: nextOrder,
+                  order: nextOrder
                 });
 
 
@@ -1643,7 +1630,7 @@ export default function AdminCourseEdit() {
               <div className="flex items-center justify-between">
                 <Label>Видео урока (необязательно)</Label>
                 <NowCdnVideoUploader
-                  acceptedTypes="video/*"
+                  acceptedTypes="video/*,video/mp2t,.ts"
                   buttonText="Выбрать видео"
                   inputId="video-upload"
                   onFileSelect={(file) => {
@@ -1748,10 +1735,10 @@ export default function AdminCourseEdit() {
               <div className="flex items-center justify-between mb-3">
                 <Label>Файлы урока</Label>
                 <NowCdnUploader
-                  acceptedTypes=".pdf,.doc,.docx,.zip,.rar,.txt"
+                  acceptedTypes="all"
                   buttonText="Загрузить файлы"
                   inputId="files-upload-input"
-                  onUploadSuccess={({ fileName, fileUrl }) => {
+                  onUploadSuccess={([{ fileName, fileUrl }]) => {
                     const fileType = getFileType("", fileName);
                     setUploadedFiles(prev => [...prev, { fileName, fileUrl, fileType }]);
                   }}

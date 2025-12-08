@@ -19,7 +19,7 @@ export function PageNavigation({ items }: PageNavigationProps) {
   const [navHeight, setNavHeight] = useState(0);
   const [isMobile, setIsMobile] = useState(false);
   const [isTransitioning, setIsTransitioning] = useState(false);
-  
+
   const navRef = useRef<HTMLDivElement>(null);
   const sentinelRef = useRef<HTMLDivElement>(null);
   const rafIdRef = useRef<number | null>(null);
@@ -36,7 +36,7 @@ export function PageNavigation({ items }: PageNavigationProps) {
     const currentScrollY = window.pageYOffset;
     const viewportHeight = window.innerHeight;
     const threshold = viewportHeight / 2;
-    
+
     // Track scroll direction
     if (currentScrollY > lastScrollY.current) {
       scrollDirection.current = 'down';
@@ -44,21 +44,21 @@ export function PageNavigation({ items }: PageNavigationProps) {
       scrollDirection.current = 'up';
     }
     lastScrollY.current = currentScrollY;
-    
+
     let currentSection = "";
-    
+
     for (const item of items) {
       const pos = sectionPositions.current.get(item.id);
       if (pos) {
         const relativeTop = pos.top - currentScrollY;
         const relativeBottom = pos.bottom - currentScrollY;
-        
+
         if (relativeTop <= threshold && relativeBottom >= 0) {
           currentSection = item.id;
         }
       }
     }
-    
+
     setActiveSection(prev => prev !== currentSection ? currentSection : prev);
   }, [items]);
 
@@ -75,7 +75,7 @@ export function PageNavigation({ items }: PageNavigationProps) {
         });
       }
     });
-    
+
     // Immediately evaluate active section after computing metrics
     evaluateActiveSection();
   }, [items, evaluateActiveSection]);
@@ -84,18 +84,18 @@ export function PageNavigation({ items }: PageNavigationProps) {
   useEffect(() => {
     sectionsCache.current.clear();
     sectionPositions.current.clear();
-    
+
     items.forEach(item => {
       const element = document.getElementById(item.id);
       if (element) {
         sectionsCache.current.set(item.id, element);
       }
     });
-    
+
     // Calculate positions immediately via RAF for first paint
     requestAnimationFrame(() => {
       computeSectionMetrics();
-      
+
       // Recalculate again after images/content may have loaded
       setTimeout(computeSectionMetrics, 500);
     });
@@ -104,20 +104,20 @@ export function PageNavigation({ items }: PageNavigationProps) {
   // Handle window resize with debouncing and recalculate positions
   useEffect(() => {
     let resizeTimeout: NodeJS.Timeout;
-    
+
     const checkMobile = () => {
       const mobile = window.innerWidth < 768;
       setIsMobile(mobile);
-      
+
       // Recalculate nav height on resize if needed
       if (mobile && navRef.current) {
         setNavHeight(navRef.current.offsetHeight);
       }
-      
+
       // Recalculate section positions and evaluate active section on resize
       computeSectionMetrics();
     };
-    
+
     const handleResize = () => {
       clearTimeout(resizeTimeout);
       resizeTimeout = setTimeout(checkMobile, 150);
@@ -125,9 +125,9 @@ export function PageNavigation({ items }: PageNavigationProps) {
 
     // Initial check
     checkMobile();
-    
+
     window.addEventListener("resize", handleResize, { passive: true });
-    
+
     return () => {
       window.removeEventListener("resize", handleResize);
       clearTimeout(resizeTimeout);
@@ -141,7 +141,7 @@ export function PageNavigation({ items }: PageNavigationProps) {
       if (rafIdRef.current !== null) {
         cancelAnimationFrame(rafIdRef.current);
       }
-      
+
       rafIdRef.current = requestAnimationFrame(() => {
         // If cache is empty on first scroll, compute metrics synchronously once
         if (sectionPositions.current.size === 0) {
@@ -182,7 +182,7 @@ export function PageNavigation({ items }: PageNavigationProps) {
       ([entry]) => {
         const now = Date.now();
         const shouldBeFixed = !entry.isIntersecting;
-        
+
         // Prevent rapid state changes (minimum 150ms between changes)
         const timeSinceLastChange = now - lastFixedChangeTime.current;
         if (timeSinceLastChange < 150) {
@@ -198,7 +198,7 @@ export function PageNavigation({ items }: PageNavigationProps) {
         debounceTimeoutRef.current = setTimeout(() => {
           // Double-check the state hasn't changed
           const currentShouldBeFixed = !entry.isIntersecting;
-          
+
           // Only apply if state actually needs to change
           if (currentShouldBeFixed === isFixed) {
             return; // State already correct
@@ -212,18 +212,18 @@ export function PageNavigation({ items }: PageNavigationProps) {
           // Start transition state
           setIsTransitioning(true);
           lastFixedChangeTime.current = Date.now();
-          
+
           // Use requestAnimationFrame for smoother state changes
           requestAnimationFrame(() => {
             setIsFixed(currentShouldBeFixed);
-            
+
             // End transition after CSS animation completes
             transitionTimeoutRef.current = setTimeout(() => {
               setIsTransitioning(false);
               transitionTimeoutRef.current = null;
             }, 500); // Match CSS transition duration (500ms)
           });
-          
+
           debounceTimeoutRef.current = null;
         }, 50); // 50ms debounce - quick enough to feel instant, slow enough to prevent jitter
       },
@@ -286,29 +286,29 @@ export function PageNavigation({ items }: PageNavigationProps) {
     <>
       {/* Sentinel element for IntersectionObserver (mobile only) */}
       <div ref={sentinelRef} className="md:hidden" style={{ height: '1px' }} />
-      
+
       {/* Placeholder to prevent content jump when nav becomes fixed (mobile only) */}
       {isFixed && (
-        <div 
-          className="md:hidden transition-all duration-500 ease-in-out" 
-          style={{ 
+        <div
+          className="md:hidden transition-all duration-500 ease-in-out"
+          style={{
             height: `${navHeight}px`,
             opacity: isTransitioning ? 0 : 1
-          }} 
+          }}
         />
       )}
-      
+
       <nav ref={navRef} className={navClasses}>
         <div className="relative rounded-xl overflow-hidden">
           {/* Glassmorphism layer with backdrop blur - lighter */}
-          <div 
-            className="absolute inset-0 bg-gradient-to-r from-background/40 via-background/30 to-background/40 border border-border/40 rounded-xl" 
-            style={glassStyle} 
+          <div
+            className="absolute inset-0 bg-gradient-to-r from-background/40 via-background/30 to-background/40 border border-border/40 rounded-xl"
+            style={glassStyle}
           />
-          
+
           {/* Subtle shine effect on top */}
           <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-white/30 to-transparent rounded-t-xl" />
-          
+
           {/* Content layer */}
           <div className="relative p-2">
             <div className="flex gap-2 overflow-x-auto scrollbar-hide">
@@ -349,7 +349,7 @@ export function PageNavigation({ items }: PageNavigationProps) {
 export const shopNavigationItems: NavigationItem[] = [
   {
     id: "vip-section",
-    label: "VIP Пакеты",
+    label: "VIP Пакеsты",
     icon: <Crown className="h-4 w-4" />,
     color: "from-yellow-500 to-amber-600",
   },

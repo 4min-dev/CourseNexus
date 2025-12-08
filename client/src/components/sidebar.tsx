@@ -90,6 +90,19 @@ export function Sidebar({ selectedCategories, onCategoryChange, isOpen, showPric
       onCategoryChange(categories);
     }
   };
+  const [displayedCards, setDisplayedCards] = useState([])
+  const [selectedSubcategory, setSelectedSubcategory] = useState<string | null>(null);
+
+  // Обработчик клика по подкатегории
+  const handleSubcategoryClick = (subcategoryId?: string) => {
+    if (!subcategoryId) return;
+    setSelectedSubcategory(subcategoryId);
+
+    // Фильтруем карточки всех категорий по выбранной подкатегории
+    const filteredCards = categories.filter(card => card.subcategoryId === subcategoryId);
+    setDisplayedCards(filteredCards);
+  };
+
 
   const { data: categories } = useQuery<DbCategory[]>({
     queryKey: ["/api/categories"],
@@ -140,7 +153,7 @@ export function Sidebar({ selectedCategories, onCategoryChange, isOpen, showPric
   const handleAuthorsScroll = useCallback((e: React.UIEvent<HTMLDivElement>) => {
     const target = e.currentTarget;
     const scrolledToBottom = target.scrollHeight - target.scrollTop <= target.clientHeight + 50;
-    
+
     if (scrolledToBottom && displayedAuthorsCount < authors.length) {
       setDisplayedAuthorsCount(prev => Math.min(prev + 20, authors.length));
     }
@@ -216,7 +229,7 @@ export function Sidebar({ selectedCategories, onCategoryChange, isOpen, showPric
     } else {
       // Track filter click for analytics (only when selecting, not deselecting)
       trackFilterClick('category', categoryId || null, platformName);
-      
+
       // Selecting a new platform - reset dependent filters
       const newCategories: any = {
         platform: platform,
@@ -237,7 +250,7 @@ export function Sidebar({ selectedCategories, onCategoryChange, isOpen, showPric
     // When clicking main category, show all courses from all child categories
     const childSlugs = mainPlatform.children.map(c => c.id).join(',');
     const combinedPlatform = childSlugs || mainPlatform.id;
-    
+
     if (selectedCategories.platform === combinedPlatform) {
       // Deselecting main category
       handleCategoryChange({
@@ -251,10 +264,10 @@ export function Sidebar({ selectedCategories, onCategoryChange, isOpen, showPric
         newExpanded.add(`platform-${mainPlatform.id}`);
         setExpandedNodes(newExpanded);
       }
-      
+
       // Track filter click for analytics (only when selecting, not deselecting)
       trackFilterClick('category', mainPlatform.categoryId || null, mainPlatform.name);
-      
+
       // Selecting main category - reset dependent filters
       const newCategories: any = {
         platform: combinedPlatform,
@@ -305,7 +318,7 @@ export function Sidebar({ selectedCategories, onCategoryChange, isOpen, showPric
     if (value !== "all") {
       trackFilterClick('author', null, value);
     }
-    
+
     handleCategoryChange({
       ...selectedCategories,
       author: value === "all" ? undefined : value,
@@ -315,7 +328,7 @@ export function Sidebar({ selectedCategories, onCategoryChange, isOpen, showPric
   // Build hierarchical platform structure (exclude "Уровень" category)
   const mainCategories = (categories || [])
     .filter(cat => cat.isActive && !cat.parentId && cat.slug !== 'level');
-  
+
   const platformsHierarchy = mainCategories.map(mainCat => ({
     id: mainCat.slug,
     name: mainCat.name,
@@ -371,34 +384,34 @@ export function Sidebar({ selectedCategories, onCategoryChange, isOpen, showPric
       autoExpandedPlatformRef.current = null;
       return;
     }
-    
+
     // Already auto-expanded this platform - don't interfere with manual toggles
     if (autoExpandedPlatformRef.current === selectedCategories.platform) {
       return;
     }
-    
+
     // Mark this platform as auto-expanded
     autoExpandedPlatformRef.current = selectedCategories.platform;
-    
+
     // Use functional update to respect current state
     setExpandedNodes(prev => {
       const newExpanded = new Set(prev);
-      
+
       // Ensure "platforms" is expanded
       newExpanded.add("platforms");
-      
+
       // Find the parent category for the selected platform
       for (const mainPlatform of platformsHierarchy) {
         // Check if this is a child platform (single slug like "wb", "ozon")
         const isChildPlatform = mainPlatform.children.some(
           child => child.id === selectedCategories.platform
         );
-        
+
         if (isChildPlatform) {
           newExpanded.add(`platform-${mainPlatform.id}`);
           break;
         }
-        
+
         // Also handle main category selection (combined slugs)
         const childSlugs = mainPlatform.children.map(c => c.id).join(',');
         if (selectedCategories.platform === childSlugs) {
@@ -406,7 +419,7 @@ export function Sidebar({ selectedCategories, onCategoryChange, isOpen, showPric
           break;
         }
       }
-      
+
       return newExpanded;
     });
   }, [selectedCategories.platform, platformsHierarchy]);
@@ -496,7 +509,7 @@ export function Sidebar({ selectedCategories, onCategoryChange, isOpen, showPric
                 {platformsHierarchy.map((mainPlatform) => {
                   const childSlugs = mainPlatform.children.map(c => c.id).join(',');
                   const isMainSelected = selectedCategories.platform === childSlugs;
-                  
+
                   return (
                     <div key={mainPlatform.id} className="space-y-1">
                       {/* Main category - whole button toggles expand/collapse */}
@@ -527,7 +540,7 @@ export function Sidebar({ selectedCategories, onCategoryChange, isOpen, showPric
                               className={cn(
                                 "flex items-center gap-2 px-2 py-1.5 rounded-md w-full text-left text-sm hover-elevate transition-all",
                                 selectedCategories.platform === child.id &&
-                                  "bg-sidebar-accent text-sidebar-accent-foreground toggle-elevate toggle-elevated"
+                                "bg-sidebar-accent text-sidebar-accent-foreground toggle-elevate toggle-elevated"
                               )}
                               data-testid={`button-platform-${child.id}`}
                             >
@@ -560,21 +573,62 @@ export function Sidebar({ selectedCategories, onCategoryChange, isOpen, showPric
 
             {expandedNodes.has("levels") && (
               <div className="ml-6 space-y-1">
-                {levels.map((level) => (
+
+                {Array.isArray(levels) && levels.length > 0 && (
+                  <div className="flex flex-wrap gap-2">
+                    {Array.from(
+                      new Set(
+                        levels.map((level) => {
+                          const sub = subcategories.find(sub => sub.id === level.id);
+                          const category = categories.find(cat => cat.id === sub?.categoryId);
+                          return {
+                            ...level,
+                            subcategoryName: sub?.name,
+                            categoryName: category?.name
+                          };
+                        })
+                      )
+                    ).map(level => (
+                      <button
+                        key={level?.id}
+                        onClick={() => handleLevelClick(level.id)}
+                        className={cn(
+                          "flex items-center gap-2 px-2 py-1.5 rounded-md w-full text-left text-sm hover-elevate transition-all",
+                          selectedCategories.level === level?.id &&
+                          "bg-sidebar-accent text-sidebar-accent-foreground toggle-elevate toggle-elevated"
+                        )}
+                        data-testid={`button-level-${level.id}`}
+                      >
+                        <Folder className="h-3 w-3" />
+                        <div className="flex flex-col">
+                          <span>{level.categoryName}</span>
+                          {level.categoryName && (
+                            <span className="text-xs text-muted-foreground">
+                              {level.subcategoryName}
+                            </span>
+                          )}
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                )}
+
+
+                {/* {levels.map((level) => (
                   <button
                     key={level.id}
                     onClick={() => handleLevelClick(level.id)}
                     className={cn(
                       "flex items-center gap-2 px-2 py-1.5 rounded-md w-full text-left text-sm hover-elevate transition-all",
                       selectedCategories.level === level.id &&
-                        "bg-sidebar-accent text-sidebar-accent-foreground toggle-elevate toggle-elevated"
+                      "bg-sidebar-accent text-sidebar-accent-foreground toggle-elevate toggle-elevated"
                     )}
                     data-testid={`button-level-${level.id}`}
                   >
                     <Folder className="h-3 w-3" />
                     <span>{level.name}</span>
                   </button>
-                ))}
+                ))} */}
               </div>
             )}
           </div>
@@ -602,7 +656,7 @@ export function Sidebar({ selectedCategories, onCategoryChange, isOpen, showPric
                     className={cn(
                       "flex items-center gap-2 px-2 py-1.5 rounded-md w-full text-left text-sm hover-elevate transition-all",
                       selectedCategories.year === year &&
-                        "bg-sidebar-accent text-sidebar-accent-foreground toggle-elevate toggle-elevated"
+                      "bg-sidebar-accent text-sidebar-accent-foreground toggle-elevate toggle-elevated"
                     )}
                     data-testid={`button-year-${year}`}
                   >

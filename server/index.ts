@@ -95,10 +95,12 @@ app.use((req, res, next) => {
     log(`serving on port ${port}`);
   });
 
+  setTimeout(() => videoQueue.restoreQueueFromDatabase(), 5000);
+
   // Graceful shutdown - корректное завершение при получении сигналов
   const gracefulShutdown = async (signal: string) => {
     console.log(`\n[Server] ${signal} received, starting graceful shutdown...`);
-    
+
     // Stop Telegram bot
     stopTelegramBot();
 
@@ -107,7 +109,7 @@ app.use((req, res, next) => {
 
     // Stop engagement notification scheduler
     engagementScheduler.stop();
-    
+
     // Закрыть HTTP сервер (больше не принимать новые запросы)
     // Дождаться завершения всех активных соединений
     await new Promise<void>((resolve) => {

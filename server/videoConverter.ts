@@ -37,12 +37,34 @@ export class VideoConverter {
     const tempInput = join(tmpdir(), `input-${randomUUID()}.mp4`);
     const tempOutput = join(tmpdir(), `output-${randomUUID()}.mp4`);
 
-    const clearSourceUrl = sourceUrl.replace('vkurse/vkurse', 'vkurse')
-
     try {
+      if (!sourceUrl || typeof sourceUrl !== 'string') {
+        throw new Error('sourceUrl is missing or not a string');
+      }
 
-      console.log('[VideoConverter] Скачиваем видео с CDNNow:', clearSourceUrl);
-      await this.downloadFromYandexCloud(clearSourceUrl, tempInput);
+      // Нормализация URL
+      let url = sourceUrl.trim();
+      url = url.replace(/vkurse\/vkurse/g, 'vkurse');
+
+      if (!url.startsWith('http')) {
+        url = 'https://' + url;
+      }
+      if (!url.includes('nowcdn.co')) {
+        url = 'https://p40911.nowcdn.co/' + url.replace(/^\/+/, '');
+      }
+
+      // КРИТИЧЕСКАЯ ПРОВЕРКА: есть ли имя файла?
+      const filename = url.split('/').pop();
+      if (!filename || filename.includes('?') || !filename.includes('.') || filename.length < 3) {
+        throw new Error(`Invalid video URL — missing or invalid filename: ${url}`);
+      }
+
+      if (!url.startsWith('https://p40911.nowcdn.co/')) {
+        throw new Error(`Invalid video URL domain: ${url}`);
+      }
+
+      console.log('[VideoConverter] Скачиваем видео:', url);
+      await this.downloadFromYandexCloud(url, tempInput);
 
       const duration = await this.getDuration(tempInput);
       console.log(`[VideoConverter] Длительность: ${duration} мин`);
@@ -68,6 +90,7 @@ export class VideoConverter {
 
       return { success: true, convertedUrl, duration };
     } catch (error: any) {
+      console.log(error)
       console.error('[VideoConverter] Ошибка:', error.message);
 
       await db.update(lessons).set({
@@ -81,44 +104,20 @@ export class VideoConverter {
   }
 
   private async downloadFromYandexCloud(sourceUrl: string, outputPath: string) {
-    const url = new URL(sourceUrl);
-    const Key = url.pathname.slice(1);
+    console.log(sourceUrl)
+    console.log('[VideoConverter] Скачиваем по HTTP:', sourceUrl);
 
-    const s3 = this.getS3Client(); // ← вот так
+    const response = await fetch(sourceUrl);
 
-    const command = new GetObjectCommand({
-      Bucket: process.env.NOWCDN_BUCKET!,
-      Key,
-    });
-    const response = await s3.send(command);
-
-    if (!response.Body) {
-      throw new Error("Empty body from S3");
+    if (!response.ok || !response.body) {
+      throw new Error(`Не удалось скачать видео: ${response.status} ${response.statusText}`);
     }
 
     return new Promise((resolve, reject) => {
       const stream = createWriteStream(outputPath);
-      // Body может быть Readable | ReadableStream | Blob
-      const bodyStream = response.Body as any;
-      if (bodyStream.pipe) {
-        bodyStream.pipe(stream);
-      } else {
-        // для Node.js 18+ это ReadableStream
-        const reader = bodyStream.getReader();
-        const pump = async () => {
-          const { done, value } = await reader.read();
-          if (done) {
-            stream.end();
-            return;
-          }
-          stream.write(value);
-          pump();
-        };
-        pump();
-      }
-
-      stream.on("finish", resolve);
-      stream.on("error", reject);
+      response.body!.pipe(stream);
+      stream.on('finish', resolve);
+      stream.on('error', reject);
     });
   }
 

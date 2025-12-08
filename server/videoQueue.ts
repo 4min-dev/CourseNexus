@@ -21,7 +21,7 @@ class VideoProcessingQueue {
     this.restoreQueueFromDatabase();
   }
 
-  private async restoreQueueFromDatabase() {
+  public async restoreQueueFromDatabase() {
     if (this.restoreInProgress) return;
     this.restoreInProgress = true;
 
@@ -35,6 +35,7 @@ class VideoProcessingQueue {
         .select()
         .from(lessons)
         .where(
+
           and(
             isNotNull(lessons.videoUrl),
             or(
@@ -42,6 +43,7 @@ class VideoProcessingQueue {
               eq(lessons.processingStatus, 'processing')
             )
           )
+
         );
 
       if (lessonsToRestore.length > 0) {
@@ -56,27 +58,25 @@ class VideoProcessingQueue {
             console.log(`[VideoQueue] Reset crashed lesson ${lesson.id} from processing to queued`);
           }
 
-          if (lesson.videoUrl) {
 
-            if (!lesson.uploadedBy) {
-              console.warn(`[VideoQueue] Skipping lesson ${lesson.id} - missing uploadedBy field. Use mass reprocess endpoint to fix.`);
+          if (!lesson.uploadedBy) {
+            console.warn(`[VideoQueue] Skipping lesson ${lesson.id} - missing uploadedBy field. Use mass reprocess endpoint to fix.`);
 
-              await db.update(lessons)
-                .set({
-                  processingStatus: 'failed',
-                  errorMessage: 'Missing uploadedBy - use mass reprocess to fix'
-                })
-                .where(eq(lessons.id, lesson.id));
-              continue;
-            }
-
-            this.queue.push({
-              lessonId: lesson.id,
-              videoUrl: lesson.videoUrl,
-              originalFileName: 'video.mp4',
-              userId: lesson.uploadedBy
-            });
+            await db.update(lessons)
+              .set({
+                processingStatus: 'failed',
+                errorMessage: 'Missing uploadedBy - use mass reprocess to fix'
+              })
+              .where(eq(lessons.id, lesson.id));
+            continue;
           }
+
+          this.queue.push({
+            lessonId: lesson.id,
+            videoUrl: lesson.videoUrl,
+            originalFileName: 'video.mp4',
+            userId: lesson.uploadedBy
+          });
         }
 
         console.log(`[VideoQueue] Restored ${this.queue.length} videos to queue`);
@@ -99,11 +99,14 @@ class VideoProcessingQueue {
 
     this.queue.push({ lessonId, videoUrl, originalFileName, userId });
 
+    const clearedVideoUrl = videoUrl.replace('vkurse/vkurse', 'vkurse')
+
     await db.update(lessons)
       .set({
         processingStatus: 'queued',
         uploadProgress: 0,
-        uploadedBy: userId
+        uploadedBy: userId,
+        videoUrl: clearedVideoUrl
       })
       .where(eq(lessons.id, lessonId));
 

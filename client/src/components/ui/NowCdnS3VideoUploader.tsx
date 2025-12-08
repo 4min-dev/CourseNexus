@@ -1,4 +1,3 @@
-// components/ui/NowCdnUploader.tsx — ВЕРСИЯ ДЛЯ ОЧЕРЕДИ (не грузит сама!)
 import { Upload } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useState } from "react";
@@ -26,7 +25,6 @@ export function NowCdnVideoUploader({
             const file = files[0];
             onFileSelect?.(file);
             setHasFile(true);
-            // Сбрасываем input, чтобы можно было выбрать тот же файл повторно
             e.target.value = "";
         }
     };

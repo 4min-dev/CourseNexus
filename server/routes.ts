@@ -3026,6 +3026,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         description: z.string().optional(),
         order: z.number(),
       });
+      console.log('req.body', req.body)
       const sectionData = schema.parse(req.body);
 
       const section = await storage.createCourseSection({
@@ -3082,8 +3083,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
         title: z.string(),
         description: z.string().optional(),
         order: z.number(),
+        videoUrl: z.string().optional()
       });
       const lessonData = schema.parse(req.body);
+
+      console.log('post lessong lessondata', lessonData)
+      console.log('post lessong req body', req.body)
 
       const lesson = await storage.createLesson({
         sectionId,
@@ -3105,7 +3110,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const schema = z.object({
         title: z.string().optional(),
         description: z.string().optional(),
-
+        videoUrl: z.string().optional(),
         duration: z.number().optional(),
         order: z.number().optional(),
         processingStatus: z.string().optional(),
@@ -3113,6 +3118,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         errorMessage: z.string().optional(),
       });
       const lessonData = schema.parse(req.body);
+
+      console.log('lessonData', lessonData)
 
       const lesson = await storage.updateLesson(id, lessonData);
       res.json(lesson);
@@ -7113,36 +7120,36 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post("/api/upload-presign", async (req, res) => {
     try {
-      const { fileName, fileType } = req.body;
+      const { fileName, fileType } = req.body
 
       if (!fileName) {
-        return res.status(400).json({ error: "fileName is required" });
+        return res.status(400).json({ error: "fileName is required" })
       }
 
-      const safeFileName = `${Date.now()}_${fileName.replace(/[^a-zA-Z0-9._-]/g, "_")}`;
-      const Key = `vkurse/${safeFileName}`
+      const safeFileName = `${Date.now()}_${fileName.replace(/[^a-zA-Z0-9._-]/g, "_")}`
+      const Key = safeFileName
 
       const command = new PutObjectCommand({
         Bucket: process.env.NOWCDN_BUCKET!,
         Key,
         ContentType: fileType || "application/octet-stream",
         ACL: "public-read",
-      });
+      })
 
-      const uploadUrl = await getSignedUrl(s3Client, command, { expiresIn: 120 });
+      const uploadUrl = await getSignedUrl(s3Client, command, { expiresIn: 120 })
 
-      const fileUrl = `https://p40911.nowcdn.co/${Key}`;
+      const fileUrl = `https://p40911.nowcdn.co/vkurse/${Key}`
 
       res.json({
         uploadUrl,
         fileUrl,
         fileName,
-      });
+      })
     } catch (err: any) {
       console.error("Presign error:", err);
-      res.status(500).json({ error: err.message || "Presign failed" });
+      res.status(500).json({ error: err.message || "Presign failed" })
     }
-  });
+  })
 
   app.post(
     "/api/upload",
