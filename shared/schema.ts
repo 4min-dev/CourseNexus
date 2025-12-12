@@ -600,6 +600,7 @@ export const lessons = pgTable("lessons", {
   duration: integer("duration"),
   processingStatus: varchar("processing_status", { length: 50 }).default('draft').notNull(),
   uploadProgress: integer("upload_progress").default(0),
+  conversionProgress: integer('conversionProgress').default(0),
   errorMessage: text("error_message"),
   uploadedBy: text("uploaded_by"),
   createdAt: timestamp("created_at").defaultNow(),

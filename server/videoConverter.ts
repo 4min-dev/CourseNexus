@@ -8,8 +8,7 @@ import fetch from 'node-fetch';
 import { db } from './db';
 import { lessons } from '@shared/schema';
 import { eq } from 'drizzle-orm';
-import { s3Client } from './s3Client';
-import { GetObjectCommand, HeadObjectCommand, S3Client } from '@aws-sdk/client-s3';
+import { S3Client } from '@aws-sdk/client-s3';
 
 export class VideoConverter {
 

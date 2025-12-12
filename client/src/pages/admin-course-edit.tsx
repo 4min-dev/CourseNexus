@@ -48,6 +48,7 @@ interface Lesson {
   duration: number | null;
   order: number;
   processingStatus?: string;
+  conversionProgress?: number,
   uploadProgress?: number;
   errorMessage?: string | null;
 }
@@ -1345,14 +1346,14 @@ export default function AdminCourseEdit() {
                                           {lesson.processingStatus === 'uploading' && (
                                             <p className="text-xs text-blue-500 flex items-center gap-1.5" data-testid={`status-uploading-${lesson.id}`}>
                                               <div className="w-2 h-2 bg-blue-500 rounded-full animate-pulse" />
-                                              <span>Загрузка видео...</span>
+                                              <span>{`Загрузка видео... (${lesson.uploadProgress}%)`}</span>
                                             </p>
                                           )}
                                           {lesson.processingStatus === 'queued' && (
                                             <p className="text-xs text-yellow-500" data-testid={`status-queued-${lesson.id}`}>⏳ В очереди на обработку...</p>
                                           )}
                                           {lesson.processingStatus === 'processing' && (
-                                            <p className="text-xs text-purple-500" data-testid={`status-processing-${lesson.id}`}>🔄 Конвертация видео...</p>
+                                            <p className="text-xs text-purple-500" data-testid={`status-processing-${lesson.id}`}>{`🔄 Конвертация видео... (${lesson.conversionProgress}%)`}</p>
                                           )}
                                           {lesson.processingStatus === 'failed' && (
                                             <p className="text-xs text-red-500" data-testid={`status-failed-${lesson.id}`}>❌ Ошибка: {lesson.errorMessage || 'Не удалось обработать видео'}</p>
@@ -1646,7 +1647,7 @@ export default function AdminCourseEdit() {
                   {editingLesson.processingStatus === 'uploading' && (
                     <p className="text-sm text-blue-500 flex items-center gap-2">
                       <div className="w-2 h-2 bg-blue-500 rounded-full animate-pulse" />
-                      <span>Загрузка видео...</span>
+                      <span>{`Загрузка видео... (${editingLesson.uploadProgress}%)`}</span>
                     </p>
                   )}
                   {editingLesson.processingStatus === 'queued' && (
@@ -1656,7 +1657,9 @@ export default function AdminCourseEdit() {
                   )}
                   {editingLesson.processingStatus === 'processing' && (
                     <p className="text-sm text-purple-500 flex items-center gap-2">
-                      <span className="animate-spin">🔄</span> Конвертация видео...
+                      <span className="animate-spin">🔄</span> {
+                        `Конвертация видео... (${editingLesson.conversionProgress}%)`
+                      }
                     </p>
                   )}
                   {editingLesson.processingStatus === 'failed' && (

@@ -176,7 +176,12 @@ export async function registerUser(data: {
 }
 
 export async function loginUser(email: string, password: string) {
+  console.log('email:', email)
+  console.log('password:', password)
+
   const normalizedEmail = email.toLowerCase().trim();
+
+  console.log('normalizedEmail:', normalizedEmail)
 
   const user = await storage.getUserByEmail(normalizedEmail);
   if (!user || !user.passwordHash) {

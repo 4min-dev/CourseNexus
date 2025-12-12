@@ -2362,8 +2362,22 @@ export class DatabaseStorage implements IStorage {
       sectionsData.map(async (section) => {
         const lessonsData = await db
           .select({
-            lesson: lessons,
-            progress: lessonProgress,
+            lesson: {
+              id: lessons.id,
+              sectionId: lessons.sectionId,
+              title: lessons.title,
+              description: lessons.description,
+              videoUrl: lessons.videoUrl,
+              order: lessons.order,
+              duration: lessons.duration,
+              processingStatus: lessons.processingStatus,
+              uploadProgress: lessons.uploadProgress,
+              errorMessage: lessons.errorMessage,
+              uploadedBy: lessons.uploadedBy,
+              createdAt: lessons.createdAt,
+              conversionProgress: lessons.conversionProgress,
+            },
+            progress: lessonProgress
           })
           .from(lessons)
           .leftJoin(
@@ -2379,6 +2393,7 @@ export class DatabaseStorage implements IStorage {
         const lessonsWithProgress = lessonsData.map(({ lesson, progress }) => ({
           ...lesson,
           progress: progress || undefined,
+          conversionProgress: lesson.conversionProgress ?? 0
         }));
 
         return {

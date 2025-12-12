@@ -67,3 +67,5 @@ export async function closeDatabase() {
     console.error('[DB] Error closing database:', error);
   }
 }
+
+export { sql } from 'drizzle-orm';
