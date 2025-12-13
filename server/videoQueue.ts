@@ -1,8 +1,10 @@
+// videoProcessingQueue.ts
 import { db } from './db';
 import { lessons } from '@shared/schema';
 import { eq, or } from 'drizzle-orm';
+import { VideoConverter } from './videoConverter';
 
-const MAX_CONCURRENT = 4;
+const MAX_CONCURRENT = 3;
 
 interface QueueItem {
   lessonId: string;
@@ -14,8 +16,10 @@ class VideoProcessingQueue {
   private queue: QueueItem[] = [];
   private activeTasks = 0;
   private restoreInProgress = false;
+  private converter: VideoConverter;
 
   constructor() {
+    this.converter = new VideoConverter();
     this.restoreQueueFromDatabase();
   }
 
@@ -47,12 +51,9 @@ class VideoProcessingQueue {
       }
 
       console.log(`[VideoQueue] Найдено ${pending.length} задач для восстановления`);
-
-      // Очищаем старую очередь
       this.queue = [];
 
       for (const lesson of pending) {
-        // Если был в processing — возвращаем в queued
         if (lesson.status === 'processing') {
           await db
             .update(lessons)
@@ -60,7 +61,6 @@ class VideoProcessingQueue {
             .where(eq(lessons.id, lesson.id));
         }
 
-        // Защита: если вдруг нет ссылки — скипаем
         if (!lesson.videoUrl || !lesson.uploadedBy) {
           console.warn(`[VideoQueue] Пропуск урока ${lesson.id} — нет videoUrl или uploadedBy`);
           continue;
@@ -90,7 +90,6 @@ class VideoProcessingQueue {
       return;
     }
 
-    // Проверяем текущийся статус
     const [current] = await db
       .select({ status: lessons.processingStatus })
       .from(lessons)
@@ -98,7 +97,7 @@ class VideoProcessingQueue {
       .limit(1);
 
     if (current?.status === 'ready') {
-      console.log(`[VideoQueue] Урок ${lessonId} уже готов (ready) — пропускаем`);
+      console.log(`[VideoQueue] Урок ${lessonId} уже готов — пропускаем`);
       return;
     }
 
@@ -107,7 +106,6 @@ class VideoProcessingQueue {
       return;
     }
 
-    // Обновляем статус и данные
     await db
       .update(lessons)
       .set({
@@ -119,7 +117,6 @@ class VideoProcessingQueue {
       })
       .where(eq(lessons.id, lessonId));
 
-    // Защита от дублей
     if (!this.queue.some(i => i.lessonId === lessonId)) {
       this.queue.push({ lessonId, videoUrl: url, userId });
       console.log(`[VideoQueue] Урок ${lessonId} добавлен в очередь (позиция: ${this.queue.length})`);
@@ -128,77 +125,29 @@ class VideoProcessingQueue {
     this.tryProcessNext();
   }
 
-  private async tryProcessNext() {
-    // Если лимит достигнут или очередь пуста — выходим
+  private tryProcessNext() {
     if (this.activeTasks >= MAX_CONCURRENT || this.queue.length === 0) {
       return;
     }
 
-    // Берём одну задачу
     this.activeTasks++;
     const item = this.queue.shift()!;
 
-    // Запускаем и забыв (fire and forget), finally сам всё сделает
-    this.processItem(item).finally(() => {
-      this.activeTasks--;
-      this.tryProcessNext(); // ← рекурсивно запускаем следующую
-    });
-  }
+    console.log(`[VideoQueue] Запуск конвертации (активно: ${this.activeTasks}/${MAX_CONCURRENT}): ${item.lessonId}`);
 
-  private async processItem(item: QueueItem) {
-    try {
-      // КРИТИЧЕСКАЯ ПРОВЕРКА: если лимит уже достигнут — откатываемся
-      if (this.activeTasks > MAX_CONCURRENT) {
-        console.warn(`[VideoQueue] Превышен лимит задач (${this.activeTasks}/${MAX_CONCURRENT}). Отменяем обработку ${item.lessonId}`);
 
-        // Возвращаем задачу обратно в очередь (в начало!)
-        this.queue.unshift(item);
-        this.activeTasks--; // потому что мы увеличили счётчик перед вызовом processItem
-        return;
-      }
+    db.update(lessons)
+      .set({ processingStatus: 'processing' })
+      .where(eq(lessons.id, item.lessonId))
+      .catch(console.error);
 
-      console.log(`Начинаем обработку (активно: ${this.activeTasks}): ${item.lessonId}`);
 
-      const response = await fetch('http://192.144.59.161:3001/convert', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          sourceUrl: item.videoUrl,
-          lessonId: item.lessonId,
-          userId: item.userId,
-        }),
-        timeout: 30_000,
+    this.converter.convertVideo(item.videoUrl, item.lessonId, item.userId)
+      .finally(() => {
+        this.activeTasks--;
+        console.log(`[VideoQueue] Завершена задача ${item.lessonId} (активно осталось: ${this.activeTasks})`);
+        this.tryProcessNext();
       });
-
-      if (!response.ok) {
-        throw new Error(`GPU сервер ответил ${response.status}`);
-      }
-
-      const ack = await response.json();
-      if (!ack.success) {
-        throw new Error(ack.error || 'GPU отказался принять задачу');
-      }
-
-      console.log(`Задача ${item.lessonId} успешно принята GPU`);
-
-
-    } catch (error: any) {
-      console.error(`[GPU] Ошибка обработки ${item.lessonId}:`, error.message);
-
-      // Только если мы успели поставить processing — возвращаем в failed
-      await db.update(lessons)
-        .set({
-          processingStatus: 'failed',
-          errorMessage: error.message || 'Ошибка при отправке на обработку',
-        })
-        .where(eq(lessons.id, item.lessonId))
-        .catch(() => { });
-
-    } finally {
-      // В любом случае уменьшаем счётчик и пробуем взять следующую
-      this.activeTasks--;
-      this.tryProcessNext();
-    }
   }
 
   getQueueLength() {
@@ -215,4 +164,4 @@ class VideoProcessingQueue {
   }
 }
 
-export const videoQueue = new VideoProcessingQueue()
+export const videoQueue = new VideoProcessingQueue();

@@ -5,7 +5,7 @@ import { join } from 'path';
 import { tmpdir } from 'os';
 import { randomUUID } from 'crypto';
 import fetch from 'node-fetch';
-import { db } from './db';
+import { db, sql } from './db';
 import { lessons } from '@shared/schema';
 import { eq } from 'drizzle-orm';
 import { S3Client } from '@aws-sdk/client-s3';
@@ -69,7 +69,7 @@ export class VideoConverter {
       console.log(`[VideoConverter] Длительность: ${duration} мин`);
 
       console.log('[VideoConverter] Конвертируем...');
-      await this.ffmpegConvert(tempInput, tempOutput);
+      await this.ffmpegConvert(tempInput, tempOutput, lessonId);
 
       // Загружаем конвертированное видео обратно в тот же бакет
       const convertedKey = `processed/${lessonId}-${Date.now()}.mp4`;
@@ -155,7 +155,7 @@ export class VideoConverter {
     });
   }
 
-  private ffmpegConvert(input: string, output: string): Promise<void> {
+  private ffmpegConvert(input: string, output: string, lessonId: string): Promise<void> {
     return new Promise((resolve, reject) => {
       const args = [
         '-i', input,
@@ -166,21 +166,95 @@ export class VideoConverter {
         '-c:a', 'aac',
         '-b:a', '128k',
         '-vf', 'scale=trunc(iw/2)*2:trunc(ih/2)*2',
+        '-progress', 'pipe:1',  // Важно: прогресс в stdout
         '-y',
         output
       ];
 
       const ffmpeg = spawn('/usr/bin/ffmpeg', args);
+
+      let durationSec = 0;
+      let lastProgress = -1;           // Чтобы не спамить одинаковыми значениями
+      let lastUpdate = Date.now();
+      const MIN_UPDATE_INTERVAL = 5000; // Обновляем не чаще, чем раз в 5 сек
+
+      // 1. Получаем длительность из stderr
       ffmpeg.stderr.on('data', (data) => {
         const line = data.toString();
-        if (line.includes('time=')) {
-          console.log('[FFmpeg]', line.trim());
+        const durationMatch = line.match(/Duration: (\d{2}):(\d{2}):(\d{2})\.\d+/);
+        if (durationMatch && durationSec === 0) {
+          const [h, m, s] = durationMatch.slice(1).map(Number);
+          durationSec = h * 3600 + m * 60 + s;
+          console.log(`[FFmpeg] Длительность видео: ${durationSec} сек (${lessonId})`);
+        }
+
+        // Опционально: логируем только ключевые строки
+        if (line.includes('frame=') || line.includes('bitrate=')) {
+          console.log(`[FFmpeg] ${line.trim()}`);
         }
       });
 
-      ffmpeg.on('close', (code) => {
-        if (code === 0) resolve();
-        else reject(new Error(`FFmpeg exited with code ${code}`));
+      // 2. Парсим прогресс из stdout (благодаря -progress pipe:1)
+      let buffer = '';
+      ffmpeg.stdout.on('data', async (data) => {
+        buffer += data.toString();
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || ''; // Последняя строка может быть неполной
+
+        let currentSec = 0;
+
+        for (const line of lines) {
+          if (line.startsWith('out_time_ms=')) {
+            const ms = parseInt(line.split('=')[1], 10);
+            if (!isNaN(ms)) {
+              currentSec = ms / 1_000_000;
+            }
+          }
+        }
+
+        if (durationSec > 0 && currentSec > 0) {
+          const progress = Math.floor((currentSec / durationSec) * 100);
+          const now = Date.now();
+
+          // Обновляем только если:
+          // - прогресс изменился хотя бы на 1%
+          // - или прошло минимум 5 секунд
+          if (progress > lastProgress && now - lastUpdate >= MIN_UPDATE_INTERVAL) {
+            lastProgress = progress;
+            lastUpdate = now;
+
+            await db.execute(sql`
+                        UPDATE lessons 
+                        SET "conversionProgress" = ${progress}
+                        WHERE id = ${lessonId}
+                    `).catch(err => {
+              console.error(`[GPU] Не удалось обновить прогресс для ${lessonId}:`, err.message);
+            });
+
+            console.log(`[GPU] Конвертация ${lessonId}: ${progress}%`);
+          }
+        }
+      });
+
+      // 3. Успешное завершение
+      ffmpeg.on('close', async (code) => {
+        if (code === 0) {
+          // Финальное обновление на 100%
+          await db.execute(sql`
+                    UPDATE lessons 
+                    SET "conversionProgress" = 100
+                    WHERE id = ${lessonId}
+                `).catch(() => { });
+
+          console.log(`[GPU] Конвертация завершена успешно: ${lessonId}`);
+          resolve();
+        } else {
+          reject(new Error(`FFmpeg завершился с кодом ${code}`));
+        }
+      });
+
+      ffmpeg.on('error', (err) => {
+        reject(err);
       });
     });
   }

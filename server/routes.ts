@@ -24,6 +24,12 @@ import { S3Client } from "@aws-sdk/client-s3";
 import { PutObjectCommand } from "@aws-sdk/client-s3";
 import multer from "multer";
 const upload = multer({ storage: multer.memoryStorage() });
+import {
+  CreateMultipartUploadCommand,
+  UploadPartCommand,
+  CompleteMultipartUploadCommand,
+  CompletedPart,
+} from "@aws-sdk/client-s3";
 
 const s3Client = new S3Client({
   region: "ru-central-1",
@@ -7150,6 +7156,82 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.status(500).json({ error: err.message || "Presign failed" })
     }
   })
+
+  app.post("/api/upload-multipart-start", async (req, res) => {
+    try {
+      const { fileName, fileType } = req.body;
+      if (!fileName) return res.status(400).json({ error: "fileName is required" });
+
+      const safeFileName = `${Date.now()}_${fileName.replace(/[^a-zA-Z0-9._-]/g, "_")}`;
+      const Key = safeFileName;
+
+      const command = new CreateMultipartUploadCommand({
+        Bucket: process.env.NOWCDN_BUCKET!,
+        Key,
+        ContentType: fileType || "video/mp4",
+        ACL: "public-read",
+      });
+
+      const response = await s3Client.send(command);
+      const uploadId = response.UploadId;
+      const fileUrl = `https://p40911.nowcdn.co/vkurse/${Key}`; // Тот же, как в single
+
+      res.json({ uploadId, fileUrl, key: Key });
+    } catch (err: any) {
+      console.error("Multipart start error:", err);
+      res.status(500).json({ error: err.message || "Multipart start failed" });
+    }
+  });
+
+  // Новый роут: Получить presigned URLs для частей (принимает массив partNumbers)
+  app.post("/api/upload-multipart-presign", async (req, res) => {
+    try {
+      const { key, uploadId, partNumbers } = req.body; // partNumbers: [1,2,3,...]
+      if (!key || !uploadId || !Array.isArray(partNumbers)) {
+        return res.status(400).json({ error: "key, uploadId and partNumbers required" });
+      }
+
+      const presignedUrls: string[] = [];
+      for (const partNumber of partNumbers) {
+        const command = new UploadPartCommand({
+          Bucket: process.env.NOWCDN_BUCKET!,
+          Key: key,
+          UploadId: uploadId,
+          PartNumber: partNumber,
+        });
+        const presignedUrl = await getSignedUrl(s3Client, command, { expiresIn: 3600 }); // 1 час
+        presignedUrls.push(presignedUrl);
+      }
+
+      res.json({ presignedUrls });
+    } catch (err: any) {
+      console.error("Presign parts error:", err);
+      res.status(500).json({ error: err.message || "Presign parts failed" });
+    }
+  });
+
+  // Новый роут: Завершить multipart upload (принимает части с ETag)
+  app.post("/api/upload-multipart-complete", async (req, res) => {
+    try {
+      const { key, uploadId, parts } = req.body; // parts: [{ ETag: '...', PartNumber: 1 }, ...]
+      if (!key || !uploadId || !Array.isArray(parts)) {
+        return res.status(400).json({ error: "key, uploadId and parts required" });
+      }
+
+      const command = new CompleteMultipartUploadCommand({
+        Bucket: process.env.NOWCDN_BUCKET!,
+        Key: key,
+        UploadId: uploadId,
+        MultipartUpload: { Parts: parts },
+      });
+
+      await s3Client.send(command);
+      res.json({ success: true });
+    } catch (err: any) {
+      console.error("Complete multipart error:", err);
+      res.status(500).json({ error: err.message || "Complete multipart failed" });
+    }
+  });
 
   app.post(
     "/api/upload",

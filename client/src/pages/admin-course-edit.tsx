@@ -53,7 +53,7 @@ interface Lesson {
   errorMessage?: string | null;
 }
 
-interface Section {
+export interface Section {
   id: string;
   courseId: string;
   title: string;

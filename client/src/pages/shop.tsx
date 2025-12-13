@@ -13,7 +13,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { AlertDialog, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { ShoppingCart, BookOpen, Crown, Shield, Sparkles, Check, Gem, Heart, Play, RefreshCw, ArrowRight, X, TrendingUp, Target, Crosshair, ThumbsUp, Users, Gift, Percent, ExternalLink, CheckCircle2, XCircle, Wifi, Link2, Lock, Bell, AlertCircle } from "lucide-react";
+import { ShoppingCart, BookOpen, Crown, Shield, Sparkles, Check, Gem, Heart, Play, RefreshCw, ArrowRight, X, TrendingUp, Target, Crosshair, ThumbsUp, Users, Gift, Percent, ExternalLink, CheckCircle2, XCircle, Wifi, Link2, Lock, Bell, AlertCircle, Edit2 } from "lucide-react";
 import { SiTelegram } from "react-icons/si";
 import { Link } from "wouter";
 import { useToast } from "@/hooks/use-toast";
@@ -40,6 +40,7 @@ import referralImage from "@assets/generated_images/Referral_network_illustratio
 import starterPackageImg from "@assets/generated_images/Starter_package_illustration_bundle_1c8f4d88.png";
 import professionalPackageImg from "@assets/generated_images/Professional_package_illustration_levels_de5bc7a2.png";
 import premiumPackageImg from "@assets/generated_images/Premium_package_illustration_orbit_4879daf5.png";
+import { Section } from "./admin-course-edit";
 
 const COURSES_PER_PAGE = 12;
 
@@ -1079,6 +1080,21 @@ export default function Shop() {
     return map;
   }, [categories, subcategories]);
 
+  const sectionQueries = useQueries({
+    queries: paginatedCourses.map((course) => ({
+      queryKey: ["/api/admin/courses", course.id, "sections"],
+      queryFn: async () => {
+        const response = await fetch(`/api/admin/courses/${course.id}/sections`, {
+          credentials: "include",
+        });
+        if (!response.ok) throw new Error("Failed to fetch sections");
+        return response.json() as Promise<Section[]>;
+      },
+      enabled: !!course.id,
+      staleTime: 1000 * 60 * 5, // 5 минут кэш
+    })),
+  });
+
   const getLevelName = (level: string) => {
     const names: Record<string, string> = {
       beginner: "Для новичков",
@@ -2026,6 +2042,13 @@ export default function Shop() {
                     const price = parseFloat(course.price || "0");
                     const hasPreviewVideo = !!(course as any).previewVideoUrl;
                     const shouldPlayVideo = hoveredCourseId === course.id && hasPreviewVideo;
+                    const isAdmin = user && user.isAdmin
+
+                    const sectionQuery = sectionQueries[index];
+                    console.log(sectionQuery.data)
+                    const sections = sectionQuery.data ?? [];
+
+                    console.log(course.title, sections)
 
                     // Данные из useQueries
                     const platformQuery = platformQueries[index];
@@ -2078,6 +2101,21 @@ export default function Shop() {
                                 transform: 'translateZ(0)'
                               }}
                             >
+                              {isAdmin &&
+                                <Button
+                                  size="icon"
+                                  variant="ghost"
+                                  className="!absolute top-3 left-3 !z-[1500] 
+             bg-white/40 
+             shadow-lg rounded-full"
+                                  onClick={() => {
+                                    window.location.replace(`/admin/courses/${course.id}/edit?subcategoryId=null&categiryId=null&parentId=null`)
+                                  }}
+                                >
+                                  <Edit2 className="h-4 w-4" strokeWidth={2.2} />
+                                </Button>
+                              }
+
                               {/* Thumbnail Image - always visible, hidden only when video preview shows */}
                               {course.thumbnailImage ? (
                                 <img
@@ -2128,6 +2166,8 @@ export default function Shop() {
                                 </>
                               )}
 
+
+
                               {/* Top right badges and favorite button */}
                               <div className="absolute top-3 right-3 flex items-center gap-2 z-10">
                                 {isAuthenticated && !isPurchased && (
@@ -2168,7 +2208,32 @@ export default function Shop() {
                                 className="font-bold text-2xl group-hover:text-xl line-clamp-2"
                                 data-testid={`text-course-title-${course.id}`}
                               >
-                                {course.title}
+                                <span>{course.title}</span>
+                                {isAdmin && (
+                                  <div className="flex items-center gap-2 text-sm font-medium flex-wrap">
+                                    {sections.some(section =>
+                                      section.lessons?.some(lesson => lesson.processingStatus === 'failed')
+                                    ) && <span className="text-red-500" title="Есть уроки с ошибкой">Failed</span>}
+
+                                    {sections.some(section =>
+                                      section.lessons?.some(lesson => lesson.processingStatus === 'queued')
+                                    ) && <span className="text-orange-500" title="Уроки в очереди">In Queue</span>}
+
+                                    {sections.length > 0 &&
+                                      sections.some(section =>
+                                        section.lessons?.some(lesson => lesson.processingStatus === 'ready')
+                                      ) &&
+                                      !sections.some(section =>
+                                        section.lessons?.some(lesson =>
+                                          ['queued', 'processing', 'uploading', 'failed'].includes(lesson.processingStatus)
+                                        )
+                                      ) && (
+                                        <span className="text-green-500 font-medium" title="Все загруженные уроки готовы">
+                                          Ready
+                                        </span>
+                                      )}
+                                  </div>
+                                )}
                               </h3>
 
                               {/* Rating and viewing counter */}
@@ -2720,7 +2785,7 @@ export default function Shop() {
             </div>
           </div>
         </main>
-      </div>
+      </div >
       <Footer />
 
       {/* Telegram Reminder Modal */}
@@ -2948,6 +3013,6 @@ export default function Shop() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-    </div>
+    </div >
   );
 }
