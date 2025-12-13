@@ -2109,7 +2109,7 @@ export default function Shop() {
              bg-white/40 
              shadow-lg rounded-full"
                                   onClick={() => {
-                                    window.location.replace(`/admin/courses/${course.id}/edit?subcategoryId=null&categiryId=null&parentId=null`)
+                                    window.location.replace(`/admin/courses/${course.id}/edit?subcategoryId=null&categiryId=null&parentId=null&fromStore`)
                                   }}
                                 >
                                   <Edit2 className="h-4 w-4" strokeWidth={2.2} />
@@ -2209,11 +2209,25 @@ export default function Shop() {
                                 data-testid={`text-course-title-${course.id}`}
                               >
                                 <span>{course.title}</span>
+                              </h3>
+
+                              {/* Rating and viewing counter */}
+                              <div className="flex items-center justify-between gap-2 flex_wrap">
+                                <StarRating
+                                  rating={Number(course.rating || 0)}
+                                  reviewsCount={Number(course.reviewsCount || 0)}
+                                  size="sm"
+                                />
+                                <ViewingCounter value={course.reviewsCount} courseId={course.id} />
                                 {isAdmin && (
                                   <div className="flex items-center gap-2 text-sm font-medium flex-wrap">
                                     {sections.some(section =>
                                       section.lessons?.some(lesson => lesson.processingStatus === 'failed')
                                     ) && <span className="text-red-500" title="Есть уроки с ошибкой">Failed</span>}
+
+                                    {sections.some(section =>
+                                      section.lessons?.some(lesson => lesson.processingStatus === 'processing')
+                                    ) && <span className="text-purple-500" title="Уроки в очереди">Processing</span>}
 
                                     {sections.some(section =>
                                       section.lessons?.some(lesson => lesson.processingStatus === 'queued')
@@ -2234,16 +2248,6 @@ export default function Shop() {
                                       )}
                                   </div>
                                 )}
-                              </h3>
-
-                              {/* Rating and viewing counter */}
-                              <div className="flex items-center justify-between gap-2">
-                                <StarRating
-                                  rating={Number(course.rating || 0)}
-                                  reviewsCount={Number(course.reviewsCount || 0)}
-                                  size="sm"
-                                />
-                                <ViewingCounter value={course.reviewsCount} courseId={course.id} />
                               </div>
 
                               <div className="flex flex-wrap gap-2">

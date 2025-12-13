@@ -817,6 +817,11 @@ export default function AdminCourseEdit() {
           <Button
             variant="ghost"
             onClick={() => {
+              if (window.location.search.includes('fromStore')) {
+                window.location.href = window.location.origin + '/shop'
+                return
+              }
+
               window.history.go(-1);
               setTimeout(() => window.location.reload(), 0);
             }}
