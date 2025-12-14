@@ -826,7 +826,7 @@ export default function CourseDetail() {
                   }
                   {(Array.isArray(course.level) && course.level.length > 0 && subcategories) && (
                     <div className="flex flex-wrap gap-2">
-                      {Array.from(
+                      {subcategories && Array.from(
                         new Set(
                           course.level
                             .map(id => subcategories.find(sub => sub.id === id))
@@ -1086,7 +1086,7 @@ export default function CourseDetail() {
                     <span className="text-muted-foreground">Уровень:</span>
                     {Array.isArray(course.level) && course.level.length > 0 && (
                       <div className="inline-flex flex-wrap items-center gap-2">
-                        {Array.from(
+                        {subcategories && Array.from(
                           new Set(
                             course.level
                               .map(id => subcategories.find(sub => sub.id === id))
