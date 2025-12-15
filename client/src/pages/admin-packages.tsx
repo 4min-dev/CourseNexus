@@ -18,6 +18,7 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { ObjectUploader } from "@/components/ObjectUploader";
 import type { Course } from "@shared/schema";
+import { PackageThumbnailUploader } from "@/components/ui/PackageThumbnailUploader";
 
 interface CoursePackage {
   id: string;
@@ -37,14 +38,14 @@ interface CoursePackage {
 }
 
 // ВЫНЕСЕН ЗА ПРЕДЕЛЫ КОМПОНЕНТА - ЧТОБЫ НЕ ПЕРЕСОЗДАВАЛСЯ ПРИ КАЖДОМ РЕНДЕРЕ!
-function PackageForm({ pkg, categories, onSubmit, onCancel }: { 
-  pkg?: CoursePackage | null; 
-  categories?: Array<{ id: string; name: string }>; 
-  onSubmit: (data: any) => void; 
+function PackageForm({ pkg, categories, onSubmit, onCancel }: {
+  pkg?: CoursePackage | null;
+  categories?: Array<{ id: string; name: string }>;
+  onSubmit: (data: any) => void;
   onCancel: () => void;
 }) {
   const { toast } = useToast();
-  
+
   const [formData, setFormData] = useState({
     name: pkg?.name || "",
     description: pkg?.description || "",
@@ -55,7 +56,7 @@ function PackageForm({ pkg, categories, onSubmit, onCancel }: {
     isActive: pkg?.isActive ?? true,
   });
   const [isUploadingThumbnail, setIsUploadingThumbnail] = useState(false);
-  
+
   // Синхронизация formData при изменении pkg
   // Используем JSON.stringify для стабильной проверки изменений
   const pkgKey = pkg ? JSON.stringify({
@@ -68,7 +69,7 @@ function PackageForm({ pkg, categories, onSubmit, onCancel }: {
     displayOrder: pkg.displayOrder,
     isActive: pkg.isActive
   }) : null;
-  
+
   useEffect(() => {
     if (pkg) {
       setFormData({
@@ -83,58 +84,41 @@ function PackageForm({ pkg, categories, onSubmit, onCancel }: {
     }
   }, [pkgKey]); // Зависимость от полного ключа пакета
 
-  const handleThumbnailUpload = async (result: any) => {
-    console.log('[THUMBNAIL] Upload callback triggered', { result });
+  const handleThumbnailUpload = async (uploadedFiles: { fileName: string; fileUrl: string }[]) => {
+    console.log('[THUMBNAIL] Upload callback triggered', uploadedFiles);
+
     try {
-      const uploadedFile = result.successful[0];
-      console.log('[THUMBNAIL] Uploaded file:', uploadedFile);
-      if (!uploadedFile) {
-        console.log('[THUMBNAIL] No uploaded file, returning');
+      if (!uploadedFiles || uploadedFiles.length === 0) {
+        console.log('[THUMBNAIL] Нет загруженных файлов');
         return;
       }
 
-      const uploadURL = uploadedFile.uploadURL;
-      console.log('[THUMBNAIL] Upload URL:', uploadURL);
-      
-      // Set public ACL and get normalized path
-      console.log('[THUMBNAIL] Setting ACL...');
-      const aclResponse = await fetch('/api/objects/acl-public', {
-        method: 'PUT',
-        credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ fileURL: uploadURL }),
-      });
+      const uploadedFile = uploadedFiles[0];
+      console.log('[THUMBNAIL] Загруженный файл:', uploadedFile);
 
-      console.log('[THUMBNAIL] ACL response status:', aclResponse.status);
-      if (!aclResponse.ok) {
-        throw new Error('Failed to set public ACL');
-      }
+      const thumbnailUrl = uploadedFile.fileUrl; // ← уже готовая публичная ссылка!
+      console.log('[THUMBNAIL] Публичная ссылка на обложку:', thumbnailUrl);
 
-      const aclData = await aclResponse.json();
-      console.log('[THUMBNAIL] ACL data:', aclData);
-      const thumbnailUrl = aclData.publicPath;
-      console.log('[THUMBNAIL] Extracted public path:', thumbnailUrl);
-      
-      console.log('[THUMBNAIL] Current formData before update:', formData);
+      // Обновляем formData
       setFormData(prev => {
-        console.log('[THUMBNAIL] Previous formData in setter:', prev);
-        const updated = { ...prev, thumbnailUrl };
-        console.log('[THUMBNAIL] Updated formData:', updated);
-        return updated;
+        console.log('[THUMBNAIL] Обновление formData:', { prevThumbnail: prev.thumbnailUrl, newThumbnail: thumbnailUrl });
+        return { ...prev, thumbnailUrl };
       });
+
       setIsUploadingThumbnail(false);
-      
+
       toast({
         title: "Обложка загружена",
-        description: "Обложка подборки успешно загружена",
+        description: "Обложка успешно загружена и готова к использованию",
       });
-      console.log('[THUMBNAIL] Upload complete!');
-    } catch (error) {
-      console.error("[THUMBNAIL] Error uploading thumbnail:", error);
+
+      console.log('[THUMBNAIL] Загрузка завершена успешно!');
+    } catch (error: any) {
+      console.error("[THUMBNAIL] Ошибка при обработке загруженной обложки:", error);
       setIsUploadingThumbnail(false);
       toast({
         title: "Ошибка",
-        description: "Не удалось загрузить обложку",
+        description: "Не удалось обработать загруженную обложку",
         variant: "destructive",
       });
     }
@@ -225,7 +209,7 @@ function PackageForm({ pkg, categories, onSubmit, onCancel }: {
           {/* Preview */}
           {formData.thumbnailUrl && (
             <div className="relative w-48 h-32 rounded-lg overflow-hidden bg-gradient-to-br from-purple-900/20 to-pink-900/20 flex-shrink-0">
-              <img 
+              <img
                 src={formData.thumbnailUrl}
                 alt="Превью обложки"
                 className="absolute inset-0 w-full h-full object-cover"
@@ -241,40 +225,13 @@ function PackageForm({ pkg, categories, onSubmit, onCancel }: {
               </Button>
             </div>
           )}
-          
+
           {/* Upload Button */}
           {!formData.thumbnailUrl && (
-            <ObjectUploader
-              maxNumberOfFiles={1}
-              maxFileSize={10 * 1024 * 1024} // 10MB
-              onGetUploadParameters={async () => {
-                try {
-                  const response = await fetch('/api/objects/upload-public', {
-                    method: 'POST',
-                    credentials: 'include',
-                    headers: { 'Content-Type': 'application/json' },
-                  });
-                  if (!response.ok) throw new Error('Failed to get public upload URL');
-                  const data = await response.json();
-                  console.log('[PackageUpload] Got upload URL:', data);
-                  return { method: 'PUT' as const, url: data.uploadURL, headers: data.uploadHeaders };
-                } catch (error) {
-                  console.error('[PackageUpload] Error getting upload URL:', error);
-                  toast({ 
-                    title: "Ошибка", 
-                    description: "Не удалось получить URL для загрузки", 
-                    variant: "destructive" 
-                  });
-                  throw error;
-                }
-              }}
-              onUploadStart={() => setIsUploadingThumbnail(true)}
+            <PackageThumbnailUploader
               onComplete={handleThumbnailUpload}
-              buttonVariant="outline"
-            >
-              <Upload className="h-4 w-4 mr-2" />
-              Загрузить обложку
-            </ObjectUploader>
+              setIsUploadingThumbnail={setIsUploadingThumbnail}
+            />
           )}
         </div>
         <p className="text-xs text-muted-foreground">
@@ -325,8 +282,8 @@ function PackageForm({ pkg, categories, onSubmit, onCancel }: {
         <Button type="button" variant="outline" onClick={onCancel} data-testid="button-cancel">
           Отмена
         </Button>
-        <Button 
-          type="submit" 
+        <Button
+          type="submit"
           className="bg-gradient-to-r from-purple-600 to-pink-600 text-white"
           data-testid="button-submit"
         >
@@ -352,14 +309,14 @@ function ManageCoursesDialog({ packageId, initialPackage, allCourses, onClose, o
   const [searchQuery, setSearchQuery] = useState("");
   const [showOrderManagement, setShowOrderManagement] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
-  
+
   // Track initial course IDs to detect changes (set once on mount)
   const initialCourseIds = useRef(new Set(initialPackage.courses.map(c => c.id)));
-  
+
   // Local state for selected courses (independent of snapshot)
   const [localCourses, setLocalCourses] = useState<Course[]>(initialPackage.courses);
   const selectedCourseIds = new Set(localCourses.map(c => c.id));
-  
+
   // Mutations (defined locally to avoid passing)
   const addCourseMutation = useMutation({
     mutationFn: async ({ packageId, courseId, displayOrder }: { packageId: string; courseId: string; displayOrder: number }) => {
@@ -392,21 +349,21 @@ function ManageCoursesDialog({ packageId, initialPackage, allCourses, onClose, o
       return await apiRequest("PATCH", `/api/admin/packages/${packageId}/courses/${courseId}`, { displayOrder });
     },
   });
-  
+
   // Sort selected courses by displayOrder
   const selectedCourses = [...localCourses].sort((a, b) => {
     const aOrder = localCourses.findIndex(c => c.id === a.id);
     const bOrder = localCourses.findIndex(c => c.id === b.id);
     return aOrder - bOrder;
   });
-  
+
   const filteredCourses = allCourses?.filter(course => {
-    const matchesSearch = !searchQuery || 
+    const matchesSearch = !searchQuery ||
       course.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
       course.platform?.toLowerCase().includes(searchQuery.toLowerCase());
     return matchesSearch;
   }) || [];
-  
+
   const handleToggleCourse = (courseId: string, isSelected: boolean) => {
     if (isSelected) {
       // Add course - update local state only (no API call)
@@ -424,7 +381,7 @@ function ManageCoursesDialog({ packageId, initialPackage, allCourses, onClose, o
     if (index === 0) return;
     const course = selectedCourses[index];
     const prevCourse = selectedCourses[index - 1];
-    
+
     // Update local state only - swap courses (no API call)
     setLocalCourses(prev => {
       const newCourses = [...prev];
@@ -439,7 +396,7 @@ function ManageCoursesDialog({ packageId, initialPackage, allCourses, onClose, o
     if (index === selectedCourses.length - 1) return;
     const course = selectedCourses[index];
     const nextCourse = selectedCourses[index + 1];
-    
+
     // Update local state only - swap courses (no API call)
     setLocalCourses(prev => {
       const newCourses = [...prev];
@@ -568,7 +525,7 @@ function ManageCoursesDialog({ packageId, initialPackage, allCourses, onClose, o
                       {/* Thumbnail */}
                       <div className="relative w-24 h-16 rounded-lg overflow-hidden bg-gradient-to-br from-purple-900/20 to-pink-900/20 flex-shrink-0">
                         {course.thumbnailImage ? (
-                          <img 
+                          <img
                             src={course.thumbnailImage}
                             alt={course.title}
                             className="absolute inset-0 w-full h-full object-cover"
@@ -650,84 +607,84 @@ function ManageCoursesDialog({ packageId, initialPackage, allCourses, onClose, o
 
             {/* Courses Grid */}
             <ScrollArea className="h-[400px] pr-4">
-          <div className="space-y-2">
-            {filteredCourses && filteredCourses.length > 0 ? (
-              filteredCourses.map((course) => {
-                const isSelected = selectedCourseIds.has(course.id);
-                
-                return (
-                  <div
-                    key={course.id}
-                    className={`
+              <div className="space-y-2">
+                {filteredCourses && filteredCourses.length > 0 ? (
+                  filteredCourses.map((course) => {
+                    const isSelected = selectedCourseIds.has(course.id);
+
+                    return (
+                      <div
+                        key={course.id}
+                        className={`
                       p-4 rounded-lg border-2 transition-all
-                      ${isSelected 
-                        ? 'border-purple-500/60 bg-purple-500/10' 
-                        : 'border-border hover:border-purple-500/30'
-                      }
+                      ${isSelected
+                            ? 'border-purple-500/60 bg-purple-500/10'
+                            : 'border-border hover:border-purple-500/30'
+                          }
                     `}
-                    data-testid={`course-item-${course.id}`}
-                  >
-                    <div className="flex items-start gap-4">
-                      {/* Checkbox */}
-                      <Checkbox
-                        checked={isSelected}
-                        onCheckedChange={(checked) => {
-                          handleToggleCourse(course.id, !!checked);
-                        }}
-                        disabled={isSaving}
-                        className="mt-1 cursor-pointer"
-                        data-testid={`checkbox-course-${course.id}`}
-                      />
-
-                      {/* Thumbnail */}
-                      <div className="relative w-32 h-20 rounded-lg overflow-hidden bg-gradient-to-br from-purple-900/20 to-pink-900/20 flex-shrink-0">
-                        {course.thumbnailImage ? (
-                          <img 
-                            src={course.thumbnailImage}
-                            alt={course.title}
-                            className="absolute inset-0 w-full h-full object-cover"
+                        data-testid={`course-item-${course.id}`}
+                      >
+                        <div className="flex items-start gap-4">
+                          {/* Checkbox */}
+                          <Checkbox
+                            checked={isSelected}
+                            onCheckedChange={(checked) => {
+                              handleToggleCourse(course.id, !!checked);
+                            }}
+                            disabled={isSaving}
+                            className="mt-1 cursor-pointer"
+                            data-testid={`checkbox-course-${course.id}`}
                           />
-                        ) : (
-                          <div className="absolute inset-0 flex items-center justify-center">
-                            <BookOpen className="h-8 w-8 text-muted-foreground/30" />
+
+                          {/* Thumbnail */}
+                          <div className="relative w-32 h-20 rounded-lg overflow-hidden bg-gradient-to-br from-purple-900/20 to-pink-900/20 flex-shrink-0">
+                            {course.thumbnailImage ? (
+                              <img
+                                src={course.thumbnailImage}
+                                alt={course.title}
+                                className="absolute inset-0 w-full h-full object-cover"
+                              />
+                            ) : (
+                              <div className="absolute inset-0 flex items-center justify-center">
+                                <BookOpen className="h-8 w-8 text-muted-foreground/30" />
+                              </div>
+                            )}
                           </div>
-                        )}
-                      </div>
 
-                      {/* Course Info */}
-                      <div className="flex-1 min-w-0">
-                        <h4 className="font-semibold text-sm mb-1 line-clamp-2">
-                          {course.title}
-                        </h4>
-                        <div className="flex items-center gap-3 text-xs text-muted-foreground">
-                          {course.platform && (
-                            <Badge variant="outline" className="text-xs">
-                              {course.platform}
-                            </Badge>
-                          )}
-                          {course.price && (
-                            <span className="font-medium text-foreground">
-                              {formatPrice(parseFloat(course.price))}
-                            </span>
+                          {/* Course Info */}
+                          <div className="flex-1 min-w-0">
+                            <h4 className="font-semibold text-sm mb-1 line-clamp-2">
+                              {course.title}
+                            </h4>
+                            <div className="flex items-center gap-3 text-xs text-muted-foreground">
+                              {course.platform && (
+                                <Badge variant="outline" className="text-xs">
+                                  {course.platform}
+                                </Badge>
+                              )}
+                              {course.price && (
+                                <span className="font-medium text-foreground">
+                                  {formatPrice(parseFloat(course.price))}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+
+                          {/* Drag Handle (visual only for now) */}
+                          {isSelected && (
+                            <div className="text-muted-foreground/30 cursor-grab">
+                              <GripVertical className="h-5 w-5" />
+                            </div>
                           )}
                         </div>
                       </div>
-
-                      {/* Drag Handle (visual only for now) */}
-                      {isSelected && (
-                        <div className="text-muted-foreground/30 cursor-grab">
-                          <GripVertical className="h-5 w-5" />
-                        </div>
-                      )}
-                    </div>
+                    );
+                  })
+                ) : (
+                  <div className="text-center py-8 text-muted-foreground">
+                    Нет доступных курсов
                   </div>
-                );
-              })
-            ) : (
-              <div className="text-center py-8 text-muted-foreground">
-                Нет доступных курсов
-              </div>
-            )}
+                )}
               </div>
             </ScrollArea>
           </>
@@ -761,7 +718,7 @@ export default function AdminPackages() {
   const [editingPackage, setEditingPackage] = useState<CoursePackage | null>(null);
   const [deletePackageId, setDeletePackageId] = useState<string | null>(null);
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
-  
+
   // NEW: Single dialog state with frozen snapshot
   const [dialogState, setDialogState] = useState<{ packageId: string; snapshot: CoursePackage } | null>(null);
 
@@ -923,215 +880,215 @@ export default function AdminPackages() {
               Управление пакетами и подборками курсов
             </p>
           </div>
-            
-            <Dialog open={createDialogOpen} onOpenChange={setCreateDialogOpen}>
-              <DialogTrigger asChild>
+
+          <Dialog open={createDialogOpen} onOpenChange={setCreateDialogOpen}>
+            <DialogTrigger asChild>
+              <Button
+                className="gap-2 bg-gradient-to-r from-purple-600 to-pink-600 text-white"
+                data-testid="button-create-package"
+              >
+                <Plus className="h-5 w-5" />
+                Создать подборку
+              </Button>
+            </DialogTrigger>
+            <DialogContent className="max-w-2xl">
+              <DialogHeader>
+                <DialogTitle>Создать новую подборку</DialogTitle>
+                <DialogDescription>
+                  Заполните информацию о подборке. Курсы можно будет добавить позже.
+                </DialogDescription>
+              </DialogHeader>
+              <PackageForm
+                categories={categories}
+                onSubmit={(data) => createMutation.mutate(data)}
+                onCancel={() => setCreateDialogOpen(false)}
+              />
+            </DialogContent>
+          </Dialog>
+        </div>
+
+        {/* Packages Grid */}
+        <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
+          {isLoading ? (
+            <>
+              {[1, 2, 3].map((i) => (
+                <Card key={i}>
+                  <CardHeader>
+                    <Skeleton className="h-6 w-3/4" />
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    <Skeleton className="h-32 w-full" />
+                    <Skeleton className="h-4 w-full" />
+                    <Skeleton className="h-4 w-2/3" />
+                  </CardContent>
+                </Card>
+              ))}
+            </>
+          ) : packages && packages.length > 0 ? (
+            packages.map((pkg) => (
+              <Card
+                key={pkg.id}
+                className="hover-elevate active-elevate-2 transition-all"
+                data-testid={`card-admin-package-${pkg.id}`}
+              >
+                <CardHeader>
+                  <div className="flex items-start justify-between gap-2">
+                    <CardTitle className="text-xl" data-testid={`text-admin-package-name-${pkg.id}`}>
+                      {pkg.name}
+                    </CardTitle>
+                    <div className="flex gap-2">
+                      {pkg.discount > 0 && (
+                        <Badge variant="destructive" data-testid={`badge-admin-discount-${pkg.id}`}>
+                          -{pkg.discount}%
+                        </Badge>
+                      )}
+                      <Badge
+                        variant={pkg.isActive ? "default" : "secondary"}
+                        className="cursor-pointer"
+                        onClick={() => toggleActiveMutation.mutate({ id: pkg.id, isActive: !pkg.isActive })}
+                        data-testid={`badge-admin-status-${pkg.id}`}
+                      >
+                        {pkg.isActive ? <Check className="h-3 w-3 mr-1" /> : <X className="h-3 w-3 mr-1" />}
+                        {pkg.isActive ? "Активен" : "Неактивен"}
+                      </Badge>
+                    </div>
+                  </div>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  {/* Thumbnail Preview */}
+                  {pkg.thumbnailUrl && (
+                    <div className="relative w-full h-40 rounded-lg overflow-hidden bg-gradient-to-br from-purple-900/20 to-pink-900/20">
+                      <img
+                        src={pkg.thumbnailUrl}
+                        alt={pkg.name}
+                        className="absolute inset-0 w-full h-full object-cover"
+                        data-testid={`img-package-thumbnail-${pkg.id}`}
+                      />
+                    </div>
+                  )}
+
+                  {pkg.description && (
+                    <p className="text-sm text-muted-foreground line-clamp-2" data-testid={`text-admin-description-${pkg.id}`}>
+                      {pkg.description}
+                    </p>
+                  )}
+
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between text-sm">
+                      <div className="flex items-center gap-2">
+                        <BookOpen className="h-4 w-4 text-muted-foreground" />
+                        <span data-testid={`text-admin-course-count-${pkg.id}`}>
+                          {pkg.courses.length} курсов
+                        </span>
+                      </div>
+                      {typeof pkg.purchaseCount !== 'undefined' && (
+                        <div className="flex items-center gap-1 text-xs text-green-600 dark:text-green-400">
+                          <ShoppingCart className="h-3 w-3" />
+                          <span data-testid={`text-admin-purchase-count-${pkg.id}`}>
+                            {pkg.purchaseCount} покупок
+                          </span>
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="pt-2 border-t">
+                      {pkg.discount > 0 ? (
+                        <div className="space-y-1">
+                          <div className="flex items-baseline gap-2">
+                            <span className="text-2xl font-bold" data-testid={`text-admin-discounted-price-${pkg.id}`}>
+                              {formatPrice(pkg.discountedPrice)}
+                            </span>
+                            <span className="text-sm text-muted-foreground line-through" data-testid={`text-admin-original-price-${pkg.id}`}>
+                              {formatPrice(pkg.totalPrice)}
+                            </span>
+                          </div>
+                          <p className="text-xs text-green-500">
+                            Экономия: {formatPrice(pkg.totalPrice - pkg.discountedPrice)}
+                          </p>
+                        </div>
+                      ) : (
+                        <span className="text-2xl font-bold" data-testid={`text-admin-price-${pkg.id}`}>
+                          {formatPrice(pkg.totalPrice)}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="space-y-2 pt-4">
+                    {/* Manage Courses Button */}
+                    <Button
+                      className="w-full gap-2 bg-gradient-to-r from-purple-600 to-pink-600 text-white"
+                      onClick={() => openManageCoursesDialog(pkg)}
+                      data-testid={`button-manage-courses-${pkg.id}`}
+                    >
+                      <BookOpen className="h-4 w-4" />
+                      Управление курсами
+                    </Button>
+
+                    {/* Edit and Delete Buttons */}
+                    <div className="flex gap-2">
+                      <Dialog open={editingPackage?.id === pkg.id} onOpenChange={(open) => !open && setEditingPackage(null)}>
+                        <DialogTrigger asChild>
+                          <Button
+                            variant="outline"
+                            className="flex-1"
+                            onClick={() => setEditingPackage(pkg)}
+                            data-testid={`button-edit-package-${pkg.id}`}
+                          >
+                            <Edit className="h-4 w-4 mr-2" />
+                            Изменить
+                          </Button>
+                        </DialogTrigger>
+                        <DialogContent className="max-w-2xl">
+                          <DialogHeader>
+                            <DialogTitle>Редактировать подборку</DialogTitle>
+                            <DialogDescription>
+                              Изменить информацию о подборке
+                            </DialogDescription>
+                          </DialogHeader>
+                          <PackageForm
+                            pkg={pkg}
+                            categories={categories}
+                            onSubmit={(data) => updateMutation.mutate({ id: pkg.id, data })}
+                            onCancel={() => setEditingPackage(null)}
+                          />
+                        </DialogContent>
+                      </Dialog>
+
+                      <Button
+                        variant="destructive"
+                        onClick={() => setDeletePackageId(pkg.id)}
+                        data-testid={`button-delete-package-${pkg.id}`}
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            ))
+          ) : (
+            <Card className="col-span-full p-12">
+              <div className="text-center space-y-4">
+                <Package className="h-16 w-16 mx-auto text-muted-foreground" />
+                <div>
+                  <h3 className="text-xl font-semibold">Пока нет подборок</h3>
+                  <p className="text-muted-foreground">
+                    Создайте первую подборку курсов
+                  </p>
+                </div>
                 <Button
                   className="gap-2 bg-gradient-to-r from-purple-600 to-pink-600 text-white"
-                  data-testid="button-create-package"
+                  onClick={() => setCreateDialogOpen(true)}
+                  data-testid="button-create-first-package"
                 >
                   <Plus className="h-5 w-5" />
                   Создать подборку
                 </Button>
-              </DialogTrigger>
-              <DialogContent className="max-w-2xl">
-                <DialogHeader>
-                  <DialogTitle>Создать новую подборку</DialogTitle>
-                  <DialogDescription>
-                    Заполните информацию о подборке. Курсы можно будет добавить позже.
-                  </DialogDescription>
-                </DialogHeader>
-                <PackageForm
-                  categories={categories}
-                  onSubmit={(data) => createMutation.mutate(data)}
-                  onCancel={() => setCreateDialogOpen(false)}
-                />
-              </DialogContent>
-            </Dialog>
-          </div>
-
-          {/* Packages Grid */}
-          <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {isLoading ? (
-              <>
-                {[1, 2, 3].map((i) => (
-                  <Card key={i}>
-                    <CardHeader>
-                      <Skeleton className="h-6 w-3/4" />
-                    </CardHeader>
-                    <CardContent className="space-y-4">
-                      <Skeleton className="h-32 w-full" />
-                      <Skeleton className="h-4 w-full" />
-                      <Skeleton className="h-4 w-2/3" />
-                    </CardContent>
-                  </Card>
-                ))}
-              </>
-            ) : packages && packages.length > 0 ? (
-              packages.map((pkg) => (
-                <Card
-                  key={pkg.id}
-                  className="hover-elevate active-elevate-2 transition-all"
-                  data-testid={`card-admin-package-${pkg.id}`}
-                >
-                  <CardHeader>
-                    <div className="flex items-start justify-between gap-2">
-                      <CardTitle className="text-xl" data-testid={`text-admin-package-name-${pkg.id}`}>
-                        {pkg.name}
-                      </CardTitle>
-                      <div className="flex gap-2">
-                        {pkg.discount > 0 && (
-                          <Badge variant="destructive" data-testid={`badge-admin-discount-${pkg.id}`}>
-                            -{pkg.discount}%
-                          </Badge>
-                        )}
-                        <Badge 
-                          variant={pkg.isActive ? "default" : "secondary"} 
-                          className="cursor-pointer"
-                          onClick={() => toggleActiveMutation.mutate({ id: pkg.id, isActive: !pkg.isActive })}
-                          data-testid={`badge-admin-status-${pkg.id}`}
-                        >
-                          {pkg.isActive ? <Check className="h-3 w-3 mr-1" /> : <X className="h-3 w-3 mr-1" />}
-                          {pkg.isActive ? "Активен" : "Неактивен"}
-                        </Badge>
-                      </div>
-                    </div>
-                  </CardHeader>
-                  <CardContent className="space-y-4">
-                    {/* Thumbnail Preview */}
-                    {pkg.thumbnailUrl && (
-                      <div className="relative w-full h-40 rounded-lg overflow-hidden bg-gradient-to-br from-purple-900/20 to-pink-900/20">
-                        <img 
-                          src={pkg.thumbnailUrl}
-                          alt={pkg.name}
-                          className="absolute inset-0 w-full h-full object-cover"
-                          data-testid={`img-package-thumbnail-${pkg.id}`}
-                        />
-                      </div>
-                    )}
-
-                    {pkg.description && (
-                      <p className="text-sm text-muted-foreground line-clamp-2" data-testid={`text-admin-description-${pkg.id}`}>
-                        {pkg.description}
-                      </p>
-                    )}
-
-                    <div className="space-y-2">
-                      <div className="flex items-center justify-between text-sm">
-                        <div className="flex items-center gap-2">
-                          <BookOpen className="h-4 w-4 text-muted-foreground" />
-                          <span data-testid={`text-admin-course-count-${pkg.id}`}>
-                            {pkg.courses.length} курсов
-                          </span>
-                        </div>
-                        {typeof pkg.purchaseCount !== 'undefined' && (
-                          <div className="flex items-center gap-1 text-xs text-green-600 dark:text-green-400">
-                            <ShoppingCart className="h-3 w-3" />
-                            <span data-testid={`text-admin-purchase-count-${pkg.id}`}>
-                              {pkg.purchaseCount} покупок
-                            </span>
-                          </div>
-                        )}
-                      </div>
-
-                      <div className="pt-2 border-t">
-                        {pkg.discount > 0 ? (
-                          <div className="space-y-1">
-                            <div className="flex items-baseline gap-2">
-                              <span className="text-2xl font-bold" data-testid={`text-admin-discounted-price-${pkg.id}`}>
-                                {formatPrice(pkg.discountedPrice)}
-                              </span>
-                              <span className="text-sm text-muted-foreground line-through" data-testid={`text-admin-original-price-${pkg.id}`}>
-                                {formatPrice(pkg.totalPrice)}
-                              </span>
-                            </div>
-                            <p className="text-xs text-green-500">
-                              Экономия: {formatPrice(pkg.totalPrice - pkg.discountedPrice)}
-                            </p>
-                          </div>
-                        ) : (
-                          <span className="text-2xl font-bold" data-testid={`text-admin-price-${pkg.id}`}>
-                            {formatPrice(pkg.totalPrice)}
-                          </span>
-                        )}
-                      </div>
-                    </div>
-
-                    <div className="space-y-2 pt-4">
-                      {/* Manage Courses Button */}
-                      <Button
-                        className="w-full gap-2 bg-gradient-to-r from-purple-600 to-pink-600 text-white"
-                        onClick={() => openManageCoursesDialog(pkg)}
-                        data-testid={`button-manage-courses-${pkg.id}`}
-                      >
-                        <BookOpen className="h-4 w-4" />
-                        Управление курсами
-                      </Button>
-
-                      {/* Edit and Delete Buttons */}
-                      <div className="flex gap-2">
-                        <Dialog open={editingPackage?.id === pkg.id} onOpenChange={(open) => !open && setEditingPackage(null)}>
-                          <DialogTrigger asChild>
-                            <Button
-                              variant="outline"
-                              className="flex-1"
-                              onClick={() => setEditingPackage(pkg)}
-                              data-testid={`button-edit-package-${pkg.id}`}
-                            >
-                              <Edit className="h-4 w-4 mr-2" />
-                              Изменить
-                            </Button>
-                          </DialogTrigger>
-                          <DialogContent className="max-w-2xl">
-                            <DialogHeader>
-                              <DialogTitle>Редактировать подборку</DialogTitle>
-                              <DialogDescription>
-                                Изменить информацию о подборке
-                              </DialogDescription>
-                            </DialogHeader>
-                            <PackageForm
-                              pkg={pkg}
-                              categories={categories}
-                              onSubmit={(data) => updateMutation.mutate({ id: pkg.id, data })}
-                              onCancel={() => setEditingPackage(null)}
-                            />
-                          </DialogContent>
-                        </Dialog>
-
-                        <Button
-                          variant="destructive"
-                          onClick={() => setDeletePackageId(pkg.id)}
-                          data-testid={`button-delete-package-${pkg.id}`}
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
-              ))
-            ) : (
-              <Card className="col-span-full p-12">
-                <div className="text-center space-y-4">
-                  <Package className="h-16 w-16 mx-auto text-muted-foreground" />
-                  <div>
-                    <h3 className="text-xl font-semibold">Пока нет подборок</h3>
-                    <p className="text-muted-foreground">
-                      Создайте первую подборку курсов
-                    </p>
-                  </div>
-                  <Button
-                    className="gap-2 bg-gradient-to-r from-purple-600 to-pink-600 text-white"
-                    onClick={() => setCreateDialogOpen(true)}
-                    data-testid="button-create-first-package"
-                  >
-                    <Plus className="h-5 w-5" />
-                    Создать подборку
-                  </Button>
-                </div>
-              </Card>
-            )}
-          </div>
+              </div>
+            </Card>
+          )}
+        </div>
 
         {/* Delete Confirmation Dialog */}
         <AlertDialog open={!!deletePackageId} onOpenChange={(open) => !open && setDeletePackageId(null)}>
@@ -1158,8 +1115,8 @@ export default function AdminPackages() {
         {/* Root-Level Manage Courses Dialog */}
         <Dialog open={Boolean(dialogState)} onOpenChange={(open) => !open && setDialogState(null)}>
           {dialogState && (
-            <ManageCoursesDialog 
-              packageId={dialogState.packageId} 
+            <ManageCoursesDialog
+              packageId={dialogState.packageId}
               initialPackage={dialogState.snapshot}
               allCourses={allCourses}
               onClose={closeManageCoursesDialog}

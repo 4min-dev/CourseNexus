@@ -2262,14 +2262,14 @@ export default function Shop() {
                                   if (!Array.isArray(course.level) || course.level.length === 0) return null;
 
                                   // Находим все подкатегории по ID из course.level
-                                  const selectedSubcategories = course.level
+                                  const selectedSubcategories = subcategories ? course.level
                                     .map(levelId => subcategories.find(sub => sub.id === levelId))
-                                    .filter(Boolean);
+                                    .filter(Boolean) : []
 
                                   // Группируем по имени и оставляем только уникальные
-                                  const uniqueLevelNames = Array.from(
+                                  const uniqueLevelNames = subcategories ? Array.from(
                                     new Set(selectedSubcategories.map(sub => sub.name))
-                                  );
+                                  ) : []
 
                                   return uniqueLevelNames.length > 0 ? (
                                     <div className="flex flex-wrap gap-2">

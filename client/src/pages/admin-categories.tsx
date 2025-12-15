@@ -365,7 +365,7 @@ export default function AdminCategories() {
                                 size="sm"
                                 data-testid={`button-view-subcategories-${child.id}`}
                               >
-                                Уровни
+                                Подкатегории
                                 <ChevronRight className="ml-2 h-3 w-3" />
                               </Button>
                             </Link>
