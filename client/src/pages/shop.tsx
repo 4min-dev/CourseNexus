@@ -41,6 +41,7 @@ import starterPackageImg from "@assets/generated_images/Starter_package_illustra
 import professionalPackageImg from "@assets/generated_images/Professional_package_illustration_levels_de5bc7a2.png";
 import premiumPackageImg from "@assets/generated_images/Premium_package_illustration_orbit_4879daf5.png";
 import { Section } from "./admin-course-edit";
+import { sub } from "date-fns";
 
 const COURSES_PER_PAGE = 12;
 
@@ -1095,6 +1096,21 @@ export default function Shop() {
     })),
   });
 
+  const subcategoriesQueries = useQueries({
+    queries: courses.map((course) => ({
+      queryKey: ["/api/admin/courses", course.id, "subcategories"],
+      queryFn: async (): Promise<string[]> => {
+        const response = await fetch(`/api/admin/courses/${course.id}/subcategories`, {
+          credentials: "include",
+        });
+        if (!response.ok) return [];
+        return response.json();
+      },
+      enabled: !!course.id,
+      staleTime: 5 * 60 * 1000,
+    })),
+  });
+
   const getLevelName = (level: string) => {
     const names: Record<string, string> = {
       beginner: "Для новичков",
@@ -1190,7 +1206,7 @@ export default function Shop() {
     const matchedCategories = platformSlugs
       .map(slug => {
         const platformName = platformMap[slug] || slug;
-        return categories.find(
+        return categories?.find(
           cat => cat.slug === slug || cat.name === platformName
         );
       })
@@ -1776,6 +1792,18 @@ export default function Shop() {
                       };
 
                       const platforms = getPlatforms();
+
+                      const originalIndex = courses.findIndex(c => c.id === course.id);
+
+                      const courseSubcategoryIds = originalIndex !== -1
+                        ? subcategoriesQueries[originalIndex]?.data ?? []
+                        : [];
+
+                      // Теперь можно правильно получить выбранные подкатегории
+                      const selectedSubcategories = subcategories?.filter(sub =>
+                        courseSubcategoryIds.includes(sub.id)
+                      ) ?? []
+
                       return (
                         <div key={course.id}>
                           <GlassCard
@@ -1917,18 +1945,15 @@ export default function Shop() {
                                     </Badge>
                                   ))}
 
-                                  {Array.isArray(course.level) && course.level.length > 0 && (
+                                  {(Array.isArray(selectedSubcategories) && selectedSubcategories.length > 0) || categories?.filter(cat => course.level?.includes(cat.id)) && (
                                     <div className="flex flex-wrap gap-2">
-                                      {Array.from(
-                                        new Set(
-                                          course.level
-                                            .map(id => subcategories.find(sub => sub.id === id))
-                                            .filter(Boolean)
-                                            .map(sub => sub.name)
-                                        )
-                                      ).map(levelName => (
-                                        <Badge key={levelName} variant="outline" className="text-sm font-medium">
-                                          {levelName}
+                                      {selectedSubcategories.length > 0 ? selectedSubcategories.map(sub => (
+                                        <Badge key={sub.id} variant="outline" className="text-sm font-medium">
+                                          {sub.name}
+                                        </Badge>
+                                      )) : categories?.filter(cat => course.level?.includes(cat.id)).map(sub => (
+                                        <Badge key={sub.id} variant="outline" className="text-sm font-medium">
+                                          {sub.name}
                                         </Badge>
                                       ))}
                                     </div>
@@ -2063,6 +2088,18 @@ export default function Shop() {
                     };
 
                     const platforms = getPlatforms(); // ← просто вызываем
+
+                    const originalIndex = courses.findIndex(c => c.id === course.id);
+
+                    const courseSubcategoryIds = originalIndex !== -1
+                      ? subcategoriesQueries[originalIndex]?.data ?? []
+                      : [];
+
+                    // Теперь можно правильно получить выбранные подкатегории
+                    const selectedSubcategories = subcategories?.filter(sub =>
+                      courseSubcategoryIds.includes(sub.id)
+                    ) ?? []
+                    const selectedCategoriesWithoutsub = categories?.filter(cat => course.level?.includes(cat.id));
 
                     return (
                       <div
@@ -2258,29 +2295,22 @@ export default function Shop() {
                                 ))}
 
                                 {/* Уровни — показываем уникальные по имени */}
-                                {(() => {
-                                  if (!Array.isArray(course.level) || course.level.length === 0) return null;
-
-                                  // Находим все подкатегории по ID из course.level
-                                  const selectedSubcategories = subcategories ? course.level
-                                    .map(levelId => subcategories.find(sub => sub.id === levelId))
-                                    .filter(Boolean) : []
-
-                                  // Группируем по имени и оставляем только уникальные
-                                  const uniqueLevelNames = subcategories ? Array.from(
-                                    new Set(selectedSubcategories.map(sub => sub.name))
-                                  ) : []
-
-                                  return uniqueLevelNames.length > 0 ? (
+                                {
+                                  (selectedSubcategories && selectedSubcategories.length > 0) ? selectedSubcategories.map(sub => (
                                     <div className="flex flex-wrap gap-2">
-                                      {uniqueLevelNames.map(name => (
-                                        <Badge key={name} variant="outline" className="text-sm font-medium">
-                                          {name}
-                                        </Badge>
-                                      ))}
+                                      <Badge key={sub.id} variant="outline" className="text-sm font-medium">
+                                        {sub.name}
+                                      </Badge>
                                     </div>
-                                  ) : null;
-                                })()}
+                                  )) : selectedCategoriesWithoutsub?.map(sub => (
+                                    <div className="flex flex-wrap gap-2">
+                                      <Badge key={sub.id} variant="outline" className="text-sm font-medium">
+                                        {sub.name}
+                                      </Badge>
+                                    </div>
+                                  ))
+                                }
+
 
                                 {/* Год */}
                                 {course.year && (

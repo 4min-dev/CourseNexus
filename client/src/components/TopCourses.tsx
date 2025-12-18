@@ -1,11 +1,11 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQueries, useQuery } from "@tanstack/react-query";
 import { Trophy, Star, TrendingUp } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { formatPrice } from "@/lib/formatPrice";
 import { StarRating } from "@/components/star-rating";
-import type { Course } from "@shared/schema";
+import type { Course, Subcategory } from "@shared/schema";
 import { Link } from "wouter";
 
 interface TopCoursesProps {
@@ -29,6 +29,25 @@ export function TopCourses({ categoryId, platform, limit = 5, title = "🔥 По
       if (!res.ok) throw new Error(`${res.status}: ${res.statusText}`);
       return res.json();
     },
+  });
+
+  const { data: subcategories } = useQuery<Subcategory[]>({
+    queryKey: ["/api/subcategories"]
+  })
+
+  const subcategoriesQueries = useQueries({
+    queries: (topCourses || []).map((course) => ({
+      queryKey: ["/api/admin/courses", course.id, "subcategories"],
+      queryFn: async (): Promise<string[]> => {
+        const response = await fetch(`/api/admin/courses/${course.id}/subcategories`, {
+          credentials: "include",
+        });
+        if (!response.ok) return [];
+        return response.json();
+      },
+      enabled: !!course.id,
+      staleTime: 5 * 60 * 1000,
+    })),
   });
 
   if (isLoading) {
@@ -68,97 +87,109 @@ export function TopCourses({ categoryId, platform, limit = 5, title = "🔥 По
 
       {/* Top Courses Grid */}
       <div className="grid gap-3">
-        {topCourses.map((course, index) => (
-          <Link 
-            key={course.id} 
-            href={`/course/${course.id}`}
-            data-testid={`top-course-${course.id}`}
-          >
-            <Card className="group relative overflow-hidden hover-elevate active-elevate-2 cursor-pointer transition-all duration-200">
-              {/* Rank Badge */}
-              <div className="absolute top-3 left-3 z-10">
-                <Badge 
-                  className={`
+        {topCourses.map((course, index) => {
+
+          const courseSubcategoryIds = index !== -1
+            ? subcategoriesQueries[index]?.data ?? []
+            : [];
+
+          const selectedSubcategories = subcategories?.filter(sub =>
+            courseSubcategoryIds.includes(sub.id)
+          ) ?? [];
+
+          return (
+            <Link
+              key={course.id}
+              href={`/course/${course.id}`}
+              data-testid={`top-course-${course.id}`}
+            >
+              <Card className="group relative overflow-hidden hover-elevate active-elevate-2 cursor-pointer transition-all duration-200">
+                {/* Rank Badge */}
+                <div className="absolute top-3 left-3 z-10">
+                  <Badge
+                    className={`
                     text-sm font-bold px-2.5 py-1
                     ${index === 0 ? 'bg-gradient-to-r from-yellow-500 to-orange-500 text-white' : ''}
                     ${index === 1 ? 'bg-gradient-to-r from-gray-400 to-gray-500 text-white' : ''}
                     ${index === 2 ? 'bg-gradient-to-r from-orange-600 to-orange-700 text-white' : ''}
                     ${index > 2 ? 'bg-muted text-muted-foreground' : ''}
                   `}
-                >
-                  #{index + 1}
-                </Badge>
-              </div>
-
-              <div className="flex gap-4 p-4">
-                {/* Thumbnail */}
-                <div className="relative w-32 h-20 flex-shrink-0 rounded-lg overflow-hidden bg-muted">
-                  {course.thumbnailImage ? (
-                    <img
-                      src={course.thumbnailImage}
-                      alt={course.title}
-                      className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-200"
-                      data-testid={`img-top-course-${course.id}`}
-                    />
-                  ) : (
-                    <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-purple-500/10 to-pink-500/10">
-                      <TrendingUp className="h-8 w-8 text-muted-foreground" />
-                    </div>
-                  )}
+                  >
+                    #{index + 1}
+                  </Badge>
                 </div>
 
-                {/* Course Info */}
-                <div className="flex-1 min-w-0 space-y-2">
-                  <h3 className="font-semibold text-base line-clamp-1 group-hover:text-purple-500 transition-colors">
-                    {course.title}
-                  </h3>
-                  
-                  {/* Author and Year */}
-                  <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                    {course.authorName && (
-                      <span className="line-clamp-1">{course.authorName}</span>
-                    )}
-                    {course.authorName && course.year && <span>•</span>}
-                    {course.year && <span>{course.year}</span>}
-                  </div>
-
-                  {/* Description */}
-                  {course.description && (
-                    <div 
-                      className="text-xs text-muted-foreground line-clamp-2 prose prose-xs dark:prose-invert max-w-none"
-                      dangerouslySetInnerHTML={{ __html: course.description }}
-                    />
-                  )}
-                  
-                  <div className="flex items-center gap-3 flex-wrap">
-                    {/* Rating */}
-                    {course.rating !== null && parseFloat(course.rating as string) > 0 && (
-                      <div className="flex items-center gap-1">
-                        <Star className="h-3.5 w-3.5 fill-yellow-500 text-yellow-500" />
-                        <span className="text-sm font-medium">{parseFloat(course.rating as string).toFixed(1)}</span>
-                        {course.reviewsCount > 0 && (
-                          <span className="text-xs text-muted-foreground">({course.reviewsCount})</span>
-                        )}
+                <div className="flex gap-4 p-4">
+                  {/* Thumbnail */}
+                  <div className="relative w-32 h-20 flex-shrink-0 rounded-lg overflow-hidden bg-muted">
+                    {course.thumbnailImage ? (
+                      <img
+                        src={course.thumbnailImage}
+                        alt={course.title}
+                        className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-200"
+                        data-testid={`img-top-course-${course.id}`}
+                      />
+                    ) : (
+                      <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-purple-500/10 to-pink-500/10">
+                        <TrendingUp className="h-8 w-8 text-muted-foreground" />
                       </div>
                     )}
+                  </div>
 
-                    {/* Level */}
-                    {course.level && (
-                      <Badge variant="secondary" className="text-xs">
-                        {course.level}
-                      </Badge>
+                  {/* Course Info */}
+                  <div className="flex-1 min-w-0 space-y-2">
+                    <h3 className="font-semibold text-base line-clamp-1 group-hover:text-purple-500 transition-colors">
+                      {course.title}
+                    </h3>
+
+                    {/* Author and Year */}
+                    <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                      {course.authorName && (
+                        <span className="line-clamp-1">{course.authorName}</span>
+                      )}
+                      {course.authorName && course.year && <span>•</span>}
+                      {course.year && <span>{course.year}</span>}
+                    </div>
+
+                    {/* Description */}
+                    {course.description && (
+                      <div
+                        className="text-xs text-muted-foreground line-clamp-2 prose prose-xs dark:prose-invert max-w-none"
+                        dangerouslySetInnerHTML={{ __html: course.description }}
+                      />
                     )}
 
-                    {/* Price */}
-                    <span className="text-sm font-bold text-purple-600 dark:text-purple-400 ml-auto">
-                      {formatPrice(parseInt(course.price || "0"))} ₽
-                    </span>
+                    <div className="flex items-center gap-3 flex-wrap">
+                      {/* Rating */}
+                      {course.rating !== null && parseFloat(course.rating as string) > 0 && (
+                        <div className="flex items-center gap-1">
+                          <Star className="h-3.5 w-3.5 fill-yellow-500 text-yellow-500" />
+                          <span className="text-sm font-medium">{parseFloat(course.rating as string).toFixed(1)}</span>
+                          {course.reviewsCount > 0 && (
+                            <span className="text-xs text-muted-foreground">({course.reviewsCount})</span>
+                          )}
+                        </div>
+                      )}
+
+                      {/* Level */}
+
+                      {
+                        (selectedSubcategories && selectedSubcategories.length > 0) && selectedSubcategories.map(sub => <Badge key={sub.id} variant="secondary" className="text-xs">
+                          {sub.name}
+                        </Badge>)
+                      }
+
+                      {/* Price */}
+                      <span className="text-sm font-bold text-purple-600 dark:text-purple-400 ml-auto">
+                        {formatPrice(parseInt(course.price || "0"))} ₽
+                      </span>
+                    </div>
                   </div>
                 </div>
-              </div>
-            </Card>
-          </Link>
-        ))}
+              </Card>
+            </Link>
+          )
+        })}
       </div>
     </div>
   );

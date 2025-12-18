@@ -611,6 +611,8 @@ export default function CourseDetail() {
     return names[level] || level;
   };
 
+  const courseSubcategories = subcategories?.filter(sub => courseSubcategoryIds.includes(sub.id))
+
   const fantiksBalance = parseFloat(user?.balance || "0");
   const referralBalance = parseFloat(user?.referralBalance || "0");
   const balance = fantiksBalance + referralBalance; // Total available balance
@@ -824,20 +826,18 @@ export default function CourseDetail() {
                       </Badge>
                     ))
                   }
-                  {(Array.isArray(course.level) && course.level.length > 0 && subcategories) && (
+                  {((Array.isArray(courseSubcategories) && courseSubcategories.length > 0 && subcategories) || categories?.filter(cat => course.level?.includes(cat.id))) && (
                     <div className="flex flex-wrap gap-2">
-                      {subcategories && Array.from(
-                        new Set(
-                          course.level
-                            .map(id => subcategories.find(sub => sub.id === id))
-                            .filter(Boolean)
-                            .map(sub => sub.name)
-                        )
-                      ).map(levelName => (
-                        <Badge key={levelName} variant="outline" className="text-sm font-medium">
-                          {levelName}
-                        </Badge>
-                      ))}
+                      {
+                        courseSubcategories && courseSubcategories.length > 0 ?
+                          courseSubcategories.map(subCategory => (
+                            <Badge key={subCategory.id} variant="outline" className="text-sm font-medium">
+                              {subCategory.name}
+                            </Badge>
+                          )) : categories?.filter(cat => course.level?.includes(cat.id)).map(subCategory => <Badge key={subCategory.id} variant="outline" className="text-sm font-medium">
+                            {subCategory.name}
+                          </Badge>)
+                      }
                     </div>
                   )}
                   <Badge variant="outline" className="border-orange-500/30 bg-orange-500/10">
@@ -1082,25 +1082,27 @@ export default function CourseDetail() {
                       ))
                     }
                   </div>
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">Уровень:</span>
-                    {Array.isArray(course.level) && course.level.length > 0 && (
+
+                  {((Array.isArray(courseSubcategories) && courseSubcategories.length > 0 && subcategories) || categories?.filter(cat => course.level?.includes(cat.id))) && (
+                    <div className="flex justify-between">
+
                       <div className="inline-flex flex-wrap items-center gap-2">
-                        {subcategories && Array.from(
-                          new Set(
-                            course.level
-                              .map(id => subcategories.find(sub => sub.id === id))
-                              .filter(Boolean)
-                              .map(sub => sub.name)
-                          )
-                        ).map(levelName => (
-                          <span key={levelName} className="font-medium">
-                            {levelName}
-                          </span>
-                        ))}
+                        <span className="text-muted-foreground">Подкатегории:</span>
+                        {
+                          courseSubcategories && courseSubcategories.length > 0 ? courseSubcategories.map(subCategory => (
+                            <span key={subCategory.id} className="font-medium">
+                              {subCategory.name}
+                            </span>
+                          )) : categories?.filter(cat => course.level?.includes(cat.id)).map(subCategory => (
+                            <span key={subCategory.id} className="font-medium">
+                              {subCategory.name}
+                            </span>
+                          ))
+                        }
                       </div>
-                    )}
-                  </div>
+                    </div>
+                  )}
+
                   <div className="flex justify-between">
                     <span className="text-muted-foreground">Год:</span>
                     <span className="font-medium">{course.year}</span>

@@ -15,6 +15,7 @@ import { Footer } from "@/components/footer";
 import { Pagination } from "@/components/pagination";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useAuth } from "@/hooks/useAuth";
+import { line } from "drizzle-orm/pg-core";
 
 interface VipPackage {
   id: string;
@@ -325,6 +326,23 @@ export default function Library() {
     })),
   });
 
+  const filteredLibrary = library || []
+
+  const subcategoriesQueries = useQueries({
+    queries: filteredLibrary.map((lib) => ({
+      queryKey: ["/api/admin/courses", lib.course.id, "subcategories"],
+      queryFn: async (): Promise<string[]> => {
+        const response = await fetch(`/api/admin/courses/${lib.course.id}/subcategories`, {
+          credentials: "include",
+        });
+        if (!response.ok) return [];
+        return response.json();
+      },
+      enabled: !!lib.course.id,
+      staleTime: 5 * 60 * 1000,
+    })),
+  });
+
   return (
     <div className="min-h-screen bg-background relative">
       <Header
@@ -521,6 +539,22 @@ export default function Library() {
                       };
 
                       const platforms = getPlatforms();
+
+                      const originalIndex = library.findIndex(c => c.course.id === course.id);
+
+                      const courseSubcategoryIds = originalIndex !== -1
+                        ? subcategoriesQueries[originalIndex]?.data ?? []
+                        : [];
+
+
+                      const selectedSubcategories = subcategories?.filter(sub =>
+                        courseSubcategoryIds.includes(sub.id)
+                      ) ?? [];
+
+                      console.log('subcategories', subcategories)
+                      console.log('courseSubcategoryIds', courseSubcategoryIds)
+                      console.log('originalIndex', originalIndex)
+
                       return (
                         <Link key={course.id} href={`/library/${course.id}`}>
                           <div>
@@ -563,20 +597,19 @@ export default function Library() {
                                       </Badge>
                                     ))
                                   }
-                                  {Array.isArray(course.level) && course.level.length > 0 && (
+                                  {((Array.isArray(selectedSubcategories) && selectedSubcategories.length > 0) || categories?.filter(cat => course.level?.includes(cat.id))) && (
                                     <div className="flex flex-wrap gap-2">
-                                      {Array.from(
-                                        new Set(
-                                          course.level
-                                            .map(id => subcategories.find(sub => sub.id === id))
-                                            .filter(Boolean)
-                                            .map(sub => sub.name)
-                                        )
-                                      ).map(levelName => (
-                                        <Badge key={levelName} variant="outline" className="text-xs font-medium">
-                                          {levelName}
-                                        </Badge>
-                                      ))}
+                                      {
+                                        selectedSubcategories && selectedSubcategories.length > 0 ? selectedSubcategories.map(subCategory => (
+                                          <Badge key={subCategory.id} variant="outline" className="text-xs font-medium">
+                                            {subCategory.name}
+                                          </Badge>
+                                        )) : categories?.filter(cat => course.level?.includes(cat.id)).map(subCategory => (
+                                          <Badge key={subCategory.id} variant="outline" className="text-xs font-medium">
+                                            {subCategory.name}
+                                          </Badge>
+                                        ))
+                                      }
                                     </div>
                                   )}
                                   {course.year && (

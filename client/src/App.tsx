@@ -160,7 +160,23 @@ function Router() {
         {() => <Suspense fallback={<PageLoader />}><AuthGuard><AdminSubcategories /></AuthGuard></Suspense>}
       </Route>
       <Route path="/admin/categories/:categoryId/subcategories/:subcategoryId/courses">
-        {() => <Suspense fallback={<PageLoader />}><AuthGuard><AdminCourses /></AuthGuard></Suspense>}
+        {() => (
+          <Suspense fallback={<PageLoader />}>
+            <AuthGuard adminOnly>
+              <AdminCourses />
+            </AuthGuard>
+          </Suspense>
+        )}
+      </Route>
+
+      <Route path="/admin/categories/:categoryId/courses">
+        {() => (
+          <Suspense fallback={<PageLoader />}>
+            <AuthGuard>
+              <AdminCourses />
+            </AuthGuard>
+          </Suspense>
+        )}
       </Route>
       <Route path="/admin/courses">
         {() => <Suspense fallback={<PageLoader />}><AuthGuard><AdminAllCourses /></AuthGuard></Suspense>}

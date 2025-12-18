@@ -103,7 +103,7 @@ export default function Favorites() {
   };
 
   const platformQueries = useQueries({
-    queries: favorites?.map((course) => ({
+    queries: favorites ? favorites?.map((course) => ({
       queryKey: ['course-platforms', course.courseId],
       queryFn: async () => {
         const response = await fetch(`/api/admin/courses/${course.courseId}/subcategories`, {
@@ -117,6 +117,21 @@ export default function Favorites() {
       enabled: !!course.id,
       staleTime: 5 * 60 * 1000,
       retry: 1,
+    })) : [],
+  });
+
+  const subcategoriesQueries = useQueries({
+    queries: (favorites || []).map((fav) => ({
+      queryKey: ["/api/admin/courses", fav.course.id, "subcategories"], // ← fav.course.id
+      queryFn: async (): Promise<string[]> => {
+        const response = await fetch(`/api/admin/courses/${fav.course.id}/subcategories`, {
+          credentials: "include",
+        });
+        if (!response.ok) return [];
+        return response.json();
+      },
+      enabled: !!fav.course.id,
+      staleTime: 5 * 60 * 1000,
     })),
   });
 
@@ -197,6 +212,17 @@ export default function Favorites() {
 
                   const platforms = getPlatforms();
 
+                  const originalIndex = index
+
+                  const courseSubcategoryIds = originalIndex !== -1
+                    ? subcategoriesQueries[originalIndex]?.data ?? []
+                    : [];
+
+                  // Теперь можно правильно получить выбранные подкатегории
+                  const selectedSubcategories = subcategories?.filter(sub =>
+                    courseSubcategoryIds.includes(sub.id)
+                  ) ?? [];
+
                   return (
                     <Card
                       key={course.id}
@@ -265,20 +291,19 @@ export default function Favorites() {
                               }
                             </Badge>
                           ))}
-                          {Array.isArray(course.level) && course.level.length > 0 && (
+                          {((Array.isArray(selectedSubcategories) && selectedSubcategories.length > 0) || categories?.filter(cat => course.level?.includes(cat.id))) && (
                             <div className="flex flex-wrap gap-2">
-                              {Array.from(
-                                new Set(
-                                  course.level
-                                    .map(id => subcategories.find(sub => sub.id === id))
-                                    .filter(Boolean)
-                                    .map(sub => sub.name)
-                                )
-                              ).map(levelName => (
-                                <Badge key={levelName} variant="outline" className="text-xs font-medium">
-                                  {levelName}
-                                </Badge>
-                              ))}
+                              {
+                                selectedSubcategories && selectedSubcategories.length > 0 ? selectedSubcategories.map(subCategory => (
+                                  <Badge key={subCategory.id} variant="outline" className="text-xs font-medium">
+                                    {subCategory.name}
+                                  </Badge>
+                                )) : categories?.filter(cat => course.level?.includes(cat.id)).map(subCategory => (
+                                  <Badge key={subCategory.id} variant="outline" className="text-xs font-medium">
+                                    {subCategory.name}
+                                  </Badge>
+                                ))
+                              }
                             </div>
                           )}
                           {course.year && (

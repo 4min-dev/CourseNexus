@@ -331,6 +331,21 @@ export default function AdminCourseEdit() {
 
   // Автоматически выбираем все подкатегории с именем уровня из URL — НО НЕ СБРАСЫВАЕМ уже выбранные!
   useEffect(() => {
+    if (selectedLevels && !selectedLevels.some(lvl => lvl === parentId)) {
+
+      setSelectedLevels((prev) => ([
+        ...prev,
+        parentId
+      ]))
+    }
+
+    if (selectedLevels && !selectedLevels.some(lvl => lvl === categoryId)) {
+      setSelectedLevels((prev) => ([
+        ...prev,
+        categoryId
+      ]))
+    }
+
     if (!subcategoryId || !allSubcategories.length) return;
 
     if (course?.level?.length > 0) {
@@ -342,7 +357,7 @@ export default function AdminCourseEdit() {
 
     const levelName = currentSubcat.name;
     const idsToAdd = allSubcategories
-      .filter(sub => sub.name === levelName)
+      .filter(sub => sub.id === levelName)
       .map(sub => sub.id);
 
     // ВАЖНО: НЕ ПЕРЕЗАПИСЫВАЕМ, а только ДОБАВЛЯЕМ недостающие
@@ -353,6 +368,10 @@ export default function AdminCourseEdit() {
     });
   }, [subcategoryId, allSubcategories]);
 
+  useEffect(() => {
+    console.log('selectedLevels', selectedLevels)
+  }, [selectedLevels])
+
   // Load selected subcategories when fetched
   useEffect(() => {
     if (courseSubcategoryIds && courseSubcategoryIds.length > 0) {
@@ -361,12 +380,16 @@ export default function AdminCourseEdit() {
   }, [courseSubcategoryIds]);
 
   useEffect(() => {
-    console.log('selectedLevels', selectedLevels)
-  }, [selectedLevels])
+    console.log('selectedSubcategories', selectedSubcategories)
+  }, [selectedSubcategories])
 
   useEffect(() => {
-    console.log('selectedSubcatgories', selectedSubcategories)
-  }, [selectedSubcategories])
+    console.log('allSubcategories', allSubcategories)
+  }, [allSubcategories])
+
+  useEffect(() => {
+    console.log('selectedLevels', selectedLevels)
+  }, [selectedLevels])
 
   // Poll for lesson status updates
   useEffect(() => {
@@ -1086,129 +1109,132 @@ export default function AdminCourseEdit() {
                 </div>
 
                 <div>
-                  <Label className="mb-2 block">Уровень</Label>
+                  <Label className="mb-2 block">Категории</Label>
                   <div className="space-y-2">
-                    {["Для новичков", "Для опытных", "Продвинутый", "Премиум"].map((levelName) => {
-                      // Находим хотя бы одну подкатегорию с таким именем
-                      const hasLevel = allSubcategories.some(sub => sub.name === levelName);
-
-                      return (
-                        <div key={levelName} className="flex items-center gap-2">
+                    {categories
+                      ?.filter(cat => !cat.parentId) // Только корневые категории
+                      .map((category) => (
+                        <div key={category.id} className="flex items-center gap-2">
                           <Checkbox
-                            id={`level-${levelName}`}
-                            checked={allSubcategories.some(sub =>
-                              sub.name === levelName && selectedLevels.includes(sub.id)
-                            )}
+                            id={`level-${category.id}`}
+                            checked={selectedLevels.includes(category.id)}
                             onCheckedChange={(checked) => {
                               if (checked) {
-                                // Добавляем ВСЕ подкатегории с таким именем
-                                const idsToAdd = allSubcategories
-                                  .filter(sub => sub.name === levelName)
-                                  .map(sub => sub.id);
-                                setSelectedLevels(prev => [...new Set([...prev, ...idsToAdd])]);
+                                setSelectedLevels(prev => [...new Set([...prev, category.id])]);
                               } else {
-                                // Убираем ВСЕ подкатегории с таким именем
-                                const idsToRemove = allSubcategories
-                                  .filter(sub => sub.name === levelName)
-                                  .map(sub => sub.id);
-                                setSelectedLevels(prev => prev.filter(id => !idsToRemove.includes(id)));
+                                setSelectedLevels(prev => prev.filter(id => id !== category.id));
                               }
                             }}
                           />
-                          <Label htmlFor={`level-${levelName}`} className="cursor-pointer">
-                            {levelName}
+                          <Label htmlFor={`level-${category.id}`} className="cursor-pointer font-medium">
+                            {category.name}
                           </Label>
                         </div>
-                      );
-                    })}
+                      ))}
                   </div>
                 </div>
 
-                <div className="border rounded-md max-h-[400px] overflow-y-auto">
+                <div className="border rounded-md max-h-[400px] overflow-y-auto mt-4">
                   <div className="p-4 space-y-6">
                     {selectedLevels.length === 0 ? (
                       <div className="text-center py-8 text-muted-foreground">
                         <AlertCircle className="h-8 w-8 mx-auto mb-3 opacity-50" />
-                        <p>Сначала выберите хотя бы один уровень выше</p>
+                        <p>Сначала выберите хотя бы одну категорию выше</p>
                       </div>
                     ) : (
-                      categories
-                        .filter(cat => !cat.parentId)
-                        .map((parentCat) => {
-                          const childCategories = categories.filter(cat => cat.parentId === parentCat.id);
+                      <div className="space-y-6">
+                        {categories
+                          .filter(cat => cat.parentId && selectedLevels.includes(cat.parentId))
+                          .map((childCat) => {
+                            const relevantSubcategories = allSubcategories.filter(
+                              sub => sub.categoryId === childCat.id
+                            );
 
-                          // Список дочерних категорий, у которых есть хотя бы одна подкатегория с выбранным уровнем
-                          const visibleChildCats = childCategories.filter(childCat =>
-                            allSubcategories.some(sub =>
-                              sub.categoryId === childCat.id &&
-                              selectedLevels.some(lvlId => {
-                                const lvlSub = allSubcategories.find(s => s.id === lvlId);
-                                return lvlSub?.name === sub.name;
-                              })
-                            )
-                          );
+                            if (relevantSubcategories.length === 0 && !childCat.id) return null;
 
-                          if (visibleChildCats.length === 0) return null;
+                            // Группировка подкатегорий по имени уровня
+                            const groupedByName = relevantSubcategories.reduce((acc, sub) => {
+                              if (!acc[sub.name]) acc[sub.name] = [];
+                              acc[sub.name].push(sub);
+                              return acc;
+                            }, {} as Record<string, typeof relevantSubcategories>);
 
-                          return (
-                            <div key={parentCat.id} className="border-b last:border-b-0 pb-6 last:pb-0">
-                              <div className="font-semibold text-sm mb-3 text-primary">
-                                {parentCat.name}
+                            // === Чекбокс для самой дочерней категории (childCat) ===
+                            const isChildCatSelected = selectedLevels.includes(childCat.id);
+
+                            const handleChildCatToggle = (checked: boolean) => {
+                              if (relevantSubcategories.some(relSub => selectedSubcategories.includes(relSub.id)) && !checked) {
+                                setSelectedSubcategories((prev) => prev.filter(prevSub => !relevantSubcategories.some(relSub => relSub.id === prevSub)))
+                              }
+
+                              setSelectedLevels(prev => {
+                                if (checked) {
+                                  return [...new Set([...prev, childCat.id])];
+                                } else {
+                                  return prev.filter(id => id !== childCat.id);
+                                }
+                              });
+                            };
+
+                            return (
+                              <div key={childCat.id} className="border-b last:border-b-0 pb-6 last:pb-0">
+                                {/* Заголовок: чекбокс выбирает только саму childCat */}
+                                <div className="flex items-center gap-3 mb-4">
+                                  <Checkbox
+                                    checked={isChildCatSelected}
+                                    onCheckedChange={handleChildCatToggle}
+                                  />
+                                  <div className="font-semibold text-sm text-primary">
+                                    {childCat.name}
+                                  </div>
+                                </div>
+
+                                {/* Подуровни (Для новичков, Премиум и т.д.) — независимый выбор */}
+                                {relevantSubcategories.length > 0 && (
+                                  <div className="space-y-3 pl-8">
+                                    {Object.entries(groupedByName).map(([levelName, subs]) => {
+                                      const subIds = subs.map(s => s.id);
+                                      const selectedCount = subs.filter(s => selectedSubcategories.includes(s.id)).length;
+
+                                      const allSelected = selectedCount === subs.length;
+                                      const someSelected = selectedCount > 0 && selectedCount < subs.length;
+
+                                      const handleLevelToggle = (checked: boolean) => {
+                                        if (!selectedLevels.includes(childCat.id) && checked) {
+                                          setSelectedLevels((prev) => ([...prev, childCat.id]))
+                                        }
+
+                                        setSelectedSubcategories(prev => {
+                                          if (checked) {
+                                            return [...new Set([...prev, ...subIds])];
+                                          } else {
+                                            return prev.filter(id => !subIds.includes(id));
+                                          }
+                                        });
+                                      };
+
+                                      return (
+                                        <div key={levelName} className="flex items-center gap-2">
+                                          <Checkbox
+                                            checked={allSelected}
+                                            indeterminate={someSelected}
+                                            onCheckedChange={handleLevelToggle}
+                                          />
+                                          <Label className="flex items-center gap-2 cursor-pointer font-normal text-sm">
+                                            {levelName}
+                                            <span className="text-xs text-muted-foreground">
+                                              ({subs.map(s => s.nameEn || s.name).join(', ')})
+                                            </span>
+                                          </Label>
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
+                                )}
                               </div>
-
-                              <div className="space-y-3 pl-4">
-                                {visibleChildCats.map((childCat) => {
-                                  // Все подкатегории этой категории, которые соответствуют выбранным уровням
-                                  const relevantSubcats = allSubcategories.filter(sub =>
-                                    sub.categoryId === childCat.id &&
-                                    selectedLevels.some(lvlId => {
-                                      const lvlSub = allSubcategories.find(s => s.id === lvlId);
-                                      return lvlSub?.name === sub.name;
-                                    })
-                                  );
-
-                                  // Сколько из них выбрано
-                                  const selectedCount = relevantSubcats.filter(sub =>
-                                    selectedSubcategories.includes(sub.id)
-                                  ).length;
-
-                                  const allSelected = selectedCount === relevantSubcats.length;
-                                  const someSelected = selectedCount > 0 && selectedCount < relevantSubcats.length;
-
-                                  const handleToggle = (checked: boolean) => {
-                                    const subcatIds = relevantSubcats.map(s => s.id);
-
-                                    setSelectedSubcategories(prev => {
-                                      if (checked) {
-                                        // Добавляем только те, которых ещё нет
-                                        return [...new Set([...prev, ...subcatIds])];
-                                      } else {
-                                        // Убираем все из этой группы
-                                        return prev.filter(id => !subcatIds.includes(id));
-                                      }
-                                    });
-                                  };
-
-                                  return (
-                                    <div key={childCat.id} className="flex items-center gap-2">
-                                      <Checkbox
-                                        checked={allSelected || someSelected}
-                                        indeterminate={someSelected}
-                                        onCheckedChange={handleToggle}
-                                      />
-                                      <Label className="flex items-center gap-2 cursor-pointer font-normal">
-                                        {childCat.name}
-                                        <span className="text-xs text-muted-foreground">
-                                          ({relevantSubcats.map(s => s.name).join(', ')})
-                                        </span>
-                                      </Label>
-                                    </div>
-                                  );
-                                })}
-                              </div>
-                            </div>
-                          );
-                        })
+                            );
+                          })}
+                      </div>
                     )}
                   </div>
                 </div>
