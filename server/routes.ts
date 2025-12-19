@@ -4054,6 +4054,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
 
+      clearCache()
+
       res.json(category);
     } catch (error: any) {
       console.error("Error creating category:", error);
@@ -4069,6 +4071,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const { id } = req.params;
       const data = insertCategorySchema.partial().parse(req.body);
       const category = await storage.updateCategory(id, data);
+      clearCache()
       res.json(category);
     } catch (error: any) {
       console.error("Error updating category:", error);
@@ -4084,6 +4087,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const { id } = req.params;
       const data = insertCategorySchema.partial().parse(req.body);
       const category = await storage.updateCategory(id, data);
+      clearCache()
       res.json(category);
     } catch (error: any) {
       console.error("Error updating category:", error);
@@ -4106,12 +4110,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   app.delete('/api/admin/categories/:id', isAuthenticated, isAdmin, async (req, res) => {
+    const { id } = req.params;
+    console.log(`[DELETE CATEGORY] Запрос на удаление категории с ID: ${id}`);
+
     try {
-      const { id } = req.params;
       await storage.deleteCategory(id);
+
+      clearCache()
+
+      console.log(`[DELETE CATEGORY] Категория с ID ${id} успешно удалена`);
       res.json({ success: true });
     } catch (error) {
-      console.error("Error deleting category:", error);
+      console.error("[DELETE CATEGORY] Ошибка при удалении категории:", error);
       res.status(500).json({ message: "Failed to delete category" });
     }
   });

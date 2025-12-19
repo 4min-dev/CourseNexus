@@ -887,17 +887,49 @@ export default function Shop() {
     return aTier - bTier;
   }) : [];
 
+  const subcategoriesQueries = useQueries({
+    queries: courses.map((course) => ({
+      queryKey: ["/api/admin/courses", course.id, "subcategories"],
+      queryFn: async (): Promise<string[]> => {
+        const response = await fetch(`/api/admin/courses/${course.id}/subcategories`, {
+          credentials: "include",
+        });
+        if (!response.ok) return [];
+        return response.json();
+      },
+      enabled: !!course.id,
+      staleTime: 5 * 60 * 1000,
+    })),
+  });
+
+  const filteredCoursesByLevel = useMemo(() => {
+    if (!courses.length) return [];
+
+    return courses.filter((course, idx) => {
+      // Ждём, пока загрузятся данные подкатегорий (если они используются где-то ещё)
+      const subcatQuery = subcategoriesQueries[idx];
+      if (subcatQuery.isLoading || subcatQuery.isError) return true; // пока показываем, чтобы не мерцало
+
+      // Основная проверка: есть ли активные категории в course.level
+      const selectedCategoriesWithoutsub = categories?.filter(
+        (cat) => course.level?.includes(cat.id) && cat.isActive
+      ) ?? [];
+
+      return selectedCategoriesWithoutsub.length > 0;
+    });
+  }, [courses, categories, subcategoriesQueries]);
+
   // Pagination calculations (must be before useEffect that uses them)
-  const totalCourses = courses.length || 0;
+  const totalCourses = filteredCoursesByLevel.length || 0;
   const totalPages = Math.ceil(totalCourses / COURSES_PER_PAGE);
   const startIndex = (currentPage - 1) * COURSES_PER_PAGE;
   const endIndex = startIndex + COURSES_PER_PAGE;
-  const paginatedCourses = courses.slice(startIndex, endIndex) || [];
+  const paginatedCourses = filteredCoursesByLevel.slice(startIndex, endIndex) || [];
 
   // Для мобильных: показываем курсы в диапазоне страниц (скользящее окно)
   const mobileStartIndex = (visiblePageRange.start - 1) * COURSES_PER_PAGE;
   const mobileEndIndex = visiblePageRange.end * COURSES_PER_PAGE;
-  const mobileCourses = courses.slice(mobileStartIndex, mobileEndIndex) || [];
+  const mobileCourses = filteredCoursesByLevel.slice(mobileStartIndex, mobileEndIndex) || [];
 
   const platformQueries = useQueries({
     queries: paginatedCourses.map((course) => ({
@@ -1093,21 +1125,6 @@ export default function Shop() {
       },
       enabled: !!course.id,
       staleTime: 1000 * 60 * 5, // 5 минут кэш
-    })),
-  });
-
-  const subcategoriesQueries = useQueries({
-    queries: courses.map((course) => ({
-      queryKey: ["/api/admin/courses", course.id, "subcategories"],
-      queryFn: async (): Promise<string[]> => {
-        const response = await fetch(`/api/admin/courses/${course.id}/subcategories`, {
-          credentials: "include",
-        });
-        if (!response.ok) return [];
-        return response.json();
-      },
-      enabled: !!course.id,
-      staleTime: 5 * 60 * 1000,
     })),
   });
 
@@ -1786,9 +1803,10 @@ export default function Shop() {
 
                       const getPlatforms = () => {
                         if (!subcategoryIds.length || !subcategories || !categories) return [];
-                        const matched = subcategories.filter(sub => subcategoryIds.includes(sub.id));
+                        const matched = subcategories.filter((sub) => subcategoryIds.includes(sub.id) && sub.isActive);
+                        console.log('matched', matched)
                         const categoryIds = [...new Set(matched.map(sub => sub.categoryId))];
-                        return categories.filter(cat => categoryIds.includes(cat.id));
+                        return categories.filter((cat) => categoryIds.includes(cat.id) && cat.isActive);
                       };
 
                       const platforms = getPlatforms();
@@ -1801,8 +1819,10 @@ export default function Shop() {
 
                       // Теперь можно правильно получить выбранные подкатегории
                       const selectedSubcategories = subcategories?.filter(sub =>
-                        courseSubcategoryIds.includes(sub.id)
+                        courseSubcategoryIds.includes(sub.id) && sub.isActive
                       ) ?? []
+
+                      const selectedCategoriesWithoutsub = categories?.filter((cat) => course.level?.includes(cat.id) && cat.isActive);
 
                       return (
                         <div key={course.id}>
@@ -1945,13 +1965,13 @@ export default function Shop() {
                                     </Badge>
                                   ))}
 
-                                  {(Array.isArray(selectedSubcategories) && selectedSubcategories.length > 0) || categories?.filter(cat => course.level?.includes(cat.id)) && (
+                                  {(Array.isArray(selectedSubcategories) && selectedSubcategories.length > 0) || selectedCategoriesWithoutsub && (
                                     <div className="flex flex-wrap gap-2">
                                       {selectedSubcategories.length > 0 ? selectedSubcategories.map(sub => (
                                         <Badge key={sub.id} variant="outline" className="text-sm font-medium">
                                           {sub.name}
                                         </Badge>
-                                      )) : categories?.filter(cat => course.level?.includes(cat.id)).map(sub => (
+                                      )) : selectedCategoriesWithoutsub.map(sub => (
                                         <Badge key={sub.id} variant="outline" className="text-sm font-medium">
                                           {sub.name}
                                         </Badge>
@@ -2082,9 +2102,10 @@ export default function Shop() {
                     // ←←← ЗАМЕНИ useMemo НА ОБЫЧНУЮ ФУНКЦИЮ
                     const getPlatforms = () => {
                       if (!subcategoryIds.length || !subcategories || !categories) return [];
-                      const matched = subcategories.filter(sub => subcategoryIds.includes(sub.id));
+                      const matched = subcategories.filter((sub) => subcategoryIds.includes(sub.id) && sub.isActive);
+                      console.log('matched', matched)
                       const categoryIds = [...new Set(matched.map(sub => sub.categoryId))];
-                      return categories.filter(cat => categoryIds.includes(cat.id));
+                      return categories.filter((cat) => categoryIds.includes(cat.id) && cat.isActive);
                     };
 
                     const platforms = getPlatforms(); // ← просто вызываем
@@ -2097,11 +2118,12 @@ export default function Shop() {
 
                     // Теперь можно правильно получить выбранные подкатегории
                     const selectedSubcategories = subcategories?.filter(sub =>
-                      courseSubcategoryIds.includes(sub.id)
+                      courseSubcategoryIds.includes(sub.id) && sub.isActive
                     ) ?? []
-                    const selectedCategoriesWithoutsub = categories?.filter(cat => course.level?.includes(cat.id));
+                    console.log('sdsdsd', course.title, selectedSubcategories)
+                    const selectedCategoriesWithoutsub = categories?.filter((cat) => course.level?.includes(cat.id) && cat.isActive);
 
-                    return (
+                    if (selectedCategoriesWithoutsub && selectedCategoriesWithoutsub.length > 0) return (
                       <div
                         key={course.id}
                         className="relative h-full group min-h-[500px]"

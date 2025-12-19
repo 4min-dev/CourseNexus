@@ -102,8 +102,41 @@ export default function Favorites() {
     removeFavoriteMutation.mutate(courseId);
   };
 
+  const subcategoriesQueries = useQueries({
+    queries: (favorites || []).map((fav) => ({
+      queryKey: ["/api/admin/courses", fav.course.id, "subcategories"], // ← fav.course.id
+      queryFn: async (): Promise<string[]> => {
+        const response = await fetch(`/api/admin/courses/${fav.course.id}/subcategories`, {
+          credentials: "include",
+        });
+        if (!response.ok) return [];
+        return response.json();
+      },
+      enabled: !!fav.course.id,
+      staleTime: 5 * 60 * 1000,
+    })),
+  });
+
+  const filteredCoursesByLevel = useMemo(() => {
+    if (!favorites || favorites.length === 0) return [];
+
+    return favorites.filter((fav, idx) => {
+      const query = subcategoriesQueries[idx];
+      if (query.isLoading) return true; // показываем пока грузится
+
+      const course = fav.course;
+
+      // Проверяем, есть ли активные категории в старом поле level
+      const activeCategoriesInLevel = categories?.filter(
+        cat => course.level?.includes(cat.id) && cat.isActive
+      ) || []
+
+      return activeCategoriesInLevel.length > 0;
+    });
+  }, [favorites, categories, subcategoriesQueries]);
+
   const platformQueries = useQueries({
-    queries: favorites ? favorites?.map((course) => ({
+    queries: filteredCoursesByLevel ? filteredCoursesByLevel?.map((course) => ({
       queryKey: ['course-platforms', course.courseId],
       queryFn: async () => {
         const response = await fetch(`/api/admin/courses/${course.courseId}/subcategories`, {
@@ -118,21 +151,6 @@ export default function Favorites() {
       staleTime: 5 * 60 * 1000,
       retry: 1,
     })) : [],
-  });
-
-  const subcategoriesQueries = useQueries({
-    queries: (favorites || []).map((fav) => ({
-      queryKey: ["/api/admin/courses", fav.course.id, "subcategories"], // ← fav.course.id
-      queryFn: async (): Promise<string[]> => {
-        const response = await fetch(`/api/admin/courses/${fav.course.id}/subcategories`, {
-          credentials: "include",
-        });
-        if (!response.ok) return [];
-        return response.json();
-      },
-      enabled: !!fav.course.id,
-      staleTime: 5 * 60 * 1000,
-    })),
   });
 
   return (
@@ -193,9 +211,9 @@ export default function Favorites() {
                   </Card>
                 ))}
               </div>
-            ) : favorites && favorites.length > 0 ? (
+            ) : filteredCoursesByLevel && filteredCoursesByLevel.length > 0 ? (
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 md:gap-6">
-                {favorites.map(({ course }, index) => {
+                {filteredCoursesByLevel.map(({ course }, index) => {
                   const isPurchased = purchasedCourseIds.has(course.id);
                   const price = parseFloat(course.price || "0");
 
@@ -205,12 +223,14 @@ export default function Favorites() {
 
                   const getPlatforms = () => {
                     if (!subcategoryIds.length || !subcategories || !categories) return [];
-                    const matched = subcategories.filter(sub => subcategoryIds.includes(sub.id));
+                    const matched = subcategories.filter((sub) => subcategoryIds.includes(sub.id) && sub.isActive);
+                    console.log('matched', matched)
                     const categoryIds = [...new Set(matched.map(sub => sub.categoryId))];
-                    return categories.filter(cat => categoryIds.includes(cat.id));
+                    return categories.filter((cat) => categoryIds.includes(cat.id) && cat.isActive);
                   };
 
                   const platforms = getPlatforms();
+                  console.log(platforms)
 
                   const originalIndex = index
 
@@ -219,11 +239,15 @@ export default function Favorites() {
                     : [];
 
                   // Теперь можно правильно получить выбранные подкатегории
-                  const selectedSubcategories = subcategories?.filter(sub =>
-                    courseSubcategoryIds.includes(sub.id)
+                  const selectedSubcategories = subcategories?.filter((sub) =>
+                    courseSubcategoryIds.includes(sub.id) && sub.isActive
                   ) ?? [];
 
-                  return (
+                  const categoriesWithoutSub = categories?.filter((cat) => course.level?.includes(cat.id) && cat.isActive) ?? []
+
+                  console.log('selectedSubcategories', selectedSubcategories)
+
+                  if (categoriesWithoutSub && categoriesWithoutSub.length > 0) return (
                     <Card
                       key={course.id}
                       className="overflow-hidden flex flex-col h-full border-2 bg-gradient-to-br from-background via-background to-primary/5 hover:border-primary/50 hover:shadow-xl hover:shadow-primary/10 hover:-translate-y-1 transition-all duration-200"
@@ -291,14 +315,14 @@ export default function Favorites() {
                               }
                             </Badge>
                           ))}
-                          {((Array.isArray(selectedSubcategories) && selectedSubcategories.length > 0) || categories?.filter(cat => course.level?.includes(cat.id))) && (
+                          {((Array.isArray(selectedSubcategories) && selectedSubcategories.length > 0) || categoriesWithoutSub) && (
                             <div className="flex flex-wrap gap-2">
                               {
                                 selectedSubcategories && selectedSubcategories.length > 0 ? selectedSubcategories.map(subCategory => (
                                   <Badge key={subCategory.id} variant="outline" className="text-xs font-medium">
                                     {subCategory.name}
                                   </Badge>
-                                )) : categories?.filter(cat => course.level?.includes(cat.id)).map(subCategory => (
+                                )) : categoriesWithoutSub?.map(subCategory => (
                                   <Badge key={subCategory.id} variant="outline" className="text-xs font-medium">
                                     {subCategory.name}
                                   </Badge>

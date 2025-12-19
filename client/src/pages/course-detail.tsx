@@ -435,16 +435,16 @@ export default function CourseDetail() {
     if (!subcategories || !categories || !courseSubcategoryIds?.length) return;
 
     // Шаг 1: Находим все подкатегории, привязанные к курсу
-    const matchedSubcategories = subcategories.filter(sub =>
-      courseSubcategoryIds.includes(sub.id)
+    const matchedSubcategories = subcategories.filter((sub) =>
+      courseSubcategoryIds.includes(sub.id) && sub.isActive
     );
 
     // Шаг 2: Собираем уникальные categoryId из них
     const targetCategoryIds = [...new Set(matchedSubcategories.map(sub => sub.categoryId))];
 
     // Шаг 3: Находим родительские категории
-    const parentCategories = categories.filter(cat =>
-      targetCategoryIds.includes(cat.id)
+    const parentCategories = categories.filter((cat) =>
+      targetCategoryIds.includes(cat.id) && cat.isActive
     );
 
     setPlatforms(parentCategories)
@@ -611,7 +611,8 @@ export default function CourseDetail() {
     return names[level] || level;
   };
 
-  const courseSubcategories = subcategories?.filter(sub => courseSubcategoryIds.includes(sub.id))
+  const courseSubcategories = subcategories?.filter((sub) => courseSubcategoryIds.includes(sub.id) && sub.isActive)
+  const categoriesWithoutSub = categories?.filter((cat) => course?.level?.includes(cat.id) && cat.isActive) || []
 
   const fantiksBalance = parseFloat(user?.balance || "0");
   const referralBalance = parseFloat(user?.referralBalance || "0");
@@ -826,7 +827,7 @@ export default function CourseDetail() {
                       </Badge>
                     ))
                   }
-                  {((Array.isArray(courseSubcategories) && courseSubcategories.length > 0 && subcategories) || categories?.filter(cat => course.level?.includes(cat.id))) && (
+                  {((Array.isArray(courseSubcategories) && courseSubcategories.length > 0 && subcategories) || categoriesWithoutSub) && (
                     <div className="flex flex-wrap gap-2">
                       {
                         courseSubcategories && courseSubcategories.length > 0 ?
@@ -834,7 +835,7 @@ export default function CourseDetail() {
                             <Badge key={subCategory.id} variant="outline" className="text-sm font-medium">
                               {subCategory.name}
                             </Badge>
-                          )) : categories?.filter(cat => course.level?.includes(cat.id)).map(subCategory => <Badge key={subCategory.id} variant="outline" className="text-sm font-medium">
+                          )) : categoriesWithoutSub && categoriesWithoutSub.map(subCategory => <Badge key={subCategory.id} variant="outline" className="text-sm font-medium">
                             {subCategory.name}
                           </Badge>)
                       }
@@ -1093,7 +1094,7 @@ export default function CourseDetail() {
                             <span key={subCategory.id} className="font-medium">
                               {subCategory.name}
                             </span>
-                          )) : categories?.filter(cat => course.level?.includes(cat.id)).map(subCategory => (
+                          )) : categoriesWithoutSub.map(subCategory => (
                             <span key={subCategory.id} className="font-medium">
                               {subCategory.name}
                             </span>

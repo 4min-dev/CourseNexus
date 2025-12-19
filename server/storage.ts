@@ -2820,8 +2820,10 @@ export class DatabaseStorage implements IStorage {
   }
 
   async deleteCategory(id: string): Promise<void> {
+    console.log(`[DELETE CATEGORY] Начато удаление категории ID: ${id}`);
 
     const getAllChildIds = async (parentId: string): Promise<string[]> => {
+      console.log(`[DELETE CATEGORY] Поиск дочерних категорий для parentId: ${parentId}`);
       const children = await db
         .select()
         .from(categories)
@@ -2829,6 +2831,7 @@ export class DatabaseStorage implements IStorage {
 
       let allIds = [parentId];
       for (const child of children) {
+        console.log(`[DELETE CATEGORY] Найдена дочерняя категория: ${child.id} (${child.name})`);
         const childIds = await getAllChildIds(child.id);
         allIds = [...allIds, ...childIds];
       }
@@ -2836,31 +2839,38 @@ export class DatabaseStorage implements IStorage {
     };
 
     const categoryIds = await getAllChildIds(id);
-
+    console.log(`[DELETE CATEGORY] Всего категорий для обработки: ${categoryIds.length} (IDs: ${categoryIds.join(', ')})`);
 
     const subcategoriesData = await db
       .select()
       .from(subcategories)
       .where(inArray(subcategories.categoryId, categoryIds));
 
+    console.log(`[DELETE CATEGORY] Найдено подкатегорий: ${subcategoriesData.length}`);
     const subcategoryIds = subcategoriesData.map(s => s.id);
 
-
     if (subcategoryIds.length > 0) {
+      console.log(`[DELETE CATEGORY] Подкатегории для проверки курсов: ${subcategoryIds.join(', ')}`);
+
       const coursesData = await db
         .select({ courseId: courseSubcategories.courseId })
         .from(courseSubcategories)
         .where(inArray(courseSubcategories.subcategoryId, subcategoryIds))
         .groupBy(courseSubcategories.courseId);
 
-
+      console.log(`[DELETE CATEGORY] Найдено курсов для удаления: ${coursesData.length}`);
       for (const { courseId } of coursesData) {
+        console.log(`[DELETE CATEGORY] Удаляется курс ID: ${courseId}`);
         await this.deleteCourse(courseId);
+        console.log(`[DELETE CATEGORY] Курс ${courseId} успешно удалён`);
       }
+    } else {
+      console.log(`[DELETE CATEGORY] Подкатегорий не найдено — курсы удалять не нужно`);
     }
 
-
+    console.log(`[DELETE CATEGORY] Выполняется DELETE FROM categories WHERE id = ${id}`);
     await db.delete(categories).where(eq(categories.id, id));
+    console.log(`[DELETE CATEGORY] Категория ${id} успешно удалена из БД`);
   }
 
   async getSubcategories(categoryId?: string): Promise<Subcategory[]> {

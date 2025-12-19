@@ -927,6 +927,7 @@ export const insertCategorySchema = createInsertSchema(categories).omit({
   updatedAt: true,
 }).extend({
   order: z.number().optional(),
+  nameEn: z.string().optional(),
 });
 
 export const insertSubcategorySchema = createInsertSchema(subcategories).omit({

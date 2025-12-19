@@ -111,21 +111,42 @@ export default function AdminCategories() {
     mutationFn: async (id: string) => {
       return apiRequest("DELETE", `/api/admin/categories/${id}`, {});
     },
-    onSuccess: () => {
+    onMutate: async (id) => {
+      // Отменяем текущие запросы, чтобы не было конфликтов
+      await queryClient.cancelQueries({ queryKey: ["/api/categories"] });
+
+      // Сохраняем предыдущие данные на случай ошибки
+      const previousCategories = queryClient.getQueryData<Category[]>(["/api/categories"]);
+
+      // Оптимистически удаляем категорию из кэша
+      queryClient.setQueryData<Category[]>(["/api/categories"], (old = []) =>
+        old.filter(cat => cat.id !== id)
+      );
+
+      // Возвращаем контекст для rollback
+      return { previousCategories };
+    },
+    onError: (err, id, context) => {
+      // Если ошибка — возвращаем старые данные
+      if (context?.previousCategories) {
+        queryClient.setQueryData(["/api/categories"], context.previousCategories);
+      }
+      toast({ title: "Ошибка", description: "Не удалось удалить категорию", variant: "destructive" });
+    },
+    onSettled: () => {
+      // В любом случае — инвалидируем (на случай, если были изменения на сервере)
       queryClient.invalidateQueries({ queryKey: ["/api/categories"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/admin/categories"] });
       setDeletionDialogOpen(false);
       setCategoryToDelete(null);
       setDeletionInfo(null);
+    },
+    onSuccess: () => {
       toast({
         title: "Успешно",
         description: deletionInfo
-          ? `Удалено: ${deletionInfo.categoryCount} категорий, ${deletionInfo.courseCount} курсов (со всеми видео и файлами)`
+          ? `Удалено: ${deletionInfo.categoryCount} категорий, ${deletionInfo.courseCount} курсов`
           : "Категория удалена"
       });
-    },
-    onError: () => {
-      toast({ title: "Ошибка", description: "Не удалось удалить категорию", variant: "destructive" });
     },
   });
 

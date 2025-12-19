@@ -533,9 +533,10 @@ export default function Library() {
 
                       const getPlatforms = () => {
                         if (!subcategoryIds.length || !subcategories || !categories) return [];
-                        const matched = subcategories.filter(sub => subcategoryIds.includes(sub.id));
+                        const matched = subcategories.filter((sub) => subcategoryIds.includes(sub.id) && sub.isActive);
+                        console.log('matched', matched)
                         const categoryIds = [...new Set(matched.map(sub => sub.categoryId))];
-                        return categories.filter(cat => categoryIds.includes(cat.id));
+                        return categories.filter((cat) => categoryIds.includes(cat.id) && cat.isActive);
                       };
 
                       const platforms = getPlatforms();
@@ -551,9 +552,7 @@ export default function Library() {
                         courseSubcategoryIds.includes(sub.id)
                       ) ?? [];
 
-                      console.log('subcategories', subcategories)
-                      console.log('courseSubcategoryIds', courseSubcategoryIds)
-                      console.log('originalIndex', originalIndex)
+                      const categoriesWithoutSub = categories?.filter((cat) => course.level?.includes(cat.id) && cat.isActive) || []
 
                       return (
                         <Link key={course.id} href={`/library/${course.id}`}>
@@ -597,14 +596,14 @@ export default function Library() {
                                       </Badge>
                                     ))
                                   }
-                                  {((Array.isArray(selectedSubcategories) && selectedSubcategories.length > 0) || categories?.filter(cat => course.level?.includes(cat.id))) && (
+                                  {((Array.isArray(selectedSubcategories) && selectedSubcategories.length > 0) || categoriesWithoutSub) && (
                                     <div className="flex flex-wrap gap-2">
                                       {
                                         selectedSubcategories && selectedSubcategories.length > 0 ? selectedSubcategories.map(subCategory => (
                                           <Badge key={subCategory.id} variant="outline" className="text-xs font-medium">
                                             {subCategory.name}
                                           </Badge>
-                                        )) : categories?.filter(cat => course.level?.includes(cat.id)).map(subCategory => (
+                                        )) : categoriesWithoutSub?.map(subCategory => (
                                           <Badge key={subCategory.id} variant="outline" className="text-xs font-medium">
                                             {subCategory.name}
                                           </Badge>

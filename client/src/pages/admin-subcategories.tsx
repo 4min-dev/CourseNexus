@@ -120,6 +120,14 @@ export default function AdminSubcategories() {
     },
   });
 
+  const deleteCourseMutation = useMutation({
+    mutationFn: (id: string) => apiRequest("DELETE", `/api/admin/courses/${id}`, {}),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/courses", categoryId] });
+      toast({ title: "Успешно", description: "Курс удалён" });
+    },
+  });
+
   const createCourseMutation = useMutation({
     mutationFn: async (title: string) => {
       const platform = category?.slug || "";
@@ -550,7 +558,7 @@ export default function AdminSubcategories() {
                         e.stopPropagation();
                         const cid = core.id ?? course.id;
                         if (cid && confirm(`Удалить курс "${title}"?`)) {
-                          deleteMutation.mutate(cid);
+                          deleteCourseMutation.mutate(cid);
                         }
                       }}
                       data-testid={`button-delete-course-${core.id ?? course.id}`}
