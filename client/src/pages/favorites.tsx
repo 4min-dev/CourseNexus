@@ -238,10 +238,17 @@ export default function Favorites() {
                     ? subcategoriesQueries[originalIndex]?.data ?? []
                     : [];
 
-                  // Теперь можно правильно получить выбранные подкатегории
-                  const selectedSubcategories = subcategories?.filter((sub) =>
+                  const selectedSubcategories = subcategories?.filter(sub =>
                     courseSubcategoryIds.includes(sub.id) && sub.isActive
+                  ) ?? []
+
+                  const parentCategorires = categories?.filter(cat =>
+                    course.level?.includes(cat.id) &&
+                    cat.isActive &&
+                    !selectedSubcategories.some(selectedSub => selectedSub.categoryId === cat.id)
                   ) ?? [];
+
+                  parentCategorires?.map(parent => selectedSubcategories.push(parent))
 
                   const categoriesWithoutSub = categories?.filter((cat) => course.level?.includes(cat.id) && cat.isActive) ?? []
 

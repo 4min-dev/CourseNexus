@@ -1822,6 +1822,14 @@ export default function Shop() {
                         courseSubcategoryIds.includes(sub.id) && sub.isActive
                       ) ?? []
 
+                      const parentCategorires = categories?.filter(cat =>
+                        course.level?.includes(cat.id) &&
+                        cat.isActive &&
+                        !selectedSubcategories.some(selectedSub => selectedSub.categoryId === cat.id)
+                      ) ?? [];
+
+                      parentCategorires?.map(parent => selectedSubcategories.push(parent))
+
                       const selectedCategoriesWithoutsub = categories?.filter((cat) => course.level?.includes(cat.id) && cat.isActive);
 
                       return (
@@ -1965,19 +1973,23 @@ export default function Shop() {
                                     </Badge>
                                   ))}
 
-                                  {(Array.isArray(selectedSubcategories) && selectedSubcategories.length > 0) || selectedCategoriesWithoutsub && (
-                                    <div className="flex flex-wrap gap-2">
-                                      {selectedSubcategories.length > 0 ? selectedSubcategories.map(sub => (
+                                  {
+                                    (selectedSubcategories && selectedSubcategories.length > 0) ? selectedSubcategories.map(sub => (
+                                      <div className="flex flex-wrap gap-2">
                                         <Badge key={sub.id} variant="outline" className="text-sm font-medium">
                                           {sub.name}
                                         </Badge>
-                                      )) : selectedCategoriesWithoutsub.map(sub => (
+                                      </div>
+                                    )) : selectedCategoriesWithoutsub?.map(sub => (
+                                      <div className="flex flex-wrap gap-2">
                                         <Badge key={sub.id} variant="outline" className="text-sm font-medium">
                                           {sub.name}
                                         </Badge>
-                                      ))}
-                                    </div>
-                                  )}
+                                      </div>
+                                    ))
+                                  }
+
+
                                   {course.year && (
                                     <Badge variant="outline" className="text-sm font-medium">
                                       {course.year}
@@ -2120,7 +2132,16 @@ export default function Shop() {
                     const selectedSubcategories = subcategories?.filter(sub =>
                       courseSubcategoryIds.includes(sub.id) && sub.isActive
                     ) ?? []
-                    console.log('sdsdsd', course.title, selectedSubcategories)
+
+                    const parentCategorires = categories?.filter(cat =>
+                      course.level?.includes(cat.id) &&
+                      cat.isActive &&
+                      !selectedSubcategories.some(selectedSub => selectedSub.categoryId === cat.id)
+                    ) ?? [];
+
+
+                    parentCategorires?.map(parent => selectedSubcategories.push(parent))
+
                     const selectedCategoriesWithoutsub = categories?.filter((cat) => course.level?.includes(cat.id) && cat.isActive);
 
                     if (selectedCategoriesWithoutsub && selectedCategoriesWithoutsub.length > 0) return (

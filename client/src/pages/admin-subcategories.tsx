@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQuery, useMutation, useQueries } from "@tanstack/react-query";
 import { Link, useParams, useLocation, useSearchParams } from "wouter";
 import AdminLayout from "@/components/AdminLayout";
@@ -242,28 +242,63 @@ export default function AdminSubcategories() {
 
   // Фильтрация: курсы, у которых level содержит categoryId или parentId, И подкатегорий нет (пустой массив)
   const coursesWithoutSubcategory = useMemo(() => {
+    if (!courses || courses.length === 0) {
+      console.log('[coursesWithoutSubcategory] Нет курсов для обработки');
+      return [];
+    }
+
     return courses
       .map((course, idx) => {
         const query = subcategoriesQueries[idx];
         const subcatIds = query.data ?? [];
-
-        // Условие 1: level содержит categoryId или parentId
         const level = course.level ?? [];
-        const matchesLevel = Array.isArray(level) && (
-          level.includes(categoryId) ||
-          (parentId ? level.includes(parentId) : false)
-        );
 
-        if (!matchesLevel) return null;
+        const isLevelArray = Array.isArray(level);
+        const hasCategoryId = isLevelArray && level.includes(categoryId);
+        const hasParentId = parentId ? isLevelArray && level.includes(parentId) : false;
+        const matchesLevel = hasCategoryId || hasParentId;
 
-        // Условие 2: данные загружены и подкатегорий нет
-        if (query.isLoading || query.isError) return null; // ждём или ошибка — не показываем
-        if (subcatIds.length > 0) return null; // есть подкатегории — не подходит
+        console.log(`[coursesWithoutSubcategory] Курс: "${course.title}" (ID: ${course.id})`);
+        console.log(`  → level:`, level);
+        console.log(`  → matchesLevel: ${matchesLevel} (categoryId: ${hasCategoryId}, parentId: ${hasParentId})`);
+        console.log(`  → subcatIds:`, subcatIds);
+        console.log(`  → query status: loading=${query.isLoading}, error=${query.isError}, success=${query.isSuccess}`);
 
+        // Причина исключения
+        if (!matchesLevel) {
+          console.log(`  ❌ Исключён: не соответствует level (categoryId=${categoryId}, parentId=${parentId})`);
+          return null;
+        }
+
+        if (query.isLoading) {
+          console.log(`  ⏳ Исключён временно: подкатегории ещё загружаются`);
+          return null;
+        }
+
+        if (query.isError) {
+          console.log(`  ❌ Исключён: ошибка загрузки подкатегорий`);
+          return null;
+        }
+
+        if (!course.level?.includes(categoryId)) {
+          console.log(`  ❌ Исключён: не из этой категории:`, subcatIds);
+          return null;
+        }
+
+        if (subcatIds.length > 0 && subcategories?.some(sub => subcatIds.includes(sub.id))) {
+          console.log(`  ❌ Исключён: есть подкатегории (${subcatIds.length}):`, subcatIds);
+          return null;
+        }
+
+        console.log(`  ✅ Включён: нет подкатегорий и соответствует level`);
         return course;
       })
       .filter(Boolean) as Course[];
   }, [courses, subcategoriesQueries, categoryId, parentId]);
+
+  useEffect(() => {
+    console.log('[coursesWithoutSubcategory] Финальный список:', coursesWithoutSubcategory.map(c => ({ title: c.title, id: c.id })));
+  }, [coursesWithoutSubcategory]);
 
   return (
     <AdminLayout breadcrumbs={breadcrumbs}>

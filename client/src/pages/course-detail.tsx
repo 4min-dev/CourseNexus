@@ -442,10 +442,12 @@ export default function CourseDetail() {
     // Шаг 2: Собираем уникальные categoryId из них
     const targetCategoryIds = [...new Set(matchedSubcategories.map(sub => sub.categoryId))];
 
-    // Шаг 3: Находим родительские категории
-    const parentCategories = categories.filter((cat) =>
-      targetCategoryIds.includes(cat.id) && cat.isActive
-    );
+
+
+    const parentCategories = categories?.filter(cat =>
+      course?.level?.includes(cat.id) &&
+      cat.isActive
+    ) ?? [];
 
     setPlatforms(parentCategories)
   }, [subcategories, categories, courseSubcategoryIds]);

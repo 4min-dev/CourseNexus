@@ -129,6 +129,7 @@ import { db } from "./db";
 import { eq, and, desc, like, or, sql, getTableColumns, isNotNull, isNull, inArray, not, gte, lt, lte } from "drizzle-orm";
 import { randomUUID } from "crypto";
 import { sendNotificationToTelegram } from "./telegram";
+import { deleteFromCDNNow } from "./cdnnowStorage";
 
 export interface IStorage {
   getUser(id: string): Promise<User | undefined>;
@@ -1387,17 +1388,20 @@ export class DatabaseStorage implements IStorage {
   }
 
   async deleteCourse(id: string): Promise<void> {
+    console.log(`[DELETE COURSE] Начато удаление курса ID: ${id}`);
 
     const course = await this.getCourse(id);
-    const { ObjectStorageService } = await import('./objectStorage');
-    const objectStorage = new ObjectStorageService();
-
-
-    if (course?.thumbnailImage) {
-      await objectStorage.deleteObjectEntity(course.thumbnailImage);
+    if (!course) {
+      console.log(`[DELETE COURSE] Курс ${id} не найден`);
+      return;
     }
 
+    // Удаляем thumbnail
+    if (course.thumbnailImage && course.thumbnailImage !== "") {
+      await deleteFromCDNNow(course.thumbnailImage);
+    }
 
+    // Удаляем файлы курса
     const courseFilesData = await db
       .select()
       .from(courseFiles)
@@ -1405,23 +1409,24 @@ export class DatabaseStorage implements IStorage {
 
     for (const file of courseFilesData) {
       if (file.fileUrl) {
-        await objectStorage.deleteObjectEntity(file.fileUrl);
+        await deleteFromCDNNow(file.fileUrl);
       }
     }
 
-
+    // Удаляем видео уроков
     const sections = await this.getCourseSections(id);
     for (const section of sections) {
       const lessonsData = await this.getLessonsBySection(section.id);
       for (const lesson of lessonsData) {
         if (lesson.videoUrl) {
-          await objectStorage.deleteObjectEntity(lesson.videoUrl);
+          await deleteFromCDNNow(lesson.videoUrl);
         }
       }
     }
 
-
+    // Удаляем сам курс из БД
     await db.delete(courses).where(eq(courses.id, id));
+    console.log(`[DELETE COURSE] Курс ${id} полностью удалён`);
   }
 
   async getCourseSubcategories(courseId: string): Promise<string[]> {
