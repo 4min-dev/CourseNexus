@@ -10,6 +10,7 @@ import type { Category as DbCategory, Subcategory } from "@shared/schema";
 interface MobileFiltersProps {
   selectedCategories: {
     platform?: string;
+    levels?: string[];
     level?: string;
     year?: number;
     minPrice?: number;
@@ -19,6 +20,7 @@ interface MobileFiltersProps {
   };
   onCategoryChange: (categories: {
     platform?: string;
+    levels?: string[];
     level?: string;
     year?: number;
     minPrice?: number;
@@ -62,17 +64,19 @@ export function MobileFilters({ selectedCategories, onCategoryChange }: MobileFi
 
   // Главные категории (parent_id = null)
   const mainCategories = allCategories.filter(cat => !cat.parentId && cat.name !== "Уровень");
-  
+
   // Дочерние категории (платформы) - используем categories с parent_id
   const childCategories = selectedMainCategory
     ? allCategories.filter(cat => cat.parentId === selectedMainCategory)
     : [];
 
+  const platformToSearch = allCategories && selectedCategories.platform ? allCategories.find(cat => cat.id === selectedCategories.platform)?.id : ''
+
   const { data: years = [] } = useQuery<number[]>({
-    queryKey: ["/api/courses-metadata/years", selectedCategories.platform, selectedCategories.level, selectedCategories.author, selectedCategories.minRating],
+    queryKey: ["/api/courses-metadata/years", platformToSearch, selectedCategories.level, selectedCategories.author, selectedCategories.minRating],
     queryFn: async () => {
       const params = new URLSearchParams();
-      if (selectedCategories.platform) params.append("platform", selectedCategories.platform);
+      if (selectedCategories.platform) params.append("platform", platformToSearch || '');
       if (selectedCategories.level) params.append("level", selectedCategories.level);
       if (selectedCategories.author) params.append("author", selectedCategories.author);
       if (selectedCategories.minRating) params.append("minRating", selectedCategories.minRating.toString());
@@ -146,13 +150,13 @@ export function MobileFilters({ selectedCategories, onCategoryChange }: MobileFi
       // Выбор новой главной категории
       trackFilterClick('category', categoryId, categoryName);
       setSelectedMainCategory(categoryId);
-      
+
       // Автоматически выбрать все платформы этой категории
       const platformsInCategory = allCategories.filter(cat => cat.parentId === categoryId);
       const allPlatformSlugs = platformsInCategory.map(p => p.slug).join(',');
-      
+
       onCategoryChange({
-        platform: allPlatformSlugs || undefined,
+        platform: categoryId,
         minRating: selectedCategories.minRating,
         minPrice: selectedCategories.minPrice,
         maxPrice: selectedCategories.maxPrice,
@@ -161,14 +165,14 @@ export function MobileFilters({ selectedCategories, onCategoryChange }: MobileFi
   };
 
   const handleSubcategoryClick = (subcategorySlug: string, subcategoryName: string, subcategoryId?: string) => {
-    if (selectedCategories.platform === subcategorySlug) {
+    if (selectedCategories.platform === subcategoryId) {
       // Сброс подкатегории (платформы) - вернуться к показу всех платформ категории
       const platformsInCategory = allCategories.filter(cat => cat.parentId === selectedMainCategory);
       const allPlatformSlugs = platformsInCategory.map(p => p.slug).join(',');
-      
+
       onCategoryChange({
         ...selectedCategories,
-        platform: allPlatformSlugs || undefined,
+        platform: undefined,
         level: undefined,
         year: undefined,
         author: undefined,
@@ -177,7 +181,7 @@ export function MobileFilters({ selectedCategories, onCategoryChange }: MobileFi
       // Выбор конкретной подкатегории (платформы)
       trackFilterClick('subcategory', subcategoryId || null, subcategoryName);
       const newCategories: any = {
-        platform: subcategorySlug,
+        platform: subcategoryId,
         minRating: selectedCategories.minRating,
       };
       if (selectedCategories.minPrice !== undefined) {
@@ -190,19 +194,21 @@ export function MobileFilters({ selectedCategories, onCategoryChange }: MobileFi
     }
   };
 
-  const handleLevelClick = (level: string, subcategoryId?: string) => {
-    if (selectedCategories.level === level) {
-      onCategoryChange({
-        ...selectedCategories,
-        level: undefined,
-      });
-    } else {
-      trackFilterClick('subcategory', subcategoryId || null, level);
-      onCategoryChange({
-        ...selectedCategories,
-        level: level,
-      });
-    }
+  const handleLevelClick = (levelName: string, subcategoryId?: string) => {
+    if (!subcategoryId) return;
+
+    const currentLevels = selectedCategories.levels || [];
+
+    const newLevels = currentLevels.includes(subcategoryId)
+      ? currentLevels.filter(id => id !== subcategoryId) // убираем
+      : [subcategoryId];              // добавляем
+
+    onCategoryChange({
+      ...selectedCategories,
+      levels: newLevels.length > 0 ? newLevels : undefined,
+    });
+
+    trackFilterClick('subcategory', subcategoryId, levelName);
   };
 
   const handleYearClick = (year: number) => {
@@ -248,14 +254,16 @@ export function MobileFilters({ selectedCategories, onCategoryChange }: MobileFi
     }
   };
 
-  const hasActiveFilters = selectedMainCategory || selectedCategories.platform || 
-    selectedCategories.level || selectedCategories.year || selectedCategories.minRating || 
+  const hasActiveFilters = selectedMainCategory || selectedCategories.platform ||
+    selectedCategories.level || selectedCategories.year || selectedCategories.minRating ||
     selectedCategories.author;
 
   const handleResetFilters = () => {
     setSelectedMainCategory(null);
     onCategoryChange({});
   };
+
+  const childSubcategories = subcategories.filter(sub => sub.categoryId === selectedCategories.platform)
 
   return (
     <div className="md:hidden space-y-5 mb-6" data-testid="mobile-filters">
@@ -265,8 +273,8 @@ export function MobileFilters({ selectedCategories, onCategoryChange }: MobileFi
           <BookOpen className="h-4 w-4 text-primary" />
           <h3 className="text-base font-semibold tracking-tight">Категория</h3>
         </div>
-        <ScrollArea className="w-full whitespace-nowrap">
-          <div className="flex gap-2.5 pb-2">
+        <ScrollArea className="w-full whitespace-nowrap ">
+          <div className="flex gap-2.5 pb-2 !overflow-auto">
             {mainCategories.map((category, index) => (
               <Badge
                 key={category.id}
@@ -287,7 +295,7 @@ export function MobileFilters({ selectedCategories, onCategoryChange }: MobileFi
               </Badge>
             ))}
           </div>
-          <ScrollBar orientation="horizontal" />
+
         </ScrollArea>
       </div>
 
@@ -303,13 +311,13 @@ export function MobileFilters({ selectedCategories, onCategoryChange }: MobileFi
               {childCategories.map((platform, index) => (
                 <Badge
                   key={platform.id}
-                  variant={selectedCategories.platform === platform.slug ? "default" : "outline"}
+                  variant={selectedCategories.platform === platform.id ? "default" : "outline"}
                   className={`
                     cursor-pointer flex-shrink-0 px-5 py-2.5 text-sm font-medium
                     transition-all duration-300 ease-out
                     hover:scale-105 hover:shadow-md
                     active:scale-95
-                    ${selectedCategories.platform === platform.slug ? 'shadow-lg shadow-primary/25' : ''}
+                    ${selectedCategories.platform === platform.id ? 'shadow-lg shadow-primary/25' : ''}
                     animate-in fade-in-50 slide-in-from-left-5
                   `}
                   style={{ animationDelay: `${index * 50}ms`, animationFillMode: 'backwards' }}
@@ -320,50 +328,60 @@ export function MobileFilters({ selectedCategories, onCategoryChange }: MobileFi
                 </Badge>
               ))}
             </div>
-            <ScrollBar orientation="horizontal" />
+
           </ScrollArea>
         </div>
       )}
 
       {/* Уровни - показываются после выбора подкатегории (платформы) */}
-      {selectedCategories.platform && courseLevels.length > 0 && (
+      {selectedCategories.platform && (
         <div className="space-y-3 animate-in fade-in-50 slide-in-from-top-3 duration-500">
           <div className="flex items-center gap-2 px-1">
             <TrendingUp className="h-4 w-4 text-primary" />
-            <h3 className="text-base font-semibold tracking-tight">Уровень</h3>
+            <h3 className="text-base font-semibold tracking-tight">Подкатегории</h3>
           </div>
           <ScrollArea className="w-full whitespace-nowrap">
             <div className="flex gap-2.5 pb-2">
-              {courseLevels.map((level, index) => {
-                const subcategory = subcategories.find(s => s.name === level);
+              {childSubcategories.map((childSubcategory, index) => {
+                // Находим подкатегорию по имени уровня
+                const subcategory = subcategories.find(s =>
+                  s.id === childSubcategory.id &&
+                  s.isActive
+                );
+
+                // Проверяем, выбран ли этот уровень (по ID)
+                const isSelected = subcategory?.id
+                  ? selectedCategories.levels?.includes(subcategory.id)
+                  : false;
+
                 return (
                   <Badge
-                    key={level}
-                    variant={selectedCategories.level === level ? "default" : "outline"}
+                    key={childSubcategory.id}
+                    variant={isSelected ? "default" : "outline"}
                     className={`
-                      cursor-pointer flex-shrink-0 px-5 py-2.5 text-sm font-medium
-                      transition-all duration-300 ease-out
-                      hover:scale-105 hover:shadow-md
-                      active:scale-95
-                      ${selectedCategories.level === level ? 'shadow-lg shadow-primary/25' : ''}
-                      animate-in fade-in-50 slide-in-from-left-5
-                    `}
+        cursor-pointer flex-shrink-0 px-5 py-2.5 text-sm font-medium
+        transition-all duration-300 ease-out
+        hover:scale-105 hover:shadow-md
+        active:scale-95
+        ${isSelected ? 'shadow-lg shadow-primary/25' : ''}
+        animate-in fade-in-50 slide-in-from-left-5
+      `}
                     style={{ animationDelay: `${index * 50}ms`, animationFillMode: 'backwards' }}
-                    onClick={() => handleLevelClick(level, subcategory?.id)}
-                    data-testid={`badge-level-${level}`}
+                    onClick={() => handleLevelClick(childSubcategory.name, subcategory?.id)}
+                    data-testid={`badge-level-${childSubcategory.id}`}
                   >
-                    {level}
+                    {childSubcategory.name}
                   </Badge>
                 );
               })}
             </div>
-            <ScrollBar orientation="horizontal" />
+
           </ScrollArea>
         </div>
       )}
 
       {/* Годы - показываются после выбора платформы */}
-      {selectedCategories.platform && years.length > 0 && (
+      {(selectedCategories.platform && years.length > 0) && (
         <div className="space-y-3 animate-in fade-in-50 slide-in-from-top-3 duration-500">
           <div className="flex items-center gap-2 px-1">
             <Calendar className="h-4 w-4 text-primary" />
@@ -391,13 +409,13 @@ export function MobileFilters({ selectedCategories, onCategoryChange }: MobileFi
                 </Badge>
               ))}
             </div>
-            <ScrollBar orientation="horizontal" />
+
           </ScrollArea>
         </div>
       )}
 
       {/* Авторы - показываются после выбора платформы */}
-      {selectedCategories.platform && authors.length > 0 && (() => {
+      {selectedMainCategory && selectedCategories.platform && authors.length > 0 && (() => {
         // Фильтруем авторов на основе поискового запроса
         const filteredAuthors = authors.filter(author =>
           author.toLowerCase().includes(authorSearchQuery.toLowerCase())
@@ -409,7 +427,7 @@ export function MobileFilters({ selectedCategories, onCategoryChange }: MobileFi
               <User className="h-4 w-4 text-primary" />
               <h3 className="text-base font-semibold tracking-tight">Автор</h3>
             </div>
-            
+
             {/* Поле поиска автора */}
             <div className="relative">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
@@ -456,7 +474,7 @@ export function MobileFilters({ selectedCategories, onCategoryChange }: MobileFi
                     </Badge>
                   ))}
                 </div>
-                <ScrollBar orientation="horizontal" />
+
               </ScrollArea>
             ) : (
               <p className="text-sm text-muted-foreground text-center py-4 animate-in fade-in-50">
@@ -497,7 +515,7 @@ export function MobileFilters({ selectedCategories, onCategoryChange }: MobileFi
                 </Badge>
               ))}
             </div>
-            <ScrollBar orientation="horizontal" />
+
           </ScrollArea>
         </div>
       )}

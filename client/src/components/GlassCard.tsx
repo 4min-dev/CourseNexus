@@ -36,10 +36,10 @@ export function GlassCard({
   };
 
   return (
-    <div className={cn("relative rounded-xl overflow-visible h-auto transform-gpu scale-100", className)}>
+    <div className={cn("relative rounded-xl overflow-visible !h-full transform-gpu scale-100", className)}>
       {/* CSS hover-driven glow - GPU accelerated */}
       <div className="absolute -inset-2 pointer-events-none" style={{ zIndex: 0 }}>
-        <div 
+        <div
           className={cn(
             "absolute inset-0 bg-gradient-to-br rounded-xl blur-xl transition-opacity duration-300",
             isActive ? "opacity-100" : "opacity-0",
@@ -50,12 +50,13 @@ export function GlassCard({
       </div>
 
       {/* Glass layer with backdrop-blur (GPU optimized via CSS) */}
-      <div 
+      <div
         className={cn(
-          "relative backdrop-blur-md border rounded-xl h-auto",
+          "relative backdrop-blur-md border rounded-xl h-full",
           isActive ? "border-border/60" : "border-border/40",
           variantStyles[variant],
-          hover && !isActive && "group-hover:border-border/60"
+
+          hover && !isActive && "group-hover:border-border/60 group-hover:h-auto"
         )}
         style={{
           backdropFilter: 'blur(8px) saturate(140%)',
@@ -64,7 +65,7 @@ export function GlassCard({
       >
         {/* Subtle shine effect on top */}
         <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-white/20 to-transparent" />
-        
+
         {/* Content */}
         <div className="relative flex flex-col h-full">
           {children}

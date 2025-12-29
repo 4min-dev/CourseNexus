@@ -68,6 +68,18 @@ function transliterate(text: string): string {
   return text.split('').map(char => map[char] || char).join('');
 }
 
+async function resolvePlatformName(platformParam: string | undefined): Promise<string | undefined> {
+  if (!platformParam) return undefined;
+
+  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+  if (uuidRegex.test(platformParam)) {
+    const category = await storage.getCategory(platformParam);
+    return category?.name ?? undefined;
+  }
+
+  return platformParam;
+}
+
 async function buildCourseUploadPathSegments(
   course: Course,
   options: {
@@ -476,14 +488,40 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.get('/api/courses', async (req: any, res) => {
     try {
-      const { platform, level, year, minPrice, maxPrice, minRating, author, search, vipOnly, excludeVipPackages, excludePurchased } = req.query;
-
+      const {
+        platform,
+        level,
+        year,
+        minPrice,
+        maxPrice,
+        minRating,
+        author,
+        search,
+        vipOnly,
+        excludeVipPackages,
+        excludePurchased,
+      } = req.query;
 
       const userId = req.user?.claims?.sub || null;
 
+      // Собираем все ID, по которым нужно фильтровать массив level[]
+      const levelIdsToInclude: string[] = [];
+
+      if (platform && typeof platform === 'string') {
+        levelIdsToInclude.push(platform);
+      }
+
+      if (level && typeof level === 'string') {
+        levelIdsToInclude.push(level);
+      }
+
+      // Поддержка множественных значений: ?platform=1&platform=2 или ?level=3,4
+      // Но для простоты пока предполагаем один ID. Если нужно несколько — скажи.
+
       const courses = await storage.getCourses({
-        platform: platform as string | undefined,
-        level: level as string | undefined,
+        // Передаём массив ID, которые должны быть в course.level[]
+        levelIds: levelIdsToInclude.length > 0 ? levelIdsToInclude : undefined,
+
         year: year ? parseInt(year as string) : undefined,
         minPrice: minPrice ? parseFloat(minPrice as string) : undefined,
         maxPrice: maxPrice ? parseFloat(maxPrice as string) : undefined,
@@ -507,8 +545,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get('/api/courses-metadata/authors', async (req, res) => {
     try {
       const { platform, level, year, minRating, search } = req.query;
-      const cacheKey = `authors:${platform || 'all'}:${level || 'all'}:${year || 'all'}:${minRating || 'all'}:${search || ''}`;
 
+      const platformName = await resolvePlatformName(platform as string);
+
+      const cacheKey = `authors:${platformName || 'all'}:${level || 'all'}:${year || 'all'}:${minRating || 'all'}:${search || ''}`;
 
       if (!search) {
         const cached = getCached<string[]>(cacheKey);
@@ -518,7 +558,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       const authors = await storage.getDistinctAuthors(
-        platform as string | undefined,
+        platformName,
         level as string | undefined,
         year ? parseInt(year as string) : undefined,
         minRating ? parseFloat(minRating as string) : undefined,
@@ -540,8 +580,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get('/api/courses-metadata/years', async (req, res) => {
     try {
       const { platform, level, author, minRating } = req.query;
-      const cacheKey = `years:${platform || 'all'}:${level || 'all'}:${author || 'all'}:${minRating || 'all'}`;
 
+      const platformName = await resolvePlatformName(platform as string);
+
+      const cacheKey = `years:${platformName || 'all'}:${level || 'all'}:${author || 'all'}:${minRating || 'all'}`;
 
       const cached = getCached<number[]>(cacheKey);
       if (cached) {
@@ -549,11 +591,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       const years = await storage.getDistinctYears(
-        platform as string | undefined,
+        platformName,
         level as string | undefined,
         author as string | undefined,
         minRating ? parseFloat(minRating as string) : undefined
       );
+
       setCache(cacheKey, years);
       res.json(years);
     } catch (error) {
@@ -562,21 +605,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-
   app.get('/api/courses-metadata/levels', async (req, res) => {
     try {
       const { platform, year, author, minRating } = req.query;
-      const cacheKey = `levels:${platform || 'all'}:${year || 'all'}:${author || 'all'}:${minRating || 'all'}`;
 
+      const platformName = await resolvePlatformName(platform as string);
+
+      const cacheKey = `levels:${platformName || 'all'}:${year || 'all'}:${author || 'all'}:${minRating || 'all'}`;
 
       const cached = getCached<string[]>(cacheKey);
       if (cached) {
         return res.json(cached);
       }
 
-
       const availableLevels = await storage.getDistinctLevels(
-        platform as string | undefined,
+        platformName,
         year ? parseInt(year as string) : undefined,
         author as string | undefined,
         minRating ? parseFloat(minRating as string) : undefined
@@ -590,12 +633,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-
   app.get('/api/courses-metadata/ratings', async (req, res) => {
     try {
       const { platform, level, year, author } = req.query;
-      const cacheKey = `ratings:${platform || 'all'}:${level || 'all'}:${year || 'all'}:${author || 'all'}`;
 
+      const platformName = await resolvePlatformName(platform as string);
+
+      const cacheKey = `ratings:${platformName || 'all'}:${level || 'all'}:${year || 'all'}:${author || 'all'}`;
 
       const cached = getCached<number[]>(cacheKey);
       if (cached) {
@@ -603,7 +647,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       const availableRatings = await storage.getAvailableRatings(
-        platform as string | undefined,
+        platformName,
         level as string | undefined,
         year ? parseInt(year as string) : undefined,
         author as string | undefined
@@ -621,15 +665,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get('/api/courses-metadata/max-price', async (req, res) => {
     try {
       const { platform } = req.query;
-      const cacheKey = `max-price:${platform || 'all'}`;
 
+      const platformName = await resolvePlatformName(platform as string);
+
+      const cacheKey = `max-price:${platformName || 'all'}`;
 
       const cached = getCached<number>(cacheKey);
       if (cached !== null) {
         return res.json(cached);
       }
 
-      const maxPrice = await storage.getMaxPrice(platform as string | undefined);
+      const maxPrice = await storage.getMaxPrice(platformName);
       setCache(cacheKey, maxPrice);
       res.json(maxPrice);
     } catch (error) {
@@ -638,13 +684,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-
   app.get('/api/categories/:categoryId/top-courses', async (req, res) => {
     try {
       const { categoryId } = req.params;
       const { platform, limit } = req.query;
       const cacheKey = `top-courses:${categoryId}:${platform || 'all'}:${limit || 5}`;
 
+      const platformName = await resolvePlatformName(platform as string)
 
       const cached = getCached<any[]>(cacheKey);
       if (cached !== null) {
@@ -653,7 +699,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const topCourses = await storage.getTopCoursesByCategory(
         categoryId,
-        platform as string | undefined,
+        platformName,
         limit ? parseInt(limit as string) : 5
       );
       setCache(cacheKey, topCourses);

@@ -1,4 +1,4 @@
-import { ChevronRight, ChevronDown, Folder, FolderOpen, Star, Crown, Heart, ShoppingBag, BookOpen, Gift, RefreshCw, Search, X, HelpCircle } from "lucide-react";
+import { ChevronRight, ChevronDown, FolderOpen, Star, Crown, Heart, ShoppingBag, BookOpen, Gift, RefreshCw, Search, X, HelpCircle } from "lucide-react";
 import { useState, useEffect, useRef, useCallback } from "react";
 import { cn } from "@/lib/utils";
 import { Slider } from "@/components/ui/slider";
@@ -40,6 +40,7 @@ interface Category {
 interface SidebarProps {
   selectedCategories: {
     platform?: string;
+    levels?: string[];
     level?: string;
     year?: number;
     minPrice?: number;
@@ -49,6 +50,7 @@ interface SidebarProps {
   };
   onCategoryChange: (categories: {
     platform?: string;
+    levels?: string[];
     level?: string;
     year?: number;
     minPrice?: number;
@@ -81,6 +83,7 @@ export function Sidebar({ selectedCategories, onCategoryChange, isOpen, showPric
     return () => clearTimeout(timer);
   }, [authorSearch]);
 
+
   // Wrapper to ensure price filters are excluded when showPriceFilter is false
   const handleCategoryChange = (categories: typeof selectedCategories) => {
     if (!showPriceFilter) {
@@ -89,18 +92,6 @@ export function Sidebar({ selectedCategories, onCategoryChange, isOpen, showPric
     } else {
       onCategoryChange(categories);
     }
-  };
-  const [displayedCards, setDisplayedCards] = useState([])
-  const [selectedSubcategory, setSelectedSubcategory] = useState<string | null>(null);
-
-  // Обработчик клика по подкатегории
-  const handleSubcategoryClick = (subcategoryId?: string) => {
-    if (!subcategoryId) return;
-    setSelectedSubcategory(subcategoryId);
-
-    // Фильтруем карточки всех категорий по выбранной подкатегории
-    const filteredCards = categories.filter(card => card.subcategoryId === subcategoryId);
-    setDisplayedCards(filteredCards);
   };
 
 
@@ -207,6 +198,11 @@ export function Sidebar({ selectedCategories, onCategoryChange, isOpen, showPric
     },
   });
 
+  const [localPriceRange, setLocalPriceRange] = useState<[number, number]>([
+    selectedCategories.minPrice ?? 0,
+    selectedCategories.maxPrice ?? maxPrice,
+  ]);
+
   const toggleNode = (nodeId: string) => {
     const newExpanded = new Set(expandedNodes);
     if (newExpanded.has(nodeId)) {
@@ -221,11 +217,7 @@ export function Sidebar({ selectedCategories, onCategoryChange, isOpen, showPric
     // When changing platform, reset level, year, and author filters
     // to avoid showing invalid filter combinations
     if (selectedCategories.platform === platform) {
-      // Deselecting current platform
-      handleCategoryChange({
-        ...selectedCategories,
-        platform: undefined,
-      });
+
     } else {
       // Track filter click for analytics (only when selecting, not deselecting)
       trackFilterClick('category', categoryId || null, platformName);
@@ -236,44 +228,6 @@ export function Sidebar({ selectedCategories, onCategoryChange, isOpen, showPric
         minRating: selectedCategories.minRating,
       };
       // Keep price filters if they exist (for shop page)
-      if (selectedCategories.minPrice !== undefined) {
-        newCategories.minPrice = selectedCategories.minPrice;
-      }
-      if (selectedCategories.maxPrice !== undefined) {
-        newCategories.maxPrice = selectedCategories.maxPrice;
-      }
-      handleCategoryChange(newCategories);
-    }
-  };
-
-  const handleMainCategoryClick = (mainPlatform: { id: string; name: string; children: { id: string }[]; categoryId?: string }) => {
-    // When clicking main category, show all courses from all child categories
-    const childSlugs = mainPlatform.children.map(c => c.id).join(',');
-    const combinedPlatform = childSlugs || mainPlatform.id;
-
-    if (selectedCategories.platform === combinedPlatform) {
-      // Deselecting main category
-      handleCategoryChange({
-        ...selectedCategories,
-        platform: undefined,
-      });
-    } else {
-      // Expand category when selecting (only if not expanded already)
-      if (!expandedNodes.has(`platform-${mainPlatform.id}`)) {
-        const newExpanded = new Set(expandedNodes);
-        newExpanded.add(`platform-${mainPlatform.id}`);
-        setExpandedNodes(newExpanded);
-      }
-
-      // Track filter click for analytics (only when selecting, not deselecting)
-      trackFilterClick('category', mainPlatform.categoryId || null, mainPlatform.name);
-
-      // Selecting main category - reset dependent filters
-      const newCategories: any = {
-        platform: combinedPlatform,
-        minRating: selectedCategories.minRating,
-      };
-      // Keep price filters if they exist
       if (selectedCategories.minPrice !== undefined) {
         newCategories.minPrice = selectedCategories.minPrice;
       }
@@ -299,11 +253,7 @@ export function Sidebar({ selectedCategories, onCategoryChange, isOpen, showPric
   };
 
   const handlePriceChange = (values: number[]) => {
-    handleCategoryChange({
-      ...selectedCategories,
-      minPrice: values[0],
-      maxPrice: values[1],
-    });
+    setLocalPriceRange([values[0], values[1]]); // только обновляем локальное состояние
   };
 
   const handleRatingChange = (value: string) => {
@@ -424,6 +374,25 @@ export function Sidebar({ selectedCategories, onCategoryChange, isOpen, showPric
     });
   }, [selectedCategories.platform, platformsHierarchy]);
 
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      handleCategoryChange({
+        ...selectedCategories,
+        minPrice: localPriceRange[0] === 0 ? undefined : localPriceRange[0],
+        maxPrice: localPriceRange[1] === maxPrice ? undefined : localPriceRange[1],
+      });
+    }, 400);
+
+    return () => clearTimeout(timer);
+  }, [localPriceRange, maxPrice]); // зависим от localPriceRange и maxPrice
+
+  useEffect(() => {
+    setLocalPriceRange([
+      selectedCategories.minPrice ?? 0,
+      selectedCategories.maxPrice ?? maxPrice,
+    ]);
+  }, [selectedCategories.minPrice, selectedCategories.maxPrice, maxPrice]);
+
   return (
     <aside
       className={cn(
@@ -509,6 +478,8 @@ export function Sidebar({ selectedCategories, onCategoryChange, isOpen, showPric
                 {platformsHierarchy.map((mainPlatform) => {
                   const childSlugs = mainPlatform.children.map(c => c.id).join(',');
                   const isMainSelected = selectedCategories.platform === childSlugs;
+                  console.log("mainPlatform", mainPlatform)
+                  console.log("subcategories", subcategories)
 
                   return (
                     <div key={mainPlatform.id} className="space-y-1">
@@ -516,8 +487,7 @@ export function Sidebar({ selectedCategories, onCategoryChange, isOpen, showPric
                       <button
                         onClick={() => toggleNode(`platform-${mainPlatform.id}`)}
                         className={cn(
-                          "flex items-center gap-2 px-2 py-1.5 rounded-md w-full text-left text-sm hover-elevate transition-all",
-                          isMainSelected && "bg-sidebar-accent text-sidebar-accent-foreground toggle-elevate toggle-elevated"
+                          "flex items-center gap-2 px-2 py-1.5 rounded-md w-full text-left text-sm hover-elevate transition-all"
                         )}
                         data-testid={`button-main-platform-${mainPlatform.id}`}
                       >
@@ -526,28 +496,101 @@ export function Sidebar({ selectedCategories, onCategoryChange, isOpen, showPric
                         ) : (
                           <ChevronRight className="h-3 w-3" />
                         )}
-                        <Folder className="h-3 w-3" />
+
                         <span className="font-medium">{mainPlatform.name}</span>
                       </button>
 
                       {/* Child categories */}
                       {expandedNodes.has(`platform-${mainPlatform.id}`) && mainPlatform.children.length > 0 && (
                         <div className="ml-6 space-y-1">
-                          {mainPlatform.children.map((child) => (
-                            <button
-                              key={child.id}
-                              onClick={() => handlePlatformClick(child.id, child.name, child.categoryId)}
-                              className={cn(
-                                "flex items-center gap-2 px-2 py-1.5 rounded-md w-full text-left text-sm hover-elevate transition-all",
-                                selectedCategories.platform === child.id &&
-                                "bg-sidebar-accent text-sidebar-accent-foreground toggle-elevate toggle-elevated"
-                              )}
-                              data-testid={`button-platform-${child.id}`}
-                            >
-                              <Folder className="h-3 w-3" />
-                              <span>{child.name}</span>
-                            </button>
-                          ))}
+                          {mainPlatform.children.map((child) => {
+                            // Находим все подкатегории, принадлежащие текущему child (платформе)
+                            const childSubcategories = subcategories?.filter(
+                              sub => sub.categoryId === child.categoryId && sub.isActive
+                            ) || [];
+
+                            // Состояние раскрытия подкатегорий для этого child
+                            const isChildExpanded = expandedNodes.has(`subcategories-${child.id}`);
+
+                            return (
+                              <div key={child.id} className="space-y-1">
+                                {/* Сама платформа (child) — кликабельная, с возможностью раскрытия подкатегорий */}
+                                <button
+                                  onClick={() => {
+                                    // Всегда применяем фильтр по платформе (child)
+                                    if (selectedCategories.platform !== child.id) {
+
+                                      handlePlatformClick(child.categoryId, child.name, child.categoryId);
+                                    }
+                                    // Если есть подкатегории — дополнительно раскрываем/сворачиваем их
+                                    if (childSubcategories.length > 0) {
+                                      toggleNode(`subcategories-${child.id}`);
+                                    }
+                                  }}
+                                  className={cn(
+                                    "flex items-center justify-between gap-2 px-2 py-1.5 rounded-md w-full text-left text-sm hover-elevate transition-all",
+                                    selectedCategories.platform === child.categoryId &&
+                                    "bg-sidebar-accent text-sidebar-accent-foreground toggle-elevate toggle-elevated"
+                                  )}
+                                  data-testid={`button-platform-${child.id}`}
+                                >
+                                  <div className="flex items-center gap-2">
+                                    {childSubcategories.length > 0 ? (
+                                      isChildExpanded ? (
+                                        <ChevronDown className="h-3 w-3 flex-shrink-0" />
+                                      ) : (
+                                        <ChevronRight className="h-3 w-3 flex-shrink-0" />
+                                      )
+                                    ) : (
+                                      <div className="w-4" />
+                                    )}
+                                    <span>{child.name}</span>
+                                  </div>
+                                  {childSubcategories.length > 0 && (
+                                    <span className="text-xs text-muted-foreground">
+                                      {childSubcategories.length}
+                                    </span>
+                                  )}
+                                </button>
+
+                                {/* Подкатегории — третий уровень */}
+                                {isChildExpanded && childSubcategories.length > 0 && (
+                                  <div className="ml-8 space-y-1">
+                                    {childSubcategories.map((subcat) => (
+                                      <button
+                                        key={subcat.id}
+                                        onClick={() => {
+                                          const newLevels = selectedCategories.levels?.includes(subcat.id)
+                                            ? selectedCategories.levels.filter(id => id !== subcat.id)
+                                            : [subcat.id];
+
+                                          handleCategoryChange({
+                                            ...selectedCategories,
+                                            levels: newLevels.length > 0 ? newLevels : undefined,
+                                          });
+
+                                          trackFilterClick('subcategory', subcat.id, subcat.name);
+                                        }}
+                                        className={cn(
+                                          "flex items-center gap-2 px-2 py-1.5 rounded-md w-full text-left text-xs hover:bg-accent/50 transition-all pl-6",
+                                          selectedCategories.levels?.includes(subcat.id) &&
+                                          "bg-sidebar-accent text-sidebar-accent-foreground font-medium"
+                                        )}
+                                        data-testid={`button-subcategory-${subcat.id}`}
+                                      >
+                                        <span className={cn(
+                                          "text-muted-foreground",
+                                          selectedCategories.levels?.includes(subcat.id) && "text-sidebar-accent-foreground font-medium"
+                                        )}>
+                                          {subcat.name}
+                                        </span>
+                                      </button>
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
                         </div>
                       )}
                     </div>
@@ -558,19 +601,6 @@ export function Sidebar({ selectedCategories, onCategoryChange, isOpen, showPric
           </div>
 
           <div className="ml-4 space-y-1">
-            <button
-              onClick={() => toggleNode("levels")}
-              className="flex items-center gap-2 px-2 py-1.5 rounded-md hover-elevate w-full text-left text-sm"
-              data-testid="button-toggle-levels"
-            >
-              {expandedNodes.has("levels") ? (
-                <ChevronDown className="h-4 w-4" />
-              ) : (
-                <ChevronRight className="h-4 w-4" />
-              )}
-              <span>Уровень</span>
-            </button>
-
             {expandedNodes.has("levels") && (
               <div className="ml-6 space-y-1">
 
@@ -599,7 +629,7 @@ export function Sidebar({ selectedCategories, onCategoryChange, isOpen, showPric
                         )}
                         data-testid={`button-level-${level.id}`}
                       >
-                        <Folder className="h-3 w-3" />
+
                         <div className="flex flex-col">
                           <span>{level.categoryName}</span>
                           {level.categoryName && (
@@ -625,7 +655,7 @@ export function Sidebar({ selectedCategories, onCategoryChange, isOpen, showPric
                     )}
                     data-testid={`button-level-${level.id}`}
                   >
-                    <Folder className="h-3 w-3" />
+                    
                     <span>{level.name}</span>
                   </button>
                 ))} */}
@@ -660,7 +690,7 @@ export function Sidebar({ selectedCategories, onCategoryChange, isOpen, showPric
                     )}
                     data-testid={`button-year-${year}`}
                   >
-                    <Folder className="h-3 w-3" />
+
                     <span>{year}</span>
                   </button>
                 ))}
@@ -677,7 +707,7 @@ export function Sidebar({ selectedCategories, onCategoryChange, isOpen, showPric
                     min={0}
                     max={maxPrice}
                     step={1000}
-                    value={priceRange}
+                    value={localPriceRange}
                     onValueChange={handlePriceChange}
                     className="w-full"
                     data-testid="slider-price-range"

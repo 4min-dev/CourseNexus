@@ -1,19 +1,15 @@
-import { useState, useEffect, useMemo, useRef, useCallback } from "react";
-import { createPortal } from "react-dom";
+import { useState, useEffect, useMemo, useCallback } from "react";
 import { useQuery, useMutation, useQueries } from "@tanstack/react-query";
 import { useAuth } from "@/hooks/useAuth";
-import { useIsMobile } from "@/hooks/useIsMobile";
 import { useLocation } from "wouter";
 import { Card, CardContent, CardFooter, CardHeader } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { AlertDialog, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { ShoppingCart, BookOpen, Crown, Shield, Sparkles, Check, Gem, Heart, Play, RefreshCw, ArrowRight, X, TrendingUp, Target, Crosshair, ThumbsUp, Users, Gift, Percent, ExternalLink, CheckCircle2, XCircle, Wifi, Link2, Lock, Bell, AlertCircle, Edit2 } from "lucide-react";
+import { BookOpen, Crown, Shield, Sparkles, Check, Gem, RefreshCw, ArrowRight, TrendingUp, Target, Crosshair, ThumbsUp, Users, Gift, Percent, ExternalLink, CheckCircle2, XCircle, Wifi, Link2, Lock, Bell, AlertCircle } from "lucide-react";
 import { SiTelegram } from "react-icons/si";
 import { Link } from "wouter";
 import { useToast } from "@/hooks/use-toast";
@@ -23,13 +19,7 @@ import { InfoBanner } from "@/components/info-banner";
 import { Sidebar } from "@/components/sidebar";
 import { MobileFilters } from "@/components/MobileFilters";
 import { Footer } from "@/components/footer";
-import { formatPrice } from "@/lib/formatPrice";
-import { StarRating } from "@/components/star-rating";
-import { ViewingCounter } from "@/components/viewing-counter";
-import PreviewVideoPlayer from "@/components/PreviewVideoPlayer";
-import { Diamond } from "@/components/Diamond";
 import { Pagination } from "@/components/pagination";
-import { GlassCard } from "@/components/GlassCard";
 import { TopCourses } from "@/components/TopCourses";
 import { PageNavigation } from "@/components/PageNavigation";
 import { SwipeableCarousel } from "@/components/SwipeableCarousel";
@@ -37,15 +27,16 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import tradeInImage from "@assets/generated_images/UNO_style_trade_cards_illustration_11a5fb90.png";
 import sniperImage from "@assets/generated_images/Influencer_in_sniper_crosshair_2bdcbb43.png";
 import referralImage from "@assets/generated_images/Referral_network_illustration_951f8395.png";
-import starterPackageImg from "@assets/generated_images/Starter_package_illustration_bundle_1c8f4d88.png";
-import professionalPackageImg from "@assets/generated_images/Professional_package_illustration_levels_de5bc7a2.png";
-import premiumPackageImg from "@assets/generated_images/Premium_package_illustration_orbit_4879daf5.png";
-import { Section } from "./admin-course-edit";
-import { sub } from "date-fns";
+import ShopMobileCard from "@/components/ui/shop-mobile-card";
+import MobileVipCard from "@/components/ui/mobile-vip-card";
+import PackageCard from "@/components/ui/packageCard";
+import VipCard from "@/components/ui/vip-card";
+import ShopDesktopCard from "@/components/ui/shop-desktop-card";
+import { useIsMobile } from "@/hooks/useIsMobile";
 
 const COURSES_PER_PAGE = 12;
 
-interface VipTier {
+export interface VipTier {
   id: string;
   tier: string;
   displayName: string;
@@ -68,478 +59,12 @@ interface CoursePackage {
   discountedPrice: number;
 }
 
-// Function to convert HTML to plain text with proper spacing
-const htmlToText = (html: string): string => {
-  if (!html) return '';
-
-  let text = html
-    // First pass: block elements get double space for separation
-    .replace(/<\/p>/gi, '  ')
-    .replace(/<p[^>]*>/gi, '  ')
-    .replace(/<br\s*\/?>/gi, ' ')
-    .replace(/<\/div>/gi, '  ')
-    .replace(/<div[^>]*>/gi, '  ')
-    .replace(/<\/?(h[1-6]|li|ul|ol|blockquote|table|tr|td)[^>]*>/gi, ' ')
-    // Second pass: remove ALL other tags with single space
-    .replace(/<[^>]*>/g, ' ')
-    // Normalize spaces
-    .replace(/\s+/g, ' ')
-    .trim();
-
-  return text;
-};
-
-// Separate component for package card to use hooks properly
-function PackageCard({ pkg, idx }: { pkg: CoursePackage; idx: number }) {
-  const [isExpanded, setIsExpanded] = useState(false);
-  const [hoveredCourse, setHoveredCourse] = useState<string | null>(null);
-  const [previewCourse, setPreviewCourse] = useState<Course | null>(null);
-  const packageImages = [starterPackageImg, professionalPackageImg, premiumPackageImg];
-  const packageImage = pkg.thumbnailUrl || packageImages[idx % packageImages.length];
-
-  // Use shared mobile detection hook - prevents memory leaks from multiple resize listeners
-  const isMobile = useIsMobile();
-
-  // Toggle expansion on mobile (touch devices)
-  const handleMobileToggle = (e: React.MouseEvent) => {
-    // Only toggle if clicking on the card itself, not interactive elements
-    const target = e.target as HTMLElement;
-    if (target.closest('button') || target.closest('a')) {
-      return;
-    }
-
-    if (isMobile) {
-      e.stopPropagation();
-      setIsExpanded(!isExpanded);
-    }
-  };
-
-  return (
-    <div
-      className={`group relative ${idx === 0 ? 'md:col-span-2 lg:col-span-1' : ''}`}
-      onMouseEnter={() => {
-        // Only activate hover on desktop (devices with hover support)
-        const isMobile = window.matchMedia('(hover: none)').matches;
-        if (!isMobile) {
-          setIsExpanded(true);
-        }
-      }}
-      onMouseLeave={() => {
-        const isMobile = window.matchMedia('(hover: none)').matches;
-        if (!isMobile) {
-          setIsExpanded(false);
-          setHoveredCourse(null);
-        }
-      }}
-      onClick={handleMobileToggle}
-      data-testid={`card-package-${pkg.id}`}
-      style={{
-        zIndex: isExpanded ? 50 : 'auto',
-        position: 'relative'
-      }}
-    >
-      {/* Glassmorphism Card - GPU optimized via global CSS */}
-      <div
-        className={`
-          relative overflow-visible rounded-2xl h-full
-          bg-gradient-to-br from-background/40 via-background/60 to-background/40
-          backdrop-blur-md border-2 border-purple-500/20
-          transition-[transform,box-shadow,border-color] duration-200 ease-out
-          flex flex-col
-          transform-gpu scale-100
-          ${isExpanded ? 'scale-[1.02] shadow-2xl shadow-purple-500/30 border-purple-500/40' : 'hover-elevate active-elevate-2 md:active:scale-100'}
-        `}
-        style={{
-          backdropFilter: 'blur(8px) saturate(140%)',
-          WebkitBackdropFilter: 'blur(8px) saturate(140%)',
-          transformOrigin: 'center center',
-        }}
-      >
-        {/* Animated gradient border effect */}
-        <div
-          className="absolute inset-0 bg-gradient-to-r from-purple-500/0 via-pink-500/20 to-orange-500/0 opacity-0 group-hover:opacity-100 transition-opacity duration-100 pointer-events-none"
-        />
-
-        {/* Discount Badge - Floating */}
-        {pkg.discount > 0 && (
-          <div className="absolute top-6 right-6 z-20">
-            <div className="relative">
-              <div className="absolute inset-0 bg-gradient-to-r from-orange-500 to-red-500 rounded-full blur-md opacity-40" />
-              <Badge
-                className="relative bg-gradient-to-r from-orange-600 to-red-600 text-white border-0 text-lg px-5 py-2.5 shadow-lg font-bold"
-                data-testid={`badge-discount-${pkg.id}`}
-              >
-                <Sparkles className="h-4 w-4 mr-1.5" />
-                -{pkg.discount}%
-              </Badge>
-            </div>
-          </div>
-        )}
-
-        {/* Hero Image with Parallax */}
-        <div className="relative h-64 overflow-hidden">
-          <div className="absolute inset-0 bg-gradient-to-br from-purple-600/30 via-pink-600/20 to-orange-600/30" />
-          <img
-            src={packageImage}
-            alt={pkg.name}
-            className={`
-              absolute inset-0 w-full h-full object-cover transition-transform duration-150 ease-out
-              transform-gpu scale-100
-              ${isExpanded ? 'scale-[1.03]' : ''}
-            `}
-          />
-          <div className="absolute inset-0 bg-gradient-to-t from-background via-background/80 to-transparent" />
-
-          {/* Package Title Overlay */}
-          <div className="absolute bottom-6 left-6 right-6">
-            <h3 className="text-3xl font-bold text-white drop-shadow-lg" data-testid={`text-package-name-${pkg.id}`}>
-              {pkg.name}
-            </h3>
-          </div>
-        </div>
-
-        {/* Content */}
-        <div className="p-6 space-y-4 flex-1 flex flex-col min-h-[280px] max-md:px-4 max-md:space-y-2">
-          {/* Description */}
-          {pkg.description && (
-            <p className="text-muted-foreground leading-relaxed line-clamp-3 break-words" data-testid={`text-package-description-${pkg.id}`}>
-              {pkg.description}
-            </p>
-          )}
-
-          {/* Stats Row */}
-          <div className="flex flex-wrap items-center gap-6 text-sm max-md:gap-3">
-            <div className="flex flex-wrap items-center gap-2 max-md:gap-1">
-              <div className="p-2 rounded-lg bg-purple-500/10">
-                <BookOpen className="h-4 w-4 text-purple-400" />
-              </div>
-              <span className="font-medium" data-testid={`text-course-count-${pkg.id}`}>
-                {pkg.courses.length} {pkg.courses.length === 1 ? 'курс' : 'курса'}
-              </span>
-            </div>
-            <div className="flex flex-wrap items-center gap-2 max-md:gap-1">
-              <div className="p-2 rounded-lg bg-green-500/10">
-                <Gem className="h-4 w-4 text-green-400" />
-              </div>
-              <span className="font-medium text-green-500">
-                Экономия {formatPrice(pkg.totalPrice - pkg.discountedPrice)}
-              </span>
-            </div>
-          </div>
-
-          {/* Pricing Section */}
-          <div className="pt-4 border-t border-border/50 mt-auto">
-            <div className="flex flex-col gap-4 max-md:gap-2">
-              <div className="space-y-1">
-                {pkg.discount > 0 ? (
-                  <>
-                    <div className="flex flex-wrap items-baseline gap-3 max-md:gap-2">
-                      <span className="text-4xl font-bold bg-gradient-to-r from-purple-400 to-pink-400 bg-clip-text text-transparent" data-testid={`text-discounted-price-${pkg.id}`}>
-                        {formatPrice(pkg.discountedPrice)}
-                      </span>
-                      <span className="text-lg text-muted-foreground line-through" data-testid={`text-original-price-${pkg.id}`}>
-                        {formatPrice(pkg.totalPrice)}
-                      </span>
-                    </div>
-                  </>
-                ) : (
-                  <span className="text-4xl font-bold" data-testid={`text-price-${pkg.id}`}>
-                    {formatPrice(pkg.totalPrice)}
-                  </span>
-                )}
-              </div>
-
-              <Button
-                className="w-full relative overflow-hidden backdrop-blur-sm bg-white/5 border-2 border-purple-500/30 text-white shadow-lg hover:shadow-purple-500/50 transition-all duration-300 font-semibold group"
-                size="lg"
-                onClick={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  window.location.href = `/package/${pkg.id}`;
-                }}
-                data-testid={`button-view-package-${pkg.id}`}
-              >
-                <div className="absolute inset-0 bg-gradient-to-r from-purple-600 via-fuchsia-600 to-pink-600 opacity-0 group-hover:opacity-100 transition-opacity duration-700" />
-                <span className="relative flex items-center justify-center gap-2">
-                  <ArrowRight className="h-5 w-5" />
-                  Изучить подробнее
-                </span>
-              </Button>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Mobile backdrop - rendered via Portal to escape carousel */}
-      {isExpanded && isMobile && createPortal(
-        <div
-          className="fixed inset-0 bg-background/80 backdrop-blur-sm animate-in fade-in duration-200"
-          style={{ zIndex: 9998 }}
-          onClick={() => {
-            console.log('[PackageCard] Backdrop clicked, closing overlay');
-            setIsExpanded(false);
-          }}
-        />,
-        document.body
-      )}
-
-      {/* Expandable Course Grid - Absolutely positioned overlay on desktop, Portal on mobile */}
-      {isExpanded && pkg.courses && pkg.courses.length > 0 && (
-        isMobile ? createPortal(
-          <div
-            className="fixed inset-x-4 top-1/2 -translate-y-1/2 max-h-[70vh] overflow-y-auto scrollbar-hide bg-background/95 backdrop-blur-lg rounded-2xl border-2 border-purple-500/20 p-4 shadow-2xl shadow-purple-500/20 animate-in fade-in duration-300"
-            style={{
-              zIndex: 9999,
-              transform: 'translateY(-50%) translateZ(0)'
-            }}
-            onClick={(e) => {
-              // Prevent closing when clicking inside expanded area on mobile
-              e.stopPropagation();
-            }}
-          >
-            <div className="grid grid-cols-2 gap-3">
-              {pkg.courses.map((course) => (
-                <div
-                  key={course.id}
-                  className="group/course relative cursor-pointer"
-                  onClick={() => setPreviewCourse(course)}
-                  data-testid={`mini-course-card-${course.id}`}
-                >
-                  {/* Course Mini Card */}
-                  <div
-                    className="relative overflow-hidden rounded-xl border border-border/50 transition-all duration-200 ease-out"
-                    style={{
-                      transform: 'translateZ(0)',
-                      transformOrigin: 'center center'
-                    }}
-                  >
-                    {/* Course Thumbnail */}
-                    <div className="relative aspect-video overflow-hidden bg-gradient-to-br from-purple-900/20 to-pink-900/20">
-                      {course.thumbnailImage ? (
-                        <img
-                          src={course.thumbnailImage}
-                          alt={course.title}
-                          className="absolute inset-0 w-full h-full object-cover"
-                        />
-                      ) : (
-                        <div className="absolute inset-0 flex items-center justify-center">
-                          <BookOpen className="h-8 w-8 text-muted-foreground/30" />
-                        </div>
-                      )}
-                    </div>
-                    {/* Course Info */}
-                    <div className="p-2 bg-background">
-                      <p className="text-xs font-semibold line-clamp-2">
-                        {course.title}
-                      </p>
-                      {course.price && (
-                        <p className="text-xs text-purple-400 mt-1">
-                          {formatPrice(parseFloat(course.price))}
-                        </p>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>,
-          document.body
-        ) : (
-          <div
-            className="absolute left-0 right-0 top-full slide-in-from-top-4 bg-background/95 backdrop-blur-lg rounded-2xl border-2 border-purple-500/20 p-4 shadow-2xl shadow-purple-500/20 animate-in fade-in duration-300"
-            style={{
-              zIndex: 100,
-              transform: 'translateZ(0)',
-              marginTop: '-2px'
-            }}
-            onMouseEnter={() => setIsExpanded(true)}
-            onMouseLeave={() => {
-              setIsExpanded(false);
-              setHoveredCourse(null);
-            }}
-          >
-            <div className="grid grid-cols-2 gap-3">
-              {pkg.courses.map((course) => (
-                <div
-                  key={course.id}
-                  className="group/course relative cursor-pointer"
-                  onMouseEnter={() => setHoveredCourse(course.id)}
-                  onMouseLeave={() => setHoveredCourse(null)}
-                  onClick={() => setPreviewCourse(course)}
-                  data-testid={`mini-course-card-${course.id}`}
-                >
-                  {/* Course Mini Card */}
-                  <div
-                    className={`
-                      relative overflow-hidden rounded-xl border
-                      transition-all duration-200 ease-out
-                      ${hoveredCourse === course.id
-                        ? 'border-purple-500/60 shadow-lg shadow-purple-500/20 scale-105 z-10'
-                        : 'border-border/50'
-                      }
-                    `}
-                    style={{
-                      transform: 'translateZ(0)',
-                      transformOrigin: 'center center'
-                    }}
-                  >
-                    {/* Course Thumbnail */}
-                    <div className="relative aspect-video overflow-hidden bg-gradient-to-br from-purple-900/20 to-pink-900/20">
-                      {course.thumbnailImage ? (
-                        <img
-                          src={course.thumbnailImage}
-                          alt={course.title}
-                          className="absolute inset-0 w-full h-full object-cover"
-                        />
-                      ) : (
-                        <div className="absolute inset-0 flex items-center justify-center">
-                          <BookOpen className="h-8 w-8 text-muted-foreground/30" />
-                        </div>
-                      )}
-                      {/* Hover Overlay */}
-                      <div className={`
-                        absolute inset-0 bg-gradient-to-t from-background via-background/90 to-transparent
-                        transition-opacity duration-75 ease-out
-                        ${hoveredCourse === course.id ? 'opacity-100' : 'opacity-0'}
-                      `}>
-                        <div className="absolute bottom-2 left-2 right-2">
-                          <p className="text-xs font-semibold text-white line-clamp-2">
-                            {course.title}
-                          </p>
-                          {course.price && (
-                            <p className="text-xs text-purple-300 mt-1">
-                              {formatPrice(parseFloat(course.price))}
-                            </p>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        )
-      )}
-
-      {/* Course Preview Dialog */}
-      <Dialog open={!!previewCourse} onOpenChange={(open) => !open && setPreviewCourse(null)}>
-        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto" data-testid="dialog-course-preview">
-          {previewCourse && (
-            <>
-              <DialogHeader>
-                <DialogTitle className="text-2xl font-bold pr-8">{previewCourse.title}</DialogTitle>
-              </DialogHeader>
-
-              <div className="space-y-4 max-md:space-y-2">
-                {/* Course Thumbnail */}
-                <div className="relative aspect-video overflow-hidden rounded-lg bg-gradient-to-br from-purple-900/20 to-pink-900/20">
-                  {previewCourse.thumbnailImage ? (
-                    <img
-                      src={previewCourse.thumbnailImage}
-                      alt={previewCourse.title}
-                      className="absolute inset-0 w-full h-full object-cover"
-                    />
-                  ) : (
-                    <div className="absolute inset-0 flex items-center justify-center">
-                      <BookOpen className="h-16 w-16 text-muted-foreground/30" />
-                    </div>
-                  )}
-                </div>
-
-                {/* Rating and Stats */}
-                <div className="flex items-center justify-between gap-4 max-md:gap-2">
-                  <StarRating
-                    rating={Number(previewCourse.rating || 0)}
-                    reviewsCount={Number(previewCourse.reviewsCount || 0)}
-                  />
-                  <ViewingCounter value={course.reviewsCount} courseId={previewCourse.id} />
-                </div>
-
-                {/* Badges */}
-                <div className="flex flex-wrap gap-2">
-                  {previewCourse.platform && (
-                    <Badge variant="outline" className="text-sm">
-                      {previewCourse.platform}
-                    </Badge>
-                  )}
-                  {previewCourse.level && (
-                    <Badge variant="outline" className="text-sm">
-                      {previewCourse.level}
-                    </Badge>
-                  )}
-                  {previewCourse.year && (
-                    <Badge variant="outline" className="text-sm">
-                      {previewCourse.year}
-                    </Badge>
-                  )}
-                </div>
-
-                {/* Description */}
-                {previewCourse.description && (
-                  <div className="space-y-2">
-                    <h4 className="font-semibold text-sm text-muted-foreground">Описание</h4>
-                    <div
-                      className="prose prose-sm dark:prose-invert max-w-none text-foreground leading-relaxed text-sm"
-                      dangerouslySetInnerHTML={{ __html: previewCourse.description }}
-                    />
-                  </div>
-                )}
-
-                {/* Author */}
-                {previewCourse.authorName && (
-                  <div className="flex items-center gap-3 p-3 rounded-lg bg-muted/50">
-                    <Avatar className="h-10 w-10 border-2 border-primary/20">
-                      <AvatarImage src={previewCourse.authorImage || undefined} />
-                      <AvatarFallback className="bg-primary/10 text-primary font-semibold">
-                        {previewCourse.authorName[0] || "?"}
-                      </AvatarFallback>
-                    </Avatar>
-                    <div className="flex flex-col">
-                      <span className="text-xs text-muted-foreground">Автор</span>
-                      <span className="text-sm font-medium">{previewCourse.authorName}</span>
-                    </div>
-                  </div>
-                )}
-
-                {/* Price */}
-                {previewCourse.price && (
-                  <div className="flex items-center justify-between p-4 rounded-lg bg-gradient-to-r from-purple-500/10 to-pink-500/10 border border-purple-500/20">
-                    <span className="text-sm text-muted-foreground">Цена курса</span>
-                    <span className="text-2xl font-bold">
-                      {formatPrice(parseFloat(previewCourse.price))}
-                    </span>
-                  </div>
-                )}
-
-                {/* View Course Button */}
-                <Button
-                  className="w-full gap-2 bg-gradient-to-r from-purple-600 to-pink-600 text-white shadow-lg"
-                  size="lg"
-                  onClick={() => {
-                    setPreviewCourse(null);
-                    window.location.href = `/course/${previewCourse.id}`;
-                  }}
-                  data-testid="button-view-full-course"
-                >
-                  <ArrowRight className="h-5 w-5" />
-                  Перейти к курсу
-                </Button>
-              </div>
-            </>
-          )}
-        </DialogContent>
-      </Dialog>
-    </div>
-  );
-}
-
 export default function Shop() {
   const { isAuthenticated, user } = useAuth();
   const [location, setLocation] = useLocation();
   const [selectedCategories, setSelectedCategories] = useState<{
     platform?: string;
-    level?: string;
+    levels?: string;
     year?: number;
     minPrice?: number;
     maxPrice?: number;
@@ -547,17 +72,17 @@ export default function Shop() {
     author?: string;
   }>({});
   const [searchQuery, setSearchQuery] = useState("");
+  const [searchInput, setSearchInput] = useState(searchQuery);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [currentPage, setCurrentPage] = useState(1); // Для desktop пагинации
   const [visiblePageRange, setVisiblePageRange] = useState({ start: 1, end: 1 }); // Для mobile infinite scroll
   const [currentVisiblePage, setCurrentVisiblePage] = useState(1); // Отслеживание текущей видимой страницы для пагинатора
   const [carouselInitialIndex, setCarouselInitialIndex] = useState(0); // Начальный индекс для карусели (0 или 11)
   const [hoveredVipId, setHoveredVipId] = useState<string | null>(null);
-  const [hoveredCourseId, setHoveredCourseId] = useState<string | null>(null);
   const [activeMobileCourseId, setActiveMobileCourseId] = useState<string | null>(null);
-  const [hoveredCourseHasPreview, setHoveredCourseHasPreview] = useState(false);
   const [imagesLoaded, setImagesLoaded] = useState(false);
   const [loadedImageUrls, setLoadedImageUrls] = useState<Set<string>>(new Set());
+  const isMobile = useIsMobile()
 
   // Telegram reminder modal states
   const { toast } = useToast();
@@ -574,23 +99,14 @@ export default function Shop() {
     queryKey: ["/api/site-settings"],
   });
 
-  const useCoursePlatforms = (courseId: string | undefined) => {
-    return useQuery({
-      queryKey: ["/api/admin/courses", courseId, "subcategories"],
-      queryFn: async () => {
-        if (!courseId) throw new Error("No courseId");
-        const response = await fetch(`/api/admin/courses/${courseId}/subcategories`, {
-          credentials: "include",
-        });
-        if (!response.ok) throw new Error("Failed to fetch");
-        return response.json();
-      },
-      enabled: !!courseId,
-      staleTime: 1000 * 60 * 5,
-    });
-  };
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setSearchQuery(searchInput.trim());
+    }, 500);
 
-  // Restore Telegram modal state from localStorage on mount
+    return () => clearTimeout(timer);
+  }, [searchInput]);
+
   useEffect(() => {
     if (!isAuthenticated || !user) {
       return;
@@ -705,15 +221,16 @@ export default function Shop() {
     }
     if (search) {
       setSearchQuery(search);
+      setSearchInput(search)
     } else {
       setSearchQuery("");
+      setSearchInput("")
     }
   }, [location]);
 
   // Save current shop URL to sessionStorage on mount and when filters change
   useEffect(() => {
     const params = new URLSearchParams();
-
     if (selectedCategories.platform) params.set('platform', selectedCategories.platform);
     if (selectedCategories.level) params.set('level', selectedCategories.level);
     if (selectedCategories.year) params.set('year', selectedCategories.year.toString());
@@ -726,7 +243,6 @@ export default function Shop() {
     const newUrl = params.toString() ? `${window.location.pathname}?${params.toString()}` : window.location.pathname;
     window.history.replaceState({}, '', newUrl);
 
-    // Always save current shop URL for "Continue Shopping" feature
     sessionStorage.setItem('shopUrl', window.location.pathname + window.location.search);
   }, [selectedCategories, searchQuery]);
 
@@ -825,7 +341,7 @@ export default function Shop() {
     queryKey: coursesQueryKey,
     queryFn: async () => {
       const params = new URLSearchParams();
-      if (selectedCategories.platform) params.append("platform", selectedCategories.platform);
+      if (selectedCategories.platform) params.append("platform", selectedCategories?.platform || params.get('platform') || '');
       if (selectedCategories.level) params.append("level", selectedCategories.level);
       if (selectedCategories.year) params.append("year", selectedCategories.year.toString());
       if (selectedCategories.minPrice !== undefined) params.append("minPrice", selectedCategories.minPrice.toString());
@@ -841,6 +357,7 @@ export default function Shop() {
       if (!res.ok) throw new Error(`${res.status}: ${res.statusText}`);
       return res.json();
     },
+    enabled: !!categories
   });
 
   const { data: purchases } = useQuery<{ courseId: string }[]>({
@@ -887,37 +404,53 @@ export default function Shop() {
     return aTier - bTier;
   }) : [];
 
-  const subcategoriesQueries = useQueries({
+  const subcategoryQueries = useQueries({
     queries: courses.map((course) => ({
       queryKey: ["/api/admin/courses", course.id, "subcategories"],
       queryFn: async (): Promise<string[]> => {
         const response = await fetch(`/api/admin/courses/${course.id}/subcategories`, {
           credentials: "include",
         });
-        if (!response.ok) return [];
+        if (!response.ok) throw new Error("Failed to fetch");
         return response.json();
       },
       enabled: !!course.id,
-      staleTime: 5 * 60 * 1000,
+      staleTime: 5 * 60 * 1000, // опционально: кэшировать на 5 минут
     })),
   });
 
+  // Теперь создаём map: course.id → subcategoryIds
+  const courseSubcategoryMap = useMemo(() => {
+    const map = new Map<string, string[]>();
+    courses.forEach((course, index) => {
+      const result = subcategoryQueries[index];
+      if (result.data) {
+        map.set(course.id, result.data);
+      }
+    });
+    return map;
+  }, [courses, subcategoryQueries]);
+
+  // Теперь фильтрация без хуков внутри
   const filteredCoursesByLevel = useMemo(() => {
     if (!courses.length) return [];
 
-    return courses.filter((course, idx) => {
-      // Ждём, пока загрузятся данные подкатегорий (если они используются где-то ещё)
-      const subcatQuery = subcategoriesQueries[idx];
-      if (subcatQuery.isLoading || subcatQuery.isError) return true; // пока показываем, чтобы не мерцало
+    return courses.filter((course) => {
+      const courseSubcategoryIds = courseSubcategoryMap.get(course.id) || [];
 
-      // Основная проверка: есть ли активные категории в course.level
-      const selectedCategoriesWithoutsub = categories?.filter(
-        (cat) => course.level?.includes(cat.id) && cat.isActive
-      ) ?? [];
+      // Если выбраны уровни (level) — проверяем пересечение
+      if (selectedCategories.levels) {
+        // Предположим, что selectedCategories.level — это строка или массив ID
+        const selectedLevels = Array.isArray(selectedCategories.levels)
+          ? selectedCategories.levels
+          : [selectedCategories.levels];
 
-      return selectedCategoriesWithoutsub.length > 0;
+        return courseSubcategoryIds.some(id => selectedLevels.includes(id));
+      }
+
+      return true;
     });
-  }, [courses, categories, subcategoriesQueries]);
+  }, [courses, courseSubcategoryMap, selectedCategories]);
 
   // Pagination calculations (must be before useEffect that uses them)
   const totalCourses = filteredCoursesByLevel.length || 0;
@@ -930,24 +463,6 @@ export default function Shop() {
   const mobileStartIndex = (visiblePageRange.start - 1) * COURSES_PER_PAGE;
   const mobileEndIndex = visiblePageRange.end * COURSES_PER_PAGE;
   const mobileCourses = filteredCoursesByLevel.slice(mobileStartIndex, mobileEndIndex) || [];
-
-  const platformQueries = useQueries({
-    queries: paginatedCourses.map((course) => ({
-      queryKey: ['course-platforms', course.id],
-      queryFn: async () => {
-        const response = await fetch(`/api/admin/courses/${course.id}/subcategories`, {
-          credentials: 'include',
-        });
-        if (!response.ok) {
-          throw new Error('Failed to fetch subcategories');
-        }
-        return response.json();
-      },
-      enabled: !!course.id,
-      staleTime: 5 * 60 * 1000,
-      retry: 1,
-    })),
-  });
 
   // Reset to page 1 when filters or search changes
   useEffect(() => {
@@ -1010,16 +525,11 @@ export default function Shop() {
     setCarouselInitialIndex(0);
   }, [totalPages]);
 
-  // Preload images только на десктопе (на мобильных устройствах пропускаем для экономии памяти)
   useEffect(() => {
-    if (!paginatedCourses || paginatedCourses.length === 0) {
-      setImagesLoaded(true);
-      return;
-    }
+    const connection = (navigator as any).connection || (navigator as any).mozConnection || (navigator as any).webkitConnection;
+    const shouldPreload = !connection || connection.effectiveType === '4g' || connection.saveData === false;
 
-    // На мобильных устройствах не делаем preload - экономим память
-    const isMobileDevice = window.innerWidth < 768;
-    if (isMobileDevice) {
+    if (!shouldPreload || window.innerWidth < 768) {
       setImagesLoaded(true);
       return;
     }
@@ -1088,59 +598,10 @@ export default function Shop() {
     };
   }, [paginatedCourses, loadedImageUrls]);
 
-  // Memoized map of category/subcategory slugs to Russian names
-  const categoryNameMap = useMemo(() => {
-    const map: Record<string, string> = {};
-
-    // Add category mappings (slug → Russian name)
-    if (categories) {
-      categories.forEach(cat => {
-        map[cat.slug] = cat.name;
-        // Also map English name to Russian (for backward compatibility)
-        map[cat.nameEn.toLowerCase()] = cat.name;
-      });
-    }
-
-    // Add subcategory mappings (slug → Russian name)
-    if (subcategories) {
-      subcategories.forEach(sub => {
-        map[sub.slug] = sub.name;
-        // Also map English name to Russian (for backward compatibility)
-        map[sub.nameEn.toLowerCase()] = sub.name;
-      });
-    }
-
-    return map;
-  }, [categories, subcategories]);
-
-  const sectionQueries = useQueries({
-    queries: paginatedCourses.map((course) => ({
-      queryKey: ["/api/admin/courses", course.id, "sections"],
-      queryFn: async () => {
-        const response = await fetch(`/api/admin/courses/${course.id}/sections`, {
-          credentials: "include",
-        });
-        if (!response.ok) throw new Error("Failed to fetch sections");
-        return response.json() as Promise<Section[]>;
-      },
-      enabled: !!course.id,
-      staleTime: 1000 * 60 * 5, // 5 минут кэш
-    })),
-  });
-
-  const getLevelName = (level: string) => {
-    const names: Record<string, string> = {
-      beginner: "Для новичков",
-      intermediate: "Для опытных",
-      advanced: "Продвинутый",
-    };
-
-    return names[level] || level;
-  };
-
   const handleResetFilters = () => {
     setSelectedCategories({});
     setSearchQuery("");
+    setSearchInput("")
   };
 
   // Telegram reminder modal handlers
@@ -1300,11 +761,14 @@ export default function Shop() {
       </div>
 
       <Header
-        onSearchChange={setSearchQuery}
+        onSearchChange={setSearchInput}
         onMenuToggle={() => setSidebarOpen(!sidebarOpen)}
         onResetFilters={handleResetFilters}
         onOpenFilters={() => setSidebarOpen(true)}
       />
+
+      {(navigationItems.length > 1 && isMobile) && <PageNavigation items={navigationItems} />}
+
       <InfoBanner />
 
       <div className="relative flex" style={{ zIndex: 1 }}>
@@ -1331,7 +795,7 @@ export default function Shop() {
             </div>
 
             {/* Page Navigation */}
-            {navigationItems.length > 1 && <PageNavigation items={navigationItems} />}
+            {(navigationItems.length > 1 && !isMobile) && <PageNavigation items={navigationItems} />}
 
             {/* VIP Subscriptions Block */}
             <div id="vip-section" className="relative space-y-4 md:space-y-6 py-4 md:py-6 pl-6 md:px-8 rounded-2xl border border-yellow-500/10 bg-gradient-to-br from-slate-950/40 via-purple-950/30 to-amber-950/40 shadow-[0_0_80px_-12px_rgba(234,179,8,0.15)] overflow-visible" data-testid="vip-subscriptions-block">
@@ -1369,224 +833,18 @@ export default function Shop() {
               ) : sortedVips && sortedVips.length > 0 ? (
                 <>
                   {/* Mobile: SwipeableCarousel */}
-                  <div className="md:hidden">
+                  <div className="md:hidden transition-all">
                     <SwipeableCarousel itemCount={sortedVips.length}>
                       {(activeIndex, itemIndex) => {
-                        const vip = sortedVips[itemIndex];
-                        if (!vip) return null;
-
-                        const isExpanded = activeIndex === itemIndex;
-                        const isPurchased = purchasedCourseIds.has(vip.id);
-                        const tier = vip.vipTier || 'bronze';
-
-                        // Get tier data from vipTiers
-                        const tierData = vipTiers?.find(t => t.tier === tier);
-
-                        const tierConfig: Record<string, {
-                          sphereClass?: string;
-                          isDiamond?: boolean;
-                          glowColor: "purple" | "blue" | "pink" | "gold" | "cyan" | "silver" | "bronze";
-                        }> = {
-                          bronze: {
-                            sphereClass: 'sphere-bronze',
-                            glowColor: 'bronze',
-                          },
-                          silver: {
-                            sphereClass: 'sphere-silver',
-                            glowColor: 'silver',
-                          },
-                          gold: {
-                            sphereClass: 'sphere-gold',
-                            glowColor: 'gold',
-                          },
-                          diamond: {
-                            isDiamond: true,
-                            glowColor: 'purple',
-                          },
-                        };
-
-                        const config = tierConfig[tier] || tierConfig.bronze;
 
                         return (
-                          <div
-                            key={vip.id}
-                            className="h-full relative overflow-visible"
-                          >
-                            {/* Base Card - Fixed Height */}
-                            <Link
-                              href={`/course/${vip.id}`}
-                              className={`block rounded-xl h-full ${isExpanded ? 'opacity-0 pointer-events-none' : ''}`}
-                            >
-                              <GlassCard
-                                variant="premium"
-                                glowColor={config.glowColor}
-                                hover={false}
-                                isActive={isExpanded}
-                                className="cursor-pointer flex flex-col w-full min-h-[350px] overflow-hidden"
-                                data-testid={`card-vip-${tier}`}
-                              >
-                                <div
-                                  className="flex flex-col flex-1 overflow-hidden"
-                                  style={{
-                                    backfaceVisibility: 'hidden',
-                                    transform: 'translateZ(0)'
-                                  }}
-                                >
-
-                                  <CardHeader className="space-y-2 pb-3 relative z-10">
-                                    <div className="flex items-center justify-between">
-                                      {config.isDiamond ? (
-                                        <Diamond className="diamond-sparkle w-7 h-7" />
-                                      ) : (
-                                        <div className={`h-7 w-7 rounded-full ${config.sphereClass}`} />
-                                      )}
-                                      {isPurchased && (
-                                        <Badge variant="default" className="bg-green-600 text-xs">
-                                          <Shield className="h-3 w-3 mr-1" />
-                                          Активна
-                                        </Badge>
-                                      )}
-                                    </div>
-                                    <h3 className="font-bold tracking-tight text-2xl">
-                                      {tierData?.displayName || vip.title}
-                                    </h3>
-                                  </CardHeader>
-
-                                  <CardContent className="space-y-3 pb-3 flex-1 relative z-10 overflow-hidden">
-                                    <div className="flex items-baseline gap-2">
-                                      <span className="font-bold bg-gradient-to-r from-foreground to-foreground/80 bg-clip-text text-transparent text-3xl">
-                                        {formatPrice(tierData?.price || vip.price || "0")}
-                                      </span>
-                                    </div>
-
-                                    <p className="text-sm text-muted-foreground/90 line-clamp-3 leading-snug">
-                                      {tierData?.description || (vip.description ? htmlToText(vip.description) : 'Эксклюзивный доступ к премиум контенту и персональной поддержке')}
-                                    </p>
-                                  </CardContent>
-
-                                  <CardFooter className="pt-0 relative z-10 mt-auto">
-                                    <Button
-                                      className={`w-full relative overflow-hidden backdrop-blur-sm font-semibold transition-all duration-300 group ${isPurchased
-                                        ? 'bg-white/5 border-2 border-green-500/30 text-white shadow-lg'
-                                        : `bg-white/5 border-2 border-yellow-500/30 text-white ${isExpanded ? 'shadow-yellow-500/50' : ''}`
-                                        }`}
-                                      size="default"
-                                      disabled={isPurchased}
-                                    >
-                                      <div className={`absolute inset-0 transition-opacity duration-700 ${isPurchased
-                                        ? 'bg-gradient-to-r from-green-600 to-emerald-600 opacity-100'
-                                        : `bg-gradient-to-r from-yellow-500 via-orange-500 to-pink-600 ${isExpanded ? 'opacity-100' : 'opacity-0'}`
-                                        }`} />
-                                      <span className="relative flex items-center justify-center">
-                                        {isPurchased ? (
-                                          <>
-                                            <Check className="mr-2 h-4 w-4" />
-                                            У вас есть подписка
-                                          </>
-                                        ) : (
-                                          <>
-                                            <Crown className="mr-2 h-4 w-4" />
-                                            Оформить подписку
-                                          </>
-                                        )}
-                                      </span>
-                                    </Button>
-                                  </CardFooter>
-                                </div>
-                              </GlassCard>
-                            </Link>
-
-                            {/* Expanded Overlay */}
-                            {isExpanded && (
-                              <div
-                                className="absolute inset-x-0 top-0 z-[60] overflow-hidden rounded-xl pointer-events-auto"
-                                onClick={(e) => e.preventDefault()}
-                              >
-                                <GlassCard
-                                  variant="premium"
-                                  glowColor={config.glowColor}
-                                  hover={false}
-                                  isActive={true}
-                                  className="w-full shadow-2xl"
-                                >
-                                  <div className="flex flex-col">
-                                    <CardHeader className="space-y-2 pb-2 relative z-10">
-                                      <div className="flex items-center justify-between">
-                                        {config.isDiamond ? (
-                                          <Diamond className="diamond-sparkle" />
-                                        ) : (
-                                          <div className={`h-7 w-7 rounded-full ${config.sphereClass}`} />
-                                        )}
-                                        {isPurchased && (
-                                          <Badge variant="default" className="bg-green-600 text-xs">
-                                            <Shield className="h-3 w-3 mr-1" />
-                                            Активна
-                                          </Badge>
-                                        )}
-                                      </div>
-                                      <h3 className="font-bold tracking-tight text-xl">
-                                        {tierData?.displayName || vip.title}
-                                      </h3>
-                                      <p className="text-xs text-muted-foreground/90 leading-snug">
-                                        {tierData?.description || (vip.description ? htmlToText(vip.description) : 'Эксклюзивный доступ к премиум контенту и персональной поддержке')}
-                                      </p>
-                                    </CardHeader>
-
-                                    <CardContent className="space-y-2 pb-2 relative z-10">
-                                      <div className="flex items-baseline gap-2">
-                                        <span className="font-bold bg-gradient-to-r from-foreground to-foreground/80 bg-clip-text text-transparent text-2xl">
-                                          {formatPrice(tierData?.price || vip.price || "0")}
-                                        </span>
-                                      </div>
-
-                                      <div className="space-y-1">
-                                        <p className="text-xs font-semibold text-muted-foreground">Что входит:</p>
-                                        {(tierData?.features || []).map((feature: string, idx: number) => (
-                                          <div key={idx} className="flex items-start gap-1.5">
-                                            <Check className="h-3 w-3 text-primary mt-0.5 flex-shrink-0" />
-                                            <span className="text-xs leading-snug">{feature}</span>
-                                          </div>
-                                        ))}
-                                      </div>
-                                    </CardContent>
-
-                                    <CardFooter className="pt-0 relative z-10">
-                                      <Button
-                                        className={`w-full relative overflow-hidden backdrop-blur-sm font-semibold transition-all duration-300 group ${isPurchased
-                                          ? 'bg-white/5 border-2 border-green-500/30 text-white shadow-lg'
-                                          : 'bg-white/5 border-2 border-yellow-500/30 text-white shadow-yellow-500/50'
-                                          }`}
-                                        size="default"
-                                        disabled={isPurchased}
-                                        onClick={(e) => {
-                                          e.preventDefault();
-                                          setLocation(`/course/${vip.id}`);
-                                        }}
-                                      >
-                                        <div className={`absolute inset-0 transition-opacity duration-700 ${isPurchased
-                                          ? 'bg-gradient-to-r from-green-600 to-emerald-600 opacity-100'
-                                          : 'bg-gradient-to-r from-yellow-500 via-orange-500 to-pink-600 opacity-100'
-                                          }`} />
-                                        <span className="relative flex items-center justify-center">
-                                          {isPurchased ? (
-                                            <>
-                                              <Check className="mr-2 h-4 w-4" />
-                                              У вас есть подписка
-                                            </>
-                                          ) : (
-                                            <>
-                                              <Crown className="mr-2 h-4 w-4" />
-                                              Оформить подписку
-                                            </>
-                                          )}
-                                        </span>
-                                      </Button>
-                                    </CardFooter>
-                                  </div>
-                                </GlassCard>
-                              </div>
-                            )}
-                          </div>
+                          <MobileVipCard
+                            sortedVips={sortedVips}
+                            itemIndex={itemIndex}
+                            activeIndex={activeIndex}
+                            purchasedCourseIds={purchasedCourseIds}
+                            vipTiers={vipTiers}
+                          />
                         );
                       }}
                     </SwipeableCarousel>
@@ -1595,138 +853,15 @@ export default function Shop() {
                   {/* Desktop: Original Grid - UNTOUCHED */}
                   <div className="hidden md:grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 items-stretch" style={{ gridAutoRows: '1fr' }}>
                     {sortedVips.map((vip) => {
-                      const isPurchased = purchasedCourseIds.has(vip.id);
-                      const tier = vip.vipTier || 'bronze';
-                      const isHovered = hoveredVipId === vip.id;
-
-                      // Get tier data from vipTiers
-                      const tierData = vipTiers?.find(t => t.tier === tier);
-
-                      const tierConfig: Record<string, {
-                        sphereClass?: string;
-                        isDiamond?: boolean;
-                        glowColor: "purple" | "blue" | "pink" | "gold" | "cyan" | "silver" | "bronze";
-                      }> = {
-                        bronze: {
-                          sphereClass: 'sphere-bronze',
-                          glowColor: 'bronze',
-                        },
-                        silver: {
-                          sphereClass: 'sphere-silver',
-                          glowColor: 'silver',
-                        },
-                        gold: {
-                          sphereClass: 'sphere-gold',
-                          glowColor: 'gold',
-                        },
-                        diamond: {
-                          isDiamond: true,
-                          glowColor: 'purple',
-                        },
-                      };
-
-                      const config = tierConfig[tier] || tierConfig.bronze;
 
                       return (
-                        <div
-                          key={vip.id}
-                          className="relative h-full group"
-                          onMouseEnter={() => setHoveredVipId(vip.id)}
-                          onMouseLeave={() => setHoveredVipId(null)}
-                        >
-                          <Link href={`/course/${vip.id}`} className="h-full">
-                            <GlassCard
-                              variant="premium"
-                              glowColor={config.glowColor}
-                              hover={true}
-                              className={`relative overflow-visible cursor-pointer flex flex-col h-full min-h-[390px] ${isHovered ? 'absolute top-0 left-0 w-[400px] min-h-0 z-40 shadow-2xl scale-[1.02] transition-[width,height,transform,box-shadow] duration-300 ease-out' : 'transition-[width,height,transform,box-shadow] duration-300 ease-out'
-                                }`}
-                              data-testid={`card-vip-${tier}`}
-                            >
-                              <div
-                                className="flex flex-col flex-1"
-                              >
-
-                                <CardHeader className="space-y-3 pb-4 relative z-10 min-h-[120px]">
-                                  <div className="flex items-center justify-between">
-                                    {config.isDiamond ? (
-                                      <Diamond className="diamond-sparkle" />
-                                    ) : (
-                                      <div className={`h-10 w-10 rounded-full ${config.sphereClass}`} />
-                                    )}
-                                    {isPurchased && (
-                                      <Badge variant="default" className="bg-green-600 text-sm">
-                                        <Shield className="h-3 w-3 mr-1" />
-                                        Активна
-                                      </Badge>
-                                    )}
-                                  </div>
-                                  <h3 className="font-bold text-3xl tracking-tight">
-                                    {tierData?.displayName || vip.title}
-                                  </h3>
-                                  {isHovered && (
-                                    <p className="text-base text-muted-foreground/90 leading-relaxed">
-                                      {tierData?.description || (vip.description ? htmlToText(vip.description) : 'Эксклюзивный доступ к премиум контенту и персональной поддержке')}
-                                    </p>
-                                  )}
-                                </CardHeader>
-
-                                <CardContent className="space-y-4 pb-4 flex-1 relative z-10 min-h-[180px]">
-                                  <div className="flex items-baseline gap-2">
-                                    <span className="text-4xl font-bold bg-gradient-to-r from-foreground to-foreground/80 bg-clip-text text-transparent">
-                                      {formatPrice(tierData?.price || vip.price || "0")}
-                                    </span>
-                                  </div>
-
-                                  {!isHovered ? (
-                                    <p className="text-base text-muted-foreground/90 line-clamp-3 leading-relaxed">
-                                      {tierData?.description || (vip.description ? htmlToText(vip.description) : 'Эксклюзивный доступ к премиум контенту и персональной поддержке')}
-                                    </p>
-                                  ) : (
-                                    <div className="space-y-2">
-                                      <p className="text-base font-semibold text-muted-foreground">Что входит:</p>
-                                      {(tierData?.features || []).map((feature: string, idx: number) => (
-                                        <div key={idx} className="flex items-start gap-2">
-                                          <Check className="h-4 w-4 text-primary mt-0.5 flex-shrink-0" />
-                                          <span className="text-base">{feature}</span>
-                                        </div>
-                                      ))}
-                                    </div>
-                                  )}
-                                </CardContent>
-
-                                <CardFooter className="pt-0 relative z-10">
-                                  <Button
-                                    className={`w-full relative overflow-hidden backdrop-blur-sm font-semibold shadow-lg transition-all duration-300 group ${isPurchased
-                                      ? 'bg-white/5 border-2 border-green-500/30 text-white'
-                                      : 'bg-white/5 border-2 border-yellow-500/30 text-white hover:shadow-yellow-500/50'
-                                      }`}
-                                    size="lg"
-                                    disabled={isPurchased}
-                                  >
-                                    <div className={`absolute inset-0 transition-opacity duration-700 ${isPurchased
-                                      ? 'bg-gradient-to-r from-green-600 to-emerald-600 opacity-100'
-                                      : 'bg-gradient-to-r from-yellow-500 via-orange-500 to-pink-600 opacity-0 group-hover:opacity-100'
-                                      }`} />
-                                    <span className="relative flex items-center justify-center">
-                                      {isPurchased ? (
-                                        <>
-                                          <Check className="mr-2 h-4 w-4" />
-                                          У вас есть подписка
-                                        </>
-                                      ) : (
-                                        <>
-                                          <Crown className="mr-2 h-4 w-4" />
-                                          Оформить подписку
-                                        </>
-                                      )}
-                                    </span>
-                                  </Button>
-                                </CardFooter>
-                              </div>
-                            </GlassCard>
-                          </Link>
-                        </div>
+                        <VipCard
+                          purchasedCourseIds={purchasedCourseIds}
+                          vip={vip}
+                          hoveredVipId={hoveredVipId}
+                          vipTiers={vipTiers}
+                          setHoveredVipId={setHoveredVipId}
+                        />
                       );
                     })}
                   </div>
@@ -1742,7 +877,7 @@ export default function Shop() {
                   Каталог курсов
                 </h2>
               </div>
-              <p className="text-base md:text-lg text-muted-foreground md:ml-12">
+              <p className="text-base md:text-lg text-muted-foreground">
                 Выберите подходящий курс по интересующему вас направлению
               </p>
             </div>
@@ -1773,714 +908,128 @@ export default function Shop() {
                 ))}
               </div>
             ) : courses && courses.length > 0 ? (
+
               <>
-                {/* Mobile: SwipeableCarousel с infinite scroll */}
-                <div className="md:hidden">
-                  <SwipeableCarousel
-                    key={currentVisiblePage}
-                    onReachEnd={handleSwipeEnd}
-                    onReachStart={handleSwipeStart}
-                    currentPageSize={mobileCourses.length}
-                    initialIndex={carouselInitialIndex}
-                    onActiveIndexChange={(index) => {
-                      // Always activate center card to show glow effect
-                      const course = mobileCourses[index];
-                      if (course) {
-                        setActiveMobileCourseId(course.id);
-                      }
-                    }}
-                  >
-                    {mobileCourses.map((course, index) => {
-                      const isPurchased = purchasedCourseIds.has(course.id);
-                      const isFavorited = favoritedCourseIds.has(course.id);
-                      const price = parseFloat(course.price || "0");
-                      const hasPreviewVideo = !!(course as any).previewVideoUrl;
-                      const isActive = activeMobileCourseId === course.id;
-                      const shouldPlayVideo = isActive && hasPreviewVideo;
-
-                      const platformQuery = platformQueries[index];
-                      const subcategoryIds = platformQuery?.data ?? [];
-
-                      const getPlatforms = () => {
-                        if (!subcategoryIds.length || !subcategories || !categories) return [];
-                        const matched = subcategories.filter((sub) => subcategoryIds.includes(sub.id) && sub.isActive);
-                        console.log('matched', matched)
-                        const categoryIds = [...new Set(matched.map(sub => sub.categoryId))];
-                        return categories.filter((cat) => categoryIds.includes(cat.id) && cat.isActive);
-                      };
-
-                      const platforms = getPlatforms();
-
-                      const originalIndex = courses.findIndex(c => c.id === course.id);
-
-                      const courseSubcategoryIds = originalIndex !== -1
-                        ? subcategoriesQueries[originalIndex]?.data ?? []
-                        : [];
-
-                      // Теперь можно правильно получить выбранные подкатегории
-                      const selectedSubcategories = subcategories?.filter(sub =>
-                        courseSubcategoryIds.includes(sub.id) && sub.isActive
-                      ) ?? []
-
-                      const parentCategorires = categories?.filter(cat =>
-                        course.level?.includes(cat.id) &&
-                        cat.isActive &&
-                        !selectedSubcategories.some(selectedSub => selectedSub.categoryId === cat.id)
-                      ) ?? [];
-
-                      parentCategorires?.map(parent => selectedSubcategories.push(parent))
-
-                      const selectedCategoriesWithoutsub = categories?.filter((cat) => course.level?.includes(cat.id) && cat.isActive);
-
-                      return (
-                        <div key={course.id}>
-                          <GlassCard
-                            variant="default"
-                            glowColor="purple"
-                            hover={true}
-                            isActive={isActive}
-                            className="flex flex-col h-full w-full overflow-hidden transition-all duration-300"
-                            data-testid={`card-course-${course.id}`}
-                          >
-                            <div
-                              className="flex flex-col flex-1"
-                              style={{
-                                backfaceVisibility: 'hidden',
-                                transform: 'translateZ(0)'
-                              }}
-                            >
-                              {/* Video/Thumbnail Section */}
-                              <div
-                                className="bg-gradient-to-br from-primary/10 to-primary/5 relative overflow-hidden aspect-video w-full"
-                                style={{
-                                  backfaceVisibility: 'hidden',
-                                  transform: 'translateZ(0)'
-                                }}
-                              >
-                                {/* Thumbnail Image - always visible, hidden only when video preview shows */}
-                                {course.thumbnailImage ? (
-                                  <img
-                                    src={course.thumbnailImage}
-                                    alt={course.title}
-                                    className={`w-full h-full object-cover absolute inset-0 transition-opacity duration-300 ${isActive && hasPreviewVideo ? 'opacity-0' : 'opacity-100'
-                                      }`}
-                                    style={{
-                                      backfaceVisibility: 'hidden',
-                                      transform: 'translateZ(0)',
-                                    }}
-                                  />
-                                ) : (
-                                  <div className={`w-full h-full flex items-center justify-center absolute inset-0 transition-opacity duration-300 ${isActive && hasPreviewVideo ? 'opacity-0' : 'opacity-100'
-                                    }`}>
-                                    <BookOpen className="h-16 w-16 text-primary/40" />
-                                  </div>
-                                )}
-
-                                {/* Preview Video - controlled by isActive state */}
-                                {hasPreviewVideo && (
-                                  <>
-                                    <div
-                                      className={`relative w-full h-full overflow-visible absolute inset-0 transition-opacity duration-300 ${isActive ? 'opacity-100' : 'opacity-0'
-                                        }`}
-                                      style={{
-                                        pointerEvents: 'none',
-                                      }}
-                                    >
-                                      <PreviewVideoPlayer
-                                        src={(course as any).previewVideoUrl}
-                                        shouldPlay={shouldPlayVideo}
-                                      />
-                                    </div>
-
-                                    {/* Free lesson button */}
-                                    <div className={`absolute bottom-3 left-3 z-10 transition-opacity duration-300 ${isActive ? 'opacity-100' : 'opacity-0'
-                                      }`}>
-                                      <Button
-                                        size="sm"
-                                        className="bg-green-600 hover:bg-green-700 text-white shadow-lg"
-                                        data-testid={`button-free-lesson-${course.id}`}
-                                        onClick={(e) => {
-                                          e.stopPropagation();
-                                        }}
-                                      >
-                                        <Play className="h-3 w-3 mr-1" />
-                                        Вводный урок
-                                      </Button>
-                                    </div>
-                                  </>
-                                )}
-
-                                {/* Top right badges and favorite button */}
-                                <div className="absolute top-3 right-3 flex items-center gap-2 z-10">
-                                  {isAuthenticated && !isPurchased && (
-                                    <Button
-                                      size="icon"
-                                      variant="ghost"
-                                      className={`h-8 w-8 rounded-full shadow-lg ${isFavorited
-                                        ? 'bg-red-500 hover:bg-red-600 text-white'
-                                        : 'bg-white/90 hover:bg-white text-red-500'
-                                        }`}
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        handleToggleFavorite(course.id, e);
-                                      }}
-                                      data-testid={`button-favorite-${course.id}`}
-                                    >
-                                      <Heart className={`h-4 w-4 ${isFavorited ? 'fill-current' : ''}`} />
-                                    </Button>
-                                  )}
-                                  {course.isFree ? (
-                                    <Badge className="bg-green-600 text-white shadow-lg">
-                                      Бесплатно
-                                    </Badge>
-                                  ) : isPurchased ? (
-                                    <Badge className="bg-blue-600 text-white shadow-lg">
-                                      <ShoppingCart className="h-3 w-3 mr-1" />
-                                      Куплен
-                                    </Badge>
-                                  ) : (course.paymentType === 'fantiks_only' || course.paymentType === 'both') ? (
-                                    <Badge className="bg-amber-600 text-white shadow-lg font-semibold px-3 py-1.5">
-                                      <Sparkles className="h-3.5 w-3.5 mr-1.5" />
-                                      Оплата фантиками
-                                    </Badge>
-                                  ) : null}
-                                </div>
-                              </div>
-
-                              {/* Content Section */}
-                              <CardHeader className="space-y-3 pb-4">
-                                <h3
-                                  className="font-bold text-2xl group-hover:text-xl line-clamp-2"
-                                  data-testid={`text-course-title-${course.id}`}
-                                >
-                                  {course.title}
-                                </h3>
-
-                                {/* Rating and viewing counter */}
-                                <div className="flex items-center justify-between gap-2">
-                                  <StarRating
-                                    rating={Number(course.rating || 0)}
-                                    reviewsCount={Number(course.reviewsCount || 0)}
-                                    size="sm"
-                                  />
-                                  <ViewingCounter value={course.reviewsCount} courseId={course.id} />
-                                </div>
-
-                                <div className="flex flex-wrap gap-2">
-                                  {platforms.map((platform) => (
-                                    <Badge key={platform.id} variant="outline" className="text-sm font-medium">
-                                      {platform.name}
-                                    </Badge>
-                                  ))}
-
-                                  {
-                                    (selectedSubcategories && selectedSubcategories.length > 0) ? selectedSubcategories.map(sub => (
-                                      <div className="flex flex-wrap gap-2">
-                                        <Badge key={sub.id} variant="outline" className="text-sm font-medium">
-                                          {sub.name}
-                                        </Badge>
-                                      </div>
-                                    )) : selectedCategoriesWithoutsub?.map(sub => (
-                                      <div className="flex flex-wrap gap-2">
-                                        <Badge key={sub.id} variant="outline" className="text-sm font-medium">
-                                          {sub.name}
-                                        </Badge>
-                                      </div>
-                                    ))
-                                  }
-
-
-                                  {course.year && (
-                                    <Badge variant="outline" className="text-sm font-medium">
-                                      {course.year}
-                                    </Badge>
-                                  )}
-                                </div>
-
-                                {course.description && (
-                                  <p className="text-base text-muted-foreground line-clamp-2 leading-relaxed">
-                                    {htmlToText(course.description)}
-                                  </p>
-                                )}
-
-                                <div className="flex items-center gap-2">
-                                  <Avatar className="h-9 w-9 border-2 border-primary/20">
-                                    <AvatarImage src={course.authorImage || undefined} />
-                                    <AvatarFallback className="bg-primary/10 text-primary font-semibold">
-                                      {course.authorName?.[0] || "?"}
-                                    </AvatarFallback>
-                                  </Avatar>
-                                  <div className="flex flex-col">
-                                    <span className="text-xs text-muted-foreground">Автор</span>
-                                    <span className="text-base font-medium">{course.authorName || "Неизвестен"}</span>
-                                  </div>
-                                </div>
-                              </CardHeader>
-
-                              {/* Spacer to push footer to bottom */}
-                              <div className="flex-1" />
-
-                              <CardFooter className="flex flex-col gap-3 pt-0">
-                                <div className="w-full px-1">
-                                  <span className="text-xs text-muted-foreground mb-2 block">Цена</span>
-                                  {course.isFree ? (
-                                    <span className="text-2xl font-bold text-foreground" data-testid={`text-course-price-${course.id}`}>
-                                      Бесплатно
-                                    </span>
-                                  ) : course.paymentType === 'both' ? (
-                                    <div className="flex items-center gap-3">
-                                      <div className="flex flex-col">
-                                        <span className="text-2xl font-bold text-foreground" data-testid={`text-course-price-${course.id}`}>
-                                          {formatPrice(price)} ₽
-                                        </span>
-                                      </div>
-                                      <div className="h-10 w-px bg-gradient-to-b from-transparent via-border to-transparent" />
-                                      <div className="flex flex-col">
-                                        <span className="text-xl font-semibold text-purple-400" data-testid={`text-course-fantik-price-${course.id}`}>
-                                          {course.fantikPrice && parseInt(course.fantikPrice.toString())} 🎫
-                                        </span>
-                                        <span className="text-xs text-purple-400/70">фантики</span>
-                                      </div>
-                                    </div>
-                                  ) : course.paymentType === 'fantiks_only' && course.fantikPrice ? (
-                                    <div className="flex flex-col">
-                                      <span className="text-2xl font-semibold text-purple-400" data-testid={`text-course-fantik-price-${course.id}`}>
-                                        {parseInt(course.fantikPrice.toString())} 🎫
-                                      </span>
-                                      <span className="text-sm text-purple-400/70">фантики</span>
-                                    </div>
-                                  ) : (
-                                    <span className="text-2xl font-bold text-foreground" data-testid={`text-course-price-${course.id}`}>
-                                      {formatPrice(price)} ₽
-                                    </span>
-                                  )}
-                                </div>
-                                <Button
-                                  className={`w-full relative overflow-hidden backdrop-blur-sm font-semibold shadow-lg transition-all duration-300 group ${isPurchased
-                                    ? 'bg-white/5 border-2 border-blue-500/30 text-white hover:shadow-blue-500/50'
-                                    : 'bg-white/5 border-2 border-purple-500/30 text-white hover:shadow-purple-500/50'
-                                    }`}
-                                  size="lg"
-                                  data-testid={`button-view-course-${course.id}`}
-                                  onClick={() => setLocation(`/course/${course.id}`)}
-                                >
-                                  <div className={`absolute inset-0 transition-opacity duration-700 ${isPurchased
-                                    ? 'bg-gradient-to-r from-blue-600 via-cyan-600 to-teal-600 opacity-0 group-hover:opacity-100'
-                                    : 'bg-gradient-to-r from-purple-600 via-fuchsia-600 to-pink-600 opacity-0 group-hover:opacity-100'
-                                    }`} />
-                                  <span className="relative flex items-center justify-center">
-                                    {isPurchased ? (
-                                      <>
-                                        <ShoppingCart className="mr-2 h-4 w-4" />
-                                        Открыть курс
-                                      </>
-                                    ) : (
-                                      <>
-                                        <ArrowRight className="mr-2 h-4 w-4" />
-                                        Подробнее
-                                      </>
-                                    )}
-                                  </span>
-                                </Button>
-                              </CardFooter>
-                            </div>
-                          </GlassCard>
-                        </div>
-                      );
-                    })}
-                  </SwipeableCarousel>
-                </div>
-
-                {/* Desktop: Original Grid - UNTOUCHED */}
-                <div className="hidden md:grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6 items-stretch" style={{ gridAutoRows: '1fr' }}>
-                  {paginatedCourses.map((course, index) => {
-                    const isPurchased = purchasedCourseIds.has(course.id);
-                    const isFavorited = favoritedCourseIds.has(course.id);
-                    const price = parseFloat(course.price || "0");
-                    const hasPreviewVideo = !!(course as any).previewVideoUrl;
-                    const shouldPlayVideo = hoveredCourseId === course.id && hasPreviewVideo;
-                    const isAdmin = user && user.isAdmin
-
-                    const sectionQuery = sectionQueries[index];
-                    console.log(sectionQuery.data)
-                    const sections = sectionQuery.data ?? [];
-
-                    console.log(course.title, sections)
-
-                    // Данные из useQueries
-                    const platformQuery = platformQueries[index];
-                    const subcategoryIds = platformQuery?.data ?? [];
-
-                    // ←←← ЗАМЕНИ useMemo НА ОБЫЧНУЮ ФУНКЦИЮ
-                    const getPlatforms = () => {
-                      if (!subcategoryIds.length || !subcategories || !categories) return [];
-                      const matched = subcategories.filter((sub) => subcategoryIds.includes(sub.id) && sub.isActive);
-                      console.log('matched', matched)
-                      const categoryIds = [...new Set(matched.map(sub => sub.categoryId))];
-                      return categories.filter((cat) => categoryIds.includes(cat.id) && cat.isActive);
-                    };
-
-                    const platforms = getPlatforms(); // ← просто вызываем
-
-                    const originalIndex = courses.findIndex(c => c.id === course.id);
-
-                    const courseSubcategoryIds = originalIndex !== -1
-                      ? subcategoriesQueries[originalIndex]?.data ?? []
-                      : [];
-
-                    // Теперь можно правильно получить выбранные подкатегории
-                    const selectedSubcategories = subcategories?.filter(sub =>
-                      courseSubcategoryIds.includes(sub.id) && sub.isActive
-                    ) ?? []
-
-                    const parentCategorires = categories?.filter(cat =>
-                      course.level?.includes(cat.id) &&
-                      cat.isActive &&
-                      !selectedSubcategories.some(selectedSub => selectedSub.categoryId === cat.id)
-                    ) ?? [];
-
-
-                    parentCategorires?.map(parent => selectedSubcategories.push(parent))
-
-                    const selectedCategoriesWithoutsub = categories?.filter((cat) => course.level?.includes(cat.id) && cat.isActive);
-
-                    if (selectedCategoriesWithoutsub && selectedCategoriesWithoutsub.length > 0) return (
-                      <div
-                        key={course.id}
-                        className="relative h-full group min-h-[500px]"
-                        onMouseEnter={() => {
-                          if (hasPreviewVideo) {
-                            setHoveredCourseId(course.id);
-                          }
-                        }}
-                        onMouseLeave={() => {
-                          if (hasPreviewVideo) {
-                            setHoveredCourseId(null);
+                {isMobile && (
+                  mobileCourses && mobileCourses.length > 0 ? (
+                    <div className="md:hidden">
+                      <SwipeableCarousel
+                        key={currentVisiblePage}
+                        onReachEnd={handleSwipeEnd}
+                        onReachStart={handleSwipeStart}
+                        currentPageSize={mobileCourses.length}
+                        initialIndex={carouselInitialIndex}
+                        onActiveIndexChange={(index) => {
+                          const course = mobileCourses[index];
+                          if (course) {
+                            setActiveMobileCourseId(course.id);
                           }
                         }}
                       >
-                        <GlassCard
-                          variant="default"
-                          glowColor="purple"
-                          hover={true}
-                          className="overflow-visible flex flex-col h-full group-hover:md:absolute group-hover:md:top-0 group-hover:md:left-0 group-hover:md:w-[420px] group-hover:md:z-40 group-hover:shadow-2xl"
-                          data-testid={`card-course-${course.id}`}
-                        >
-                          <div
-                            className="flex flex-col flex-1"
-                            style={{
-                              backfaceVisibility: 'hidden',
-                              transform: 'translateZ(0)'
-                            }}
-                          >
-                            {/* Video/Thumbnail Section */}
-                            <div
-                              className="bg-gradient-to-br from-primary/10 to-primary/5 relative overflow-hidden aspect-video w-full group-hover:md:h-[236px] group-hover:md:aspect-auto"
-                              style={{
-                                backfaceVisibility: 'hidden',
-                                transform: 'translateZ(0)'
-                              }}
-                            >
-                              {isAdmin &&
-                                <Button
-                                  size="icon"
-                                  variant="ghost"
-                                  className="!absolute top-3 left-3 !z-[1500] 
-             bg-white/40 
-             shadow-lg rounded-full"
-                                  onClick={() => {
-                                    window.location.replace(`/admin/courses/${course.id}/edit?subcategoryId=null&categiryId=null&parentId=null&fromStore`)
-                                  }}
-                                >
-                                  <Edit2 className="h-4 w-4" strokeWidth={2.2} />
-                                </Button>
-                              }
+                        {mobileCourses.map((course, index) => {
+                          const activeCategories = categories?.filter(
+                            (cat) => course.level?.includes(cat.id) && cat.isActive
+                          );
 
-                              {/* Thumbnail Image - always visible, hidden only when video preview shows */}
-                              {course.thumbnailImage ? (
-                                <img
-                                  src={course.thumbnailImage}
-                                  alt={course.title}
-                                  className={`w-full h-full object-cover absolute inset-0 ${hasPreviewVideo ? 'group-hover:opacity-0' : ''
-                                    }`}
-                                  style={{
-                                    backfaceVisibility: 'hidden',
-                                    transform: 'translateZ(0)',
-                                    transition: 'opacity 20ms linear',
-                                  }}
-                                />
-                              ) : (
-                                <div className={`w-full h-full flex items-center justify-center absolute inset-0 ${hasPreviewVideo ? 'group-hover:opacity-0' : ''
-                                  }`}>
-                                  <BookOpen className="h-16 w-16 text-primary/40 group-hover:text-primary/60" />
-                                </div>
-                              )}
+                          // Если нет активных категорий — не показываем карточку
+                          if (!activeCategories || activeCategories.length === 0) {
+                            return null;
+                          }
 
-                              {/* Preview Video - CSS hover controlled visibility, React controls playback */}
-                              {hasPreviewVideo && (
-                                <>
-                                  <div
-                                    className="relative w-full h-full overflow-visible absolute inset-0 opacity-0 group-hover:opacity-100"
-                                    style={{
-                                      transition: 'opacity 20ms linear',
-                                      pointerEvents: 'none',
-                                    }}
-                                  >
-                                    <PreviewVideoPlayer
-                                      src={(course as any).previewVideoUrl}
-                                      shouldPlay={shouldPlayVideo}
-                                    />
-                                  </div>
-
-                                  {/* Free lesson button - outside overlay to remain clickable */}
-                                  <div className="absolute bottom-3 left-3 z-10 opacity-0 group-hover:opacity-100" style={{ transition: 'opacity 20ms linear' }}>
-                                    <Button
-                                      size="sm"
-                                      className="bg-green-600 hover:bg-green-700 text-white shadow-lg"
-                                      data-testid={`button-free-lesson-${course.id}`}
-                                    >
-                                      <Play className="h-3 w-3 mr-1" />
-                                      БЕСПЛАТНЫЙ вводный урок
-                                    </Button>
-                                  </div>
-                                </>
-                              )}
-
-
-
-                              {/* Top right badges and favorite button */}
-                              <div className="absolute top-3 right-3 flex items-center gap-2 z-10">
-                                {isAuthenticated && !isPurchased && (
-                                  <Button
-                                    size="icon"
-                                    variant="ghost"
-                                    className={`h-8 w-8 rounded-full shadow-lg ${isFavorited
-                                      ? 'bg-red-500 hover:bg-red-600 text-white'
-                                      : 'bg-white/90 hover:bg-white text-red-500'
-                                      }`}
-                                    onClick={(e) => handleToggleFavorite(course.id, e)}
-                                    data-testid={`button-favorite-${course.id}`}
-                                  >
-                                    <Heart className={`h-4 w-4 ${isFavorited ? 'fill-current' : ''}`} />
-                                  </Button>
-                                )}
-                                {course.isFree ? (
-                                  <Badge className="bg-green-600 text-white shadow-lg">
-                                    Бесплатно
-                                  </Badge>
-                                ) : isPurchased ? (
-                                  <Badge className="bg-blue-600 text-white shadow-lg">
-                                    <ShoppingCart className="h-3 w-3 mr-1" />
-                                    Куплен
-                                  </Badge>
-                                ) : (course.paymentType === 'fantiks_only' || course.paymentType === 'both') ? (
-                                  <Badge className="bg-amber-600 text-white shadow-lg font-semibold px-3 py-1.5">
-                                    <Sparkles className="h-3.5 w-3.5 mr-1.5" />
-                                    Оплата фантиками
-                                  </Badge>
-                                ) : null}
-                              </div>
-                            </div>
-
-                            {/* Content Section */}
-                            <CardHeader className="space-y-3 pb-4">
-                              <h3
-                                className="font-bold text-2xl group-hover:text-xl line-clamp-2"
-                                data-testid={`text-course-title-${course.id}`}
-                              >
-                                <span>{course.title}</span>
-                              </h3>
-
-                              {/* Rating and viewing counter */}
-                              <div className="flex items-center justify-between gap-2 flex_wrap">
-                                <StarRating
-                                  rating={Number(course.rating || 0)}
-                                  reviewsCount={Number(course.reviewsCount || 0)}
-                                  size="sm"
-                                />
-                                <ViewingCounter value={course.reviewsCount} courseId={course.id} />
-                                {isAdmin && (
-                                  <div className="flex items-center gap-2 text-sm font-medium flex-wrap">
-                                    {sections.some(section =>
-                                      section.lessons?.some(lesson => lesson.processingStatus === 'failed')
-                                    ) && <span className="text-red-500" title="Есть уроки с ошибкой">Failed</span>}
-
-                                    {sections.some(section =>
-                                      section.lessons?.some(lesson => lesson.processingStatus === 'processing')
-                                    ) && <span className="text-purple-500" title="Уроки в очереди">Processing</span>}
-
-                                    {sections.some(section =>
-                                      section.lessons?.some(lesson => lesson.processingStatus === 'queued')
-                                    ) && <span className="text-orange-500" title="Уроки в очереди">In Queue</span>}
-
-                                    {sections.length > 0 &&
-                                      sections.some(section =>
-                                        section.lessons?.some(lesson => lesson.processingStatus === 'ready')
-                                      ) &&
-                                      !sections.some(section =>
-                                        section.lessons?.some(lesson =>
-                                          ['queued', 'processing', 'uploading', 'failed'].includes(lesson.processingStatus)
-                                        )
-                                      ) && (
-                                        <span className="text-green-500 font-medium" title="Все загруженные уроки готовы">
-                                          Ready
-                                        </span>
-                                      )}
-                                  </div>
-                                )}
-                              </div>
-
-                              <div className="flex flex-wrap gap-2">
-                                {platforms.map((platform) => (
-                                  <Badge key={platform.id} variant="outline" className="text-sm font-medium">
-                                    {platform.name}
-                                  </Badge>
-                                ))}
-
-                                {/* Уровни — показываем уникальные по имени */}
-                                {
-                                  (selectedSubcategories && selectedSubcategories.length > 0) ? selectedSubcategories.map(sub => (
-                                    <div className="flex flex-wrap gap-2">
-                                      <Badge key={sub.id} variant="outline" className="text-sm font-medium">
-                                        {sub.name}
-                                      </Badge>
-                                    </div>
-                                  )) : selectedCategoriesWithoutsub?.map(sub => (
-                                    <div className="flex flex-wrap gap-2">
-                                      <Badge key={sub.id} variant="outline" className="text-sm font-medium">
-                                        {sub.name}
-                                      </Badge>
-                                    </div>
-                                  ))
-                                }
-
-
-                                {/* Год */}
-                                {course.year && (
-                                  <Badge variant="outline" className="text-sm font-medium">
-                                    {course.year}
-                                  </Badge>
-                                )}
-                              </div>
-
-                              {course.description && (
-                                <p className="text-base text-muted-foreground line-clamp-2 leading-relaxed">
-                                  <div
-                                    className="prose prose-sm dark:prose-invert max-w-none text-muted-foreground"
-                                    data-testid="text-course-description"
-                                    dangerouslySetInnerHTML={{ __html: course.description || '' }}
-                                  />
-                                </p>
-                              )}
-
-                              <div className="flex items-center gap-2">
-                                <Avatar className="h-9 w-9 border-2 border-primary/20">
-                                  <AvatarImage src={course.authorImage || undefined} />
-                                  <AvatarFallback className="bg-primary/10 text-primary font-semibold">
-                                    {course.authorName?.[0] || "?"}
-                                  </AvatarFallback>
-                                </Avatar>
-                                <div className="flex flex-col">
-                                  <span className="text-xs text-muted-foreground">Автор</span>
-                                  <span className="text-base font-medium">{course.authorName || "Неизвестен"}</span>
-                                </div>
-                              </div>
-                            </CardHeader>
-
-                            {/* Spacer to push footer to bottom */}
-                            <div className="flex-1" />
-
-                            <CardFooter className="flex flex-col gap-3 pt-0">
-                              <div className="w-full px-1">
-                                <span className="text-xs text-muted-foreground mb-2 block">Цена</span>
-                                {course.isFree ? (
-                                  <span className="text-2xl font-bold text-foreground" data-testid={`text-course-price-${course.id}`}>
-                                    Бесплатно
-                                  </span>
-                                ) : course.paymentType === 'both' ? (
-                                  <div className="flex items-center gap-3">
-                                    <div className="flex flex-col">
-                                      <span className="text-2xl font-bold text-foreground" data-testid={`text-course-price-${course.id}`}>
-                                        {formatPrice(price)} ₽
-                                      </span>
-                                    </div>
-                                    <div className="h-10 w-px bg-gradient-to-b from-transparent via-border to-transparent" />
-                                    <div className="flex flex-col">
-                                      <span className="text-xl font-semibold text-purple-400" data-testid={`text-course-fantik-price-${course.id}`}>
-                                        {course.fantikPrice && parseInt(course.fantikPrice.toString())} 🎫
-                                      </span>
-                                      <span className="text-xs text-purple-400/70">фантики</span>
-                                    </div>
-                                  </div>
-                                ) : course.paymentType === 'fantiks_only' && course.fantikPrice ? (
-                                  <div className="flex flex-col">
-                                    <span className="text-2xl font-semibold text-purple-400" data-testid={`text-course-fantik-price-${course.id}`}>
-                                      {parseInt(course.fantikPrice.toString())} 🎫
-                                    </span>
-                                    <span className="text-sm text-purple-400/70">фантики</span>
-                                  </div>
-                                ) : (
-                                  <span className="text-2xl font-bold text-foreground" data-testid={`text-course-price-${course.id}`}>
-                                    {formatPrice(price)} ₽
-                                  </span>
-                                )}
-                              </div>
-                              <Button
-                                className={`w-full relative overflow-hidden backdrop-blur-sm font-semibold shadow-lg transition-all duration-300 group ${isPurchased
-                                  ? 'bg-white/5 border-2 border-blue-500/30 text-white hover:shadow-blue-500/50'
-                                  : 'bg-white/5 border-2 border-purple-500/30 text-white hover:shadow-purple-500/50'
-                                  }`}
-                                size="lg"
-                                data-testid={`button-view-course-${course.id}`}
-                                onClick={() => setLocation(`/course/${course.id}`)}
-                              >
-                                <div className={`absolute inset-0 transition-opacity duration-700 ${isPurchased
-                                  ? 'bg-gradient-to-r from-blue-600 via-cyan-600 to-teal-600 opacity-0 group-hover:opacity-100'
-                                  : 'bg-gradient-to-r from-purple-600 via-fuchsia-600 to-pink-600 opacity-0 group-hover:opacity-100'
-                                  }`} />
-                                <span className="relative flex items-center justify-center">
-                                  {isPurchased ? (
-                                    <>
-                                      <ShoppingCart className="mr-2 h-4 w-4" />
-                                      Открыть курс
-                                    </>
-                                  ) : (
-                                    <>
-                                      <ArrowRight className="mr-2 h-4 w-4" />
-                                      Подробнее
-                                    </>
-                                  )}
-                                </span>
-                              </Button>
-                            </CardFooter>
-                          </div>
-                        </GlassCard>
+                          return (
+                            <ShopMobileCard
+                              key={course.id} // ← Важно! Добавьте key
+                              course={course}
+                              index={index}
+                              purchasedCourseIds={purchasedCourseIds}
+                              favoritedCourseIds={favoritedCourseIds}
+                              subcategories={subcategories}
+                              categories={categories}
+                              activeMobileCourseId={activeMobileCourseId}
+                              isAuthenticated={isAuthenticated}
+                              handleToggleFavorite={handleToggleFavorite}
+                            />
+                          );
+                        })}
+                      </SwipeableCarousel>
+                    </div>
+                  ) : (
+                    <Card className="p-12">
+                      <div className="text-center space-y-4">
+                        <BookOpen className="h-16 w-16 mx-auto text-muted-foreground" />
+                        <h3 className="text-xl font-semibold">Курсы не найдены</h3>
+                        <p className="text-muted-foreground">
+                          {searchQuery || Object.keys(selectedCategories).length > 0
+                            ? "Попробуйте изменить фильтры или поисковый запрос"
+                            : "Курсы скоро появятся"}
+                        </p>
                       </div>
-                    );
-                  })}
-                </div>
+                    </Card>
+                  )
+                )}
 
-                {/* Desktop Pagination - интерактивный */}
-                <div className="hidden md:block">
-                  <Pagination
-                    currentPage={currentPage}
-                    totalPages={totalPages}
-                    totalItems={totalCourses}
-                    itemLabel="курсов"
-                    onPageChange={setCurrentPage}
-                  />
-                </div>
+                {!isMobile && (
+                  paginatedCourses && paginatedCourses.length > 0 ? (
+                    <div className="hidden md:grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6 items-stretch" style={{ gridAutoRows: '1fr' }}>
+                      {paginatedCourses.map((course, index) => {
 
-                {/* Mobile Pagination - интерактивный */}
-                <div className="block md:hidden">
-                  <Pagination
-                    currentPage={currentVisiblePage}
-                    totalPages={totalPages}
-                    totalItems={totalCourses}
-                    itemLabel="курсов"
-                    onPageChange={handleMobilePageChange}
-                  />
-                </div>
+                        const selectedCategoriesWithoutsub = categories?.filter((cat) => course.level?.includes(cat.id) && cat.isActive);
+
+
+                        if (selectedCategoriesWithoutsub && selectedCategoriesWithoutsub.length > 0) return (
+                          <ShopDesktopCard course={course}
+                            index={index}
+                            purchasedCourseIds={purchasedCourseIds}
+                            favoritedCourseIds={favoritedCourseIds}
+                            subcategories={subcategories}
+                            categories={categories}
+                            user={user}
+                            isAuthenticated={isAuthenticated}
+                            handleToggleFavorite={handleToggleFavorite} />
+                        );
+                      })}
+                    </div>
+                  ) : <Card className="p-12">
+                    <div className="text-center space-y-4">
+                      <BookOpen className="h-16 w-16 mx-auto text-muted-foreground" />
+                      <h3 className="text-xl font-semibold">Курсы не найдены</h3>
+                      <p className="text-muted-foreground">
+                        {searchQuery || Object.keys(selectedCategories).length > 0
+                          ? "Попробуйте изменить фильтры или поисковый запрос"
+                          : "Курсы скоро появятся"}
+                      </p>
+                    </div>
+                  </Card>)
+                }
+
+
+                {
+                  totalPages && totalPages > 1 ? (
+                    <div className="hidden md:block">
+                      <Pagination
+                        currentPage={currentPage}
+                        totalPages={totalPages}
+                        totalItems={totalCourses}
+                        itemLabel="курсов"
+                        onPageChange={setCurrentPage}
+                      />
+                    </div>
+                  ) : null
+                }
+
+                {
+                  totalPages && totalPages > 1 ? (
+                    <div className="block md:hidden">
+                      <Pagination
+                        currentPage={currentVisiblePage}
+                        totalPages={totalPages}
+                        totalItems={totalCourses}
+                        itemLabel="курсов"
+                        onPageChange={handleMobilePageChange}
+                      />
+                    </div>
+                  ) : null
+                }
 
                 {/* Trade-In Promotional Banner */}
                 <div className="mt-12 mb-8" data-testid="section-trade-in-banner">
@@ -2679,7 +1228,6 @@ export default function Shop() {
                           alt="Referral Program"
                           className="absolute inset-0 w-full h-full object-cover"
                         />
-                        <div className="absolute inset-0 bg-gradient-to-l from-background/80 via-background/40 to-transparent md:hidden" />
                       </div>
                     </div>
                   </Card>

@@ -751,115 +751,59 @@ export class DatabaseStorage implements IStorage {
     return (await result)[0]!;
   }
 
-  async getCourses(filters?: { platform?: string; level?: string; year?: number; minPrice?: number; maxPrice?: number; minRating?: number; author?: string; search?: string; subcategoryId?: string; vipOnly?: boolean; excludeVipPackages?: boolean; excludePurchased?: string | null; forAdmin?: boolean }): Promise<Course[]> {
+  async getCourses(filters?: {
+    levelIds?: string[];                    // Новый параметр: массив ID категорий для фильтра по level[]
+    year?: number;
+    minPrice?: number;
+    maxPrice?: number;
+    minRating?: number;
+    author?: string;
+    search?: string;
+    subcategoryId?: string;
+    vipOnly?: boolean;
+    excludeVipPackages?: boolean;
+    excludePurchased?: string | null;
+    forAdmin?: boolean;
+  }): Promise<Course[]> {
+    const conditions: SQL[] = [];
 
-    const platformMap: Record<string, string> = {
-      'wb': 'Wildberries',
-      'ozon': 'Ozon',
-      'yandex': 'Yandex Market',
-    };
-
-    const levelMap: Record<string, string> = {
-      'beginner': 'Начинающий',
-      'intermediate': 'Средний',
-      'advanced': 'Продвинутый',
-    };
-
-
-
-    let originalPlatformSlugs: string[] | undefined = undefined;
-    let mappedPlatforms: string[] | undefined = undefined;
-    if (filters?.platform) {
-      if (filters.platform.includes(',')) {
-        originalPlatformSlugs = filters.platform.split(',').map(p => p.trim());
-        mappedPlatforms = originalPlatformSlugs.map(p => platformMap[p] || p);
-      } else {
-        originalPlatformSlugs = [filters.platform];
-        mappedPlatforms = [platformMap[filters.platform] || filters.platform];
-      }
-    }
-
-    const mappedLevel = filters?.level ? (levelMap[filters.level] || filters.level) : undefined;
-
-
-    const conditions = [];
-
-
+    // Скрытые курсы в магазине/библиотеке
     if (!filters?.forAdmin) {
       conditions.push(eq(courses.hiddenInShop, false));
     }
-
-
-
 
     if (!filters?.forAdmin && filters?.excludePurchased) {
       conditions.push(eq(courses.hiddenInLibrary, false));
     }
 
+    // === ФИЛЬТРАЦИЯ ПО level[] (платформы, уровни и любые другие категории) ===
+    if (filters?.levelIds && filters.levelIds.length > 0) {
+      const ids = filters.levelIds
+        .map(id => id.trim())
+        .filter(id => id.length > 0);
 
-
-    if (mappedPlatforms && mappedPlatforms.length > 0 && originalPlatformSlugs) {
-
-      const legacyMarketplaceSlugs = ['Wildberries', 'Ozon', 'Yandex Market'];
-
-
-      const hasLegacyMarketplace = mappedPlatforms.some(slug => legacyMarketplaceSlugs.includes(slug));
-
-
-      const slugPlaceholders = originalPlatformSlugs.map(slug => sql`${slug}`).reduce((acc, curr) => {
-        return acc ? sql`${acc}, ${curr}` : curr;
-      });
-
-
-      const platformPlaceholders = mappedPlatforms.map(platform => sql`${platform}`).reduce((acc, curr) => {
-        return acc ? sql`${acc}, ${curr}` : curr;
-      });
-
-      if (hasLegacyMarketplace) {
-
+      if (ids.length > 0) {
+        // Формируем корректный PostgreSQL array literal: {"id1","id2",...}
+        // Кавычки обязательны, потому что ID — это UUID (с дефисами)
+        const pgArrayLiteral = `{${ids.map(id => `"${id}"`).join(',')}}`;
 
         conditions.push(
-          sql`(
-            EXISTS (
-              SELECT 1 FROM ${courseSubcategories} cs
-              INNER JOIN ${subcategories} s ON cs.subcategory_id = s.id
-              INNER JOIN ${categories} c ON s.category_id = c.id
-              WHERE cs.course_id = ${courses}.id
-                AND c.slug IN (${slugPlaceholders})
-            )
-            OR ${courses.platform} IN (${platformPlaceholders})
-          )`
-        );
-      } else {
-
-        conditions.push(
-          sql`EXISTS (
-            SELECT 1 FROM ${courseSubcategories} cs
-            INNER JOIN ${subcategories} s ON cs.subcategory_id = s.id
-            INNER JOIN ${categories} c ON s.category_id = c.id
-            WHERE cs.course_id = ${courses}.id
-              AND c.slug IN (${slugPlaceholders})
-          )`
+          sql`${courses.level} && ${pgArrayLiteral}::text[]`
         );
       }
     }
 
-
-    if (mappedLevel) {
-      conditions.push(sql`${courses.level} @> ARRAY[${mappedLevel}]::text[]`);
-    }
-
-
+    // Год
     if (filters?.year) {
       conditions.push(eq(courses.year, filters.year));
     }
 
-
+    // Автор
     if (filters?.author) {
       conditions.push(eq(courses.authorName, filters.author));
     }
 
-
+    // Цена
     if (filters?.minPrice !== undefined) {
       conditions.push(sql`CAST(${courses.price} AS DECIMAL) >= ${filters.minPrice}`);
     }
@@ -867,12 +811,12 @@ export class DatabaseStorage implements IStorage {
       conditions.push(sql`CAST(${courses.price} AS DECIMAL) <= ${filters.maxPrice}`);
     }
 
-
+    // Рейтинг
     if (filters?.minRating !== undefined) {
       conditions.push(sql`CAST(${courses.rating} AS DECIMAL) >= ${filters.minRating}`);
     }
 
-
+    // VIP-подписка
     if (filters?.vipOnly) {
       conditions.push(eq(courses.isVipSubscription, true));
     }
@@ -880,7 +824,7 @@ export class DatabaseStorage implements IStorage {
       conditions.push(eq(courses.isVipSubscription, false));
     }
 
-
+    // Поиск по тексту
     if (filters?.search) {
       const searchLower = filters.search.toLowerCase().trim();
       const searchWords = searchLower.split(/\s+/).filter(word => word.length > 0);
@@ -897,24 +841,24 @@ export class DatabaseStorage implements IStorage {
       }
     }
 
-
+    // Базовый запрос
     let query = db
       .select({
         course: courses,
         previewVideoUrl: sql<string | null>`(
-          SELECT l.video_url
-          FROM ${lessons} l
-          INNER JOIN ${courseSections} cs ON l.section_id = cs.id
-          WHERE cs.course_id = ${courses}.id
-            AND l.video_url IS NOT NULL
-          ORDER BY cs."order", l."order"
-          LIMIT 1
-        )`.as('preview_video_url')
+        SELECT l.video_url
+        FROM ${lessons} l
+        INNER JOIN ${courseSections} cs ON l.section_id = cs.id
+        WHERE cs.course_id = ${courses}.id
+          AND l.video_url IS NOT NULL
+        ORDER BY cs."order", l."order"
+        LIMIT 1
+      )`.as('preview_video_url'),
       })
       .from(courses)
       .$dynamic();
 
-
+    // Фильтр по конкретной подкатегории
     if (filters?.subcategoryId) {
       query = query
         .innerJoin(courseSubcategories, eq(courses.id, courseSubcategories.courseId))
@@ -928,17 +872,16 @@ export class DatabaseStorage implements IStorage {
       query = query.where(and(...conditions));
     }
 
-
+    // Выполнение запроса
     const result = await query.orderBy(desc(courses.createdAt));
 
-
-
+    // Формирование результата
     let coursesData: Course[] = result.map((r: any) => ({
       ...r.course,
-      previewVideoUrl: r.previewVideoUrl
+      previewVideoUrl: r.previewVideoUrl,
     }));
 
-
+    // Исключение купленных курсов (если нужно)
     if (filters?.excludePurchased) {
       const purchasedCourseIds = await db
         .select({ courseId: purchases.courseId })

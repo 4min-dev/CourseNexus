@@ -1,5 +1,5 @@
 import { useParams, useLocation } from "wouter";
-import { useQuery, useMutation } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueries } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -21,6 +21,7 @@ import {
 import { celebrateJackpot } from "@/lib/celebration";
 import { SuccessDialog } from "@/components/success-dialog";
 import { Header } from "@/components/header";
+import { Category, Subcategory } from "@shared/schema";
 
 interface Course {
   id: string;
@@ -107,20 +108,20 @@ export default function PackagePurchase() {
       queryClient.invalidateQueries({ queryKey: ["/api/favorites"] });
       queryClient.invalidateQueries({ queryKey: ["/api/library/new-count"] });
       queryClient.invalidateQueries({ queryKey: ["/api/notifications/unread-count"] });
-      queryClient.invalidateQueries({ 
+      queryClient.invalidateQueries({
         predicate: (query) => {
           const key = query.queryKey;
-          return Array.isArray(key) && key.some(k => 
+          return Array.isArray(key) && key.some(k =>
             typeof k === 'string' && k.includes('/api/balance/transactions')
           );
         }
       });
       setConfirmDialogOpen(false);
       setUseFantiks(false);
-      
+
       // Trigger celebration animation
       celebrateJackpot();
-      
+
       // Show success dialog after a short delay
       setTimeout(() => {
         setSuccessDialogOpen(true);
@@ -153,13 +154,54 @@ export default function PackagePurchase() {
   const balance = fantiksBalance + referralBalance; // Total available balance
   const fantiks = user?.fantiks || 0;
   const price = pkg?.discountedPrice || 0;
-  
+
   // Calculate fantiks discount (max 20% off)
   const maxFantiksDiscount = price * 0.2; // 20% max discount
   const fantiksToUse = Math.min(fantiks, maxFantiksDiscount);
   const priceWithDiscount = useFantiks ? Math.max(0, price - fantiksToUse) : price;
-  
+
   const canAfford = balance >= priceWithDiscount;
+
+  const { data: categories } = useQuery<Category[]>({
+    queryKey: ["/api/categories"],
+  });
+
+  const { data: subcategories } = useQuery<Subcategory[]>({
+    queryKey: ["/api/subcategories"]
+  })
+
+  const subcategoriesQueries = useQueries({
+    queries: (pkg?.courses || []).map((course) => ({
+      queryKey: ["/api/admin/courses", course.id, "subcategories"],
+      queryFn: async (): Promise<string[]> => {
+        const response = await fetch(`/api/admin/courses/${course.id}/subcategories`, {
+          credentials: "include",
+        });
+        if (!response.ok) return [];
+        return response.json();
+      },
+      enabled: !!course.id,
+      staleTime: 5 * 60 * 1000,
+    })),
+  });
+
+  const platformQueries = useQueries({
+    queries: pkg?.courses ? pkg?.courses?.map((course) => ({
+      queryKey: ['course-platforms', course.id],
+      queryFn: async () => {
+        const response = await fetch(`/api/admin/courses/${course.id}/subcategories`, {
+          credentials: 'include',
+        });
+        if (!response.ok) {
+          throw new Error('Failed to fetch subcategories');
+        }
+        return response.json();
+      },
+      enabled: !!course.id,
+      staleTime: 5 * 60 * 1000,
+      retry: 1,
+    })) : [],
+  });
 
   if (!isAuthenticated) {
     return (
@@ -236,7 +278,7 @@ export default function PackagePurchase() {
         <div className="relative overflow-hidden rounded-2xl border-2 border-purple-500/20 bg-gradient-to-br from-background via-purple-950/10 to-pink-950/10 p-8">
           {/* Background effects */}
           <div className="absolute inset-0 bg-gradient-to-r from-purple-500/5 via-pink-500/5 to-orange-500/5" />
-          
+
           <div className="relative space-y-6">
             <div className="flex items-start justify-between flex-wrap gap-4">
               <div className="space-y-2">
@@ -292,57 +334,110 @@ export default function PackagePurchase() {
         <div className="space-y-4">
           <h2 className="text-3xl font-bold">Курсы в подборке</h2>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {pkg.courses.map((course) => (
-              <Card key={course.id} className="overflow-hidden hover-elevate" data-testid={`card-course-${course.id}`}>
-                {/* Thumbnail */}
-                <div className="relative aspect-video overflow-hidden bg-gradient-to-br from-purple-900/20 to-pink-900/20">
-                  {course.thumbnailImage ? (
-                    <img
-                      src={course.thumbnailImage}
-                      alt={course.title}
-                      className="absolute inset-0 w-full h-full object-cover"
-                    />
-                  ) : (
-                    <div className="absolute inset-0 flex items-center justify-center">
-                      <BookOpen className="h-12 w-12 text-muted-foreground/30" />
-                    </div>
-                  )}
-                  {/* Check badge */}
-                  <div className="absolute top-3 right-3">
-                    <div className="p-2 rounded-full bg-green-600 text-white shadow-lg">
-                      <Check className="h-4 w-4" />
-                    </div>
-                  </div>
-                </div>
+            {pkg.courses.map((course, index) => {
 
-                <CardHeader>
-                  <h3 className="font-bold line-clamp-2" data-testid={`text-course-title-${course.id}`}>
-                    {course.title}
-                  </h3>
-                  <div className="flex items-center gap-2 pt-2">
-                    {course.platform && (
-                      <Badge variant="outline" className="text-xs">
-                        {course.platform}
-                      </Badge>
-                    )}
-                    {course.level && (
-                      <Badge variant="outline" className="text-xs">
-                        {course.level}
-                      </Badge>
-                    )}
-                  </div>
-                </CardHeader>
+              const platformQuery = platformQueries[index];
+              console.log('platformQuery', platformQuery.data)
+              const subcategoryIds = platformQuery?.data ?? [];
 
-                <CardContent>
-                  <div className="flex items-center justify-between">
-                    <span className="text-sm text-muted-foreground">Стоимость</span>
-                    <span className="text-lg font-bold" data-testid={`text-course-price-${course.id}`}>
-                      {course.price ? `${formatPrice(parseFloat(course.price))} ₽` : 'Бесплатно'}
-                    </span>
+              const getPlatforms = () => {
+                if (!subcategoryIds.length || !subcategories || !categories) return [];
+                const matched = subcategories.filter((sub) => subcategoryIds.includes(sub.id) && sub.isActive);
+                console.log('matched', matched)
+                const categoryIds = [...new Set(matched.map(sub => sub.categoryId))];
+                return categories.filter((cat) => categoryIds.includes(cat.id) && cat.isActive);
+              };
+
+              const platforms = getPlatforms();
+              console.log(platforms)
+
+              const originalIndex = index
+
+              const courseSubcategoryIds = originalIndex !== -1
+                ? subcategoriesQueries[originalIndex]?.data ?? []
+                : [];
+
+              const selectedSubcategories = subcategories?.filter(sub =>
+                courseSubcategoryIds.includes(sub.id) && sub.isActive
+              ) ?? []
+
+              const parentCategorires = categories?.filter(cat =>
+                course.level?.includes(cat.id) &&
+                cat.isActive &&
+                !selectedSubcategories.some(selectedSub => selectedSub.categoryId === cat.id)
+              ) ?? [];
+
+              parentCategorires?.map(parent => selectedSubcategories.push(parent))
+
+              const categoriesWithoutSub = categories?.filter((cat) => course.level?.includes(cat.id) && cat.isActive) ?? []
+
+              console.log('selectedSubcategories', selectedSubcategories)
+
+              return (
+                <Card key={course.id} className="overflow-hidden hover-elevate" data-testid={`card-course-${course.id}`}>
+                  {/* Thumbnail */}
+                  <div className="relative aspect-video overflow-hidden bg-gradient-to-br from-purple-900/20 to-pink-900/20">
+                    {course.thumbnailImage ? (
+                      <img
+                        src={course.thumbnailImage}
+                        alt={course.title}
+                        className="absolute inset-0 w-full h-full object-cover"
+                      />
+                    ) : (
+                      <div className="absolute inset-0 flex items-center justify-center">
+                        <BookOpen className="h-12 w-12 text-muted-foreground/30" />
+                      </div>
+                    )}
+                    {/* Check badge */}
+                    <div className="absolute top-3 right-3">
+                      <div className="p-2 rounded-full bg-green-600 text-white shadow-lg">
+                        <Check className="h-4 w-4" />
+                      </div>
+                    </div>
                   </div>
-                </CardContent>
-              </Card>
-            ))}
+
+                  <CardHeader>
+                    <h3 className="font-bold line-clamp-2" data-testid={`text-course-title-${course.id}`}>
+                      {course.title}
+                    </h3>
+                    <div className="flex items-center gap-2 pt-2 flex-wrap">
+                      {platforms.length > 0 && platforms.map((platform) => (
+                        <Badge variant="outline" className="text-xs">
+                          {platform.name}
+                        </Badge>
+                      ))}
+
+                      {((Array.isArray(selectedSubcategories) && selectedSubcategories.length > 0) || categoriesWithoutSub) && (
+
+                        selectedSubcategories && selectedSubcategories.length > 0 ? selectedSubcategories.map(subCategory => (
+                          <Badge variant="outline" className="text-xs">
+                            {subCategory.name}
+                          </Badge>
+                        )) : categoriesWithoutSub?.map(subCategory => (
+                          <Badge variant="outline" className="text-xs">
+                            {subCategory.name}
+                          </Badge>
+                        ))
+
+
+                      )}
+
+                    </div>
+                  </CardHeader>
+
+
+
+                  <CardContent>
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm text-muted-foreground">Стоимость</span>
+                      <span className="text-lg font-bold" data-testid={`text-course-price-${course.id}`}>
+                        {course.price ? `${formatPrice(parseFloat(course.price))} ₽` : 'Бесплатно'}
+                      </span>
+                    </div>
+                  </CardContent>
+                </Card>
+              )
+            })}
           </div>
         </div>
 
@@ -429,15 +524,15 @@ export default function PackagePurchase() {
             {/* Fantiks Checkbox */}
             {fantiks > 0 && (
               <div className="flex items-start space-x-3 rounded-lg border border-border p-4 bg-muted/30">
-                <Checkbox 
-                  id="use-fantiks" 
+                <Checkbox
+                  id="use-fantiks"
                   checked={useFantiks}
                   onCheckedChange={(checked) => setUseFantiks(checked as boolean)}
                   data-testid="checkbox-use-fantiks"
                 />
                 <div className="flex-1 space-y-1">
-                  <Label 
-                    htmlFor="use-fantiks" 
+                  <Label
+                    htmlFor="use-fantiks"
                     className="text-sm font-medium leading-none cursor-pointer flex items-center gap-2"
                   >
                     <Sparkles className="h-4 w-4 text-yellow-500" />
@@ -466,7 +561,7 @@ export default function PackagePurchase() {
                   {formatPrice(price)} ₽
                 </span>
               </div>
-              
+
               {useFantiks && fantiksToUse > 0 && (
                 <>
                   <div className="flex justify-between items-center text-yellow-600 dark:text-yellow-500">
