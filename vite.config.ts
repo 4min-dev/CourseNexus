@@ -1,26 +1,19 @@
-import { defineConfig } from "vite";
-import react from "@vitejs/plugin-react";
-import path from "path";
+import { defineConfig } from "vite"
+import react from "@vitejs/plugin-react"
+import path from "path"
 
-const cdnBase = process.env.BUNNY_CDN_URL?.replace(/\/+$/, "");
-const base =
-  process.env.NODE_ENV === "production" && cdnBase ? `${cdnBase}/` : "/";
+const cdnBase = process.env.BUNNY_CDN_URL?.replace(/\/+$/, "")
+const base = process.env.NODE_ENV === "production" && cdnBase ? `${cdnBase}/` : "/"
 
 export default defineConfig(async () => {
-
   return {
     plugins: [
       react(),
-      ...(process.env.NODE_ENV !== "production" &&
-      process.env.REPL_ID !== undefined
+      ...(process.env.NODE_ENV !== "production" && process.env.REPL_ID !== undefined
         ? [
-            await import("@replit/vite-plugin-cartographer").then((m) =>
-              m.cartographer(),
-            ),
-            await import("@replit/vite-plugin-dev-banner").then((m) =>
-              m.devBanner(),
-            ),
-          ]
+          await import("@replit/vite-plugin-cartographer").then(m => m.cartographer()),
+          await import("@replit/vite-plugin-dev-banner").then(m => m.devBanner()),
+        ]
         : []),
     ],
     resolve: {
@@ -42,5 +35,5 @@ export default defineConfig(async () => {
         deny: ["**/.*"],
       },
     },
-  };
-});
+  }
+})

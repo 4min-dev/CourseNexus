@@ -126,7 +126,7 @@ import {
   type InsertSchedulerRun,
 } from "@shared/schema";
 import { db } from "./db";
-import { eq, and, desc, like, or, sql, getTableColumns, isNotNull, isNull, inArray, not, gte, lt, lte } from "drizzle-orm";
+import { eq, and, desc, like, or, sql, getTableColumns, isNotNull, isNull, inArray, not, gte, lt, lte, SQL } from "drizzle-orm";
 import { randomUUID } from "crypto";
 import { sendNotificationToTelegram } from "./telegram";
 import { deleteFromCDNNow } from "./cdnnowStorage";
@@ -752,7 +752,7 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getCourses(filters?: {
-    levelIds?: string[];                    // Новый параметр: массив ID категорий для фильтра по level[]
+    levelIds?: string[];
     year?: number;
     minPrice?: number;
     maxPrice?: number;
@@ -764,10 +764,12 @@ export class DatabaseStorage implements IStorage {
     excludeVipPackages?: boolean;
     excludePurchased?: string | null;
     forAdmin?: boolean;
+
+    take?: number;
+    skip?: number;
   }): Promise<Course[]> {
     const conditions: SQL[] = [];
 
-    // Скрытые курсы в магазине/библиотеке
     if (!filters?.forAdmin) {
       conditions.push(eq(courses.hiddenInShop, false));
     }
@@ -776,34 +778,27 @@ export class DatabaseStorage implements IStorage {
       conditions.push(eq(courses.hiddenInLibrary, false));
     }
 
-    // === ФИЛЬТРАЦИЯ ПО level[] (платформы, уровни и любые другие категории) ===
     if (filters?.levelIds && filters.levelIds.length > 0) {
       const ids = filters.levelIds
         .map(id => id.trim())
         .filter(id => id.length > 0);
 
       if (ids.length > 0) {
-        // Формируем корректный PostgreSQL array literal: {"id1","id2",...}
-        // Кавычки обязательны, потому что ID — это UUID (с дефисами)
         const pgArrayLiteral = `{${ids.map(id => `"${id}"`).join(',')}}`;
-
         conditions.push(
           sql`${courses.level} && ${pgArrayLiteral}::text[]`
         );
       }
     }
 
-    // Год
     if (filters?.year) {
       conditions.push(eq(courses.year, filters.year));
     }
 
-    // Автор
     if (filters?.author) {
       conditions.push(eq(courses.authorName, filters.author));
     }
 
-    // Цена
     if (filters?.minPrice !== undefined) {
       conditions.push(sql`CAST(${courses.price} AS DECIMAL) >= ${filters.minPrice}`);
     }
@@ -811,12 +806,10 @@ export class DatabaseStorage implements IStorage {
       conditions.push(sql`CAST(${courses.price} AS DECIMAL) <= ${filters.maxPrice}`);
     }
 
-    // Рейтинг
     if (filters?.minRating !== undefined) {
       conditions.push(sql`CAST(${courses.rating} AS DECIMAL) >= ${filters.minRating}`);
     }
 
-    // VIP-подписка
     if (filters?.vipOnly) {
       conditions.push(eq(courses.isVipSubscription, true));
     }
@@ -824,7 +817,6 @@ export class DatabaseStorage implements IStorage {
       conditions.push(eq(courses.isVipSubscription, false));
     }
 
-    // Поиск по тексту
     if (filters?.search) {
       const searchLower = filters.search.toLowerCase().trim();
       const searchWords = searchLower.split(/\s+/).filter(word => word.length > 0);
@@ -841,7 +833,6 @@ export class DatabaseStorage implements IStorage {
       }
     }
 
-    // Базовый запрос
     let query = db
       .select({
         course: courses,
@@ -858,7 +849,6 @@ export class DatabaseStorage implements IStorage {
       .from(courses)
       .$dynamic();
 
-    // Фильтр по конкретной подкатегории
     if (filters?.subcategoryId) {
       query = query
         .innerJoin(courseSubcategories, eq(courses.id, courseSubcategories.courseId))
@@ -872,16 +862,25 @@ export class DatabaseStorage implements IStorage {
       query = query.where(and(...conditions));
     }
 
-    // Выполнение запроса
-    const result = await query.orderBy(desc(courses.createdAt));
+    const take = filters?.take && filters.take > 0 ? Math.min(filters.take, 100) : undefined;
+    const skip = filters?.skip && filters.skip >= 0 ? filters.skip : 0;
 
-    // Формирование результата
+    if (take !== undefined) {
+      query = query.limit(take);
+    }
+    if (skip > 0) {
+      query = query.offset(skip);
+    }
+
+    query = query.orderBy(desc(courses.createdAt));
+
+    const result = await query;
+
     let coursesData: Course[] = result.map((r: any) => ({
       ...r.course,
       previewVideoUrl: r.previewVideoUrl,
     }));
 
-    // Исключение купленных курсов (если нужно)
     if (filters?.excludePurchased) {
       const purchasedCourseIds = await db
         .select({ courseId: purchases.courseId })

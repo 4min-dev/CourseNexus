@@ -500,11 +500,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         vipOnly,
         excludeVipPackages,
         excludePurchased,
+        limit,
       } = req.query;
 
       const userId = req.user?.claims?.sub || null;
 
-      // Собираем все ID, по которым нужно фильтровать массив level[]
       const levelIdsToInclude: string[] = [];
 
       if (platform && typeof platform === 'string') {
@@ -515,11 +515,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
         levelIdsToInclude.push(level);
       }
 
-      // Поддержка множественных значений: ?platform=1&platform=2 или ?level=3,4
-      // Но для простоты пока предполагаем один ID. Если нужно несколько — скажи.
+      let take = 20;
+      if (limit) {
+        const parsed = parseInt(limit as string, 10);
+        if (!isNaN(parsed) && parsed > 0) {
+          take = Math.min(parsed, 100);
+        }
+      }
 
       const courses = await storage.getCourses({
-        // Передаём массив ID, которые должны быть в course.level[]
         levelIds: levelIdsToInclude.length > 0 ? levelIdsToInclude : undefined,
 
         year: year ? parseInt(year as string) : undefined,
@@ -532,6 +536,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         excludeVipPackages: excludeVipPackages === 'true',
         excludePurchased: (excludePurchased === 'true' && userId) ? userId : null,
         forAdmin: false,
+        take,
+        skip: 0,
       });
 
       res.json(courses);
