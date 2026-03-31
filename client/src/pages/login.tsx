@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useLocation } from "wouter";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
@@ -12,12 +12,15 @@ import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { ArrowLeft, Loader2, AlertCircle, CheckCircle2, XCircle, RefreshCw, ExternalLink, Wifi, Link2, Lock, Bell } from "lucide-react";
 import { SiTelegram } from "react-icons/si";
-import Shop from "@/pages/shop";
+import { ShopPreview } from "@/components/shop-preview";
 import { NeonLogo } from "@/components/NeonLogo";
 
+const LOGIN_FORM_STATE_TTL_MS = 30 * 60 * 1000;
 export default function Login() {
   const [, setLocation] = useLocation();
   const { toast } = useToast();
+  const verificationInputRef = useRef<HTMLInputElement>(null);
+  const [isTelegramInApp, setIsTelegramInApp] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [formData, setFormData] = useState({
     email: "",
@@ -30,24 +33,35 @@ export default function Login() {
   const [twoFaCode, setTwoFaCode] = useState("");
   const [twoFaSessionId, setTwoFaSessionId] = useState("");
 
+  const blurActiveElement = () => {
+    const activeElement = document.activeElement;
+    if (activeElement instanceof HTMLElement) {
+      activeElement.blur();
+    }
+  };
+
   // Restore state from localStorage on mount
   useEffect(() => {
     try {
       const savedState = localStorage.getItem('loginFormState');
       if (savedState) {
         const parsed = JSON.parse(savedState);
-        
+        const isFreshState = parsed?.timestamp && (Date.now() - parsed.timestamp) < LOGIN_FORM_STATE_TTL_MS;
+        if (!isFreshState) {
+          localStorage.removeItem('loginFormState');
+          return;
+        }
+
         // Restore email (but not password for security!)
         if (parsed.email) {
           setFormData(prev => ({ ...prev, email: parsed.email }));
         }
-        
-        // Restore 2FA dialog state (but not sensitive data like sessionId or code)
-        if (parsed.twoFaDialogOpen) {
+
+        // We never persist sessionId, so restoring step 2 would create a broken state.
+        if (parsed.twoFaDialogOpen && parsed.twoFaStep === 1) {
           setTwoFaDialogOpen(true);
-          setTwoFaStep(parsed.twoFaStep || 1);
+          setTwoFaStep(1);
           setTwoFaEmail(parsed.twoFaEmail || "");
-          // Do NOT restore twoFaCode or twoFaSessionId - security risk!
         }
       }
     } catch (error) {
@@ -79,7 +93,7 @@ export default function Login() {
     try {
       const response = await apiRequest("POST", "/api/auth/local", formData);
       const data = await response.json();
-      
+
       // Check if 2FA is required
       if (data.requiresTwoFactor) {
         // Validate that we have session data
@@ -92,13 +106,13 @@ export default function Login() {
           });
           return;
         }
-        
+
         // User has Telegram linked - show 2FA dialog
         setTwoFaSessionId(data.sessionId);
         setTwoFaEmail(data.email);
         setTwoFaStep(2); // Go directly to code entry step
         setTwoFaDialogOpen(true);
-        
+
         toast({
           title: "Код отправлен в Telegram!",
           description: "Проверьте сообщения в Telegram и введите код",
@@ -106,15 +120,16 @@ export default function Login() {
       } else {
         // No 2FA required - login successful
         await queryClient.invalidateQueries({ queryKey: ["/api/auth/user"] });
-        
+        sessionStorage.removeItem("justLoggedIn");
+
         // Clear localStorage on successful login
         localStorage.removeItem('loginFormState');
-        
+
         toast({
           title: "Вход выполнен!",
           description: "Добро пожаловать",
         });
-        setLocation("/shop");
+        window.location.assign("/shop");
       }
     } catch (error: any) {
       toast({
@@ -136,6 +151,7 @@ export default function Login() {
       if (data.sessionId) {
         setTwoFaSessionId(data.sessionId);
       }
+      setTwoFaCode("");
       toast({
         title: "Код отправлен в Telegram!",
         description: "Проверьте сообщения в Telegram",
@@ -145,7 +161,7 @@ export default function Login() {
     onError: (error: any) => {
       const errorMessage = error.message || "Не удалось отправить код";
       let description = errorMessage;
-      
+
       if (error.status === 429) {
         description = "Слишком много попыток. Попробуйте позже.";
       } else if (errorMessage.includes("Telegram account not linked")) {
@@ -153,7 +169,7 @@ export default function Login() {
       } else if (errorMessage.includes("User not found")) {
         description = "Пользователь с таким email не найден.";
       }
-      
+
       toast({
         title: "Ошибка отправки кода",
         description,
@@ -172,21 +188,22 @@ export default function Login() {
         try {
           await apiRequest("POST", "/api/auth/telegram-2fa", { sessionToken: data.sessionToken });
           await queryClient.invalidateQueries({ queryKey: ["/api/auth/user"] });
-          
+          sessionStorage.removeItem("justLoggedIn");
+
           toast({
             title: "Вход выполнен!",
             description: "Добро пожаловать",
           });
-          
+
           // Clear localStorage on successful login
           localStorage.removeItem('loginFormState');
-          
+
           setTwoFaDialogOpen(false);
           setTwoFaStep(1);
           setTwoFaEmail("");
           setTwoFaCode("");
-          
-          setLocation("/shop");
+
+          window.location.assign("/shop");
         } catch (error: any) {
           toast({
             title: "Ошибка входа",
@@ -205,11 +222,11 @@ export default function Login() {
     onError: (error: any) => {
       const errorMessage = error.message || "Не удалось проверить код";
       let description = errorMessage;
-      
+
       if (error.status === 429) {
         description = "Слишком много попыток. Попробуйте позже.";
       }
-      
+
       toast({
         title: "Ошибка проверки кода",
         description,
@@ -227,17 +244,42 @@ export default function Login() {
 
   const handleVerifyCode = (e: React.FormEvent) => {
     e.preventDefault();
-    if (twoFaCode && twoFaSessionId) {
-      verifyCodeMutation.mutate({ code: twoFaCode, sessionId: twoFaSessionId });
+    if (isTelegramInApp) {
+      blurActiveElement();
     }
+    if (!twoFaSessionId) {
+      toast({
+        title: "Сессия устарела",
+        description: "Запросите код заново и попробуйте снова",
+        variant: "destructive",
+      });
+      setTwoFaStep(1);
+      return;
+    }
+
+    const normalizedCode = twoFaCode.replace(/\D/g, "").slice(0, 4);
+    if (normalizedCode.length !== 4) {
+      toast({
+        title: "Некорректный код",
+        description: "Введите 4 цифры из Telegram",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    verifyCodeMutation.mutate({ code: normalizedCode, sessionId: twoFaSessionId });
   };
 
   const handleTwoFaDialogClose = () => {
+    if (isTelegramInApp) {
+      blurActiveElement();
+    }
     setTwoFaDialogOpen(false);
     setTwoFaStep(1);
     setTwoFaEmail("");
     setTwoFaCode("");
-    
+    setTwoFaSessionId("");
+
     // Update localStorage to reflect closed dialog (no sensitive data)
     try {
       const savedState = localStorage.getItem('loginFormState');
@@ -254,40 +296,29 @@ export default function Login() {
   };
 
   const handleBackToEmail = () => {
+    if (isTelegramInApp) {
+      blurActiveElement();
+    }
     setTwoFaStep(1);
     setTwoFaCode("");
+    setTwoFaSessionId("");
   };
 
   return (
-    <div className="relative min-h-screen overflow-hidden">
-      <div 
-        className="absolute inset-0 pointer-events-none select-none"
+    <div className="relative min-h-screen overflow-hidden isolate bg-background">
+      <div className="absolute inset-0 z-0 pointer-events-none select-none overflow-hidden">
+        <ShopPreview />
+      </div>
+
+      <div
+        className="absolute inset-0 z-10 bg-gradient-to-br from-background/42 via-background/34 to-background/42"
         style={{
-          filter: 'blur(2px)',
-          overflow: 'hidden',
+          backdropFilter: 'blur(3px) saturate(118%)',
+          WebkitBackdropFilter: 'blur(3px) saturate(118%)',
         }}
-      >
-        <Shop />
-      </div>
-
-      <div className="absolute inset-0 pointer-events-none">
-        <div className="absolute top-[25%] left-[15%] w-64 h-64 bg-gradient-radial from-purple-500/12 via-purple-500/4 to-transparent rounded-full blur-3xl" />
-        <div className="absolute top-[25%] right-[15%] w-64 h-64 bg-gradient-radial from-pink-500/12 via-pink-500/4 to-transparent rounded-full blur-3xl" />
-        <div className="absolute top-[45%] left-[25%] w-56 h-56 bg-gradient-radial from-blue-500/10 via-blue-500/3 to-transparent rounded-full blur-3xl" />
-        <div className="absolute top-[45%] right-[25%] w-56 h-56 bg-gradient-radial from-cyan-500/10 via-cyan-500/3 to-transparent rounded-full blur-3xl" />
-        <div className="absolute top-[35%] left-[35%] w-40 h-40 bg-gradient-radial from-violet-500/15 via-violet-500/5 to-transparent rounded-full blur-2xl" />
-        <div className="absolute top-[55%] right-[35%] w-40 h-40 bg-gradient-radial from-fuchsia-500/15 via-fuchsia-500/5 to-transparent rounded-full blur-2xl" />
-      </div>
-
-      <div 
-        className="absolute inset-0 bg-gradient-to-r from-background/65 via-background/50 to-background/65" 
-        style={{
-          backdropFilter: 'blur(8px) saturate(180%)',
-          WebkitBackdropFilter: 'blur(8px) saturate(180%)'
-        }} 
       />
 
-      <div className="relative min-h-screen flex items-center justify-center p-4 animate-in fade-in duration-300">
+      <div className="relative z-20 min-h-screen flex items-center justify-center p-4 animate-in fade-in duration-300">
         <Button
           variant="ghost"
           size="icon"
@@ -393,12 +424,12 @@ export default function Login() {
         </Card>
       </div>
 
-      <Dialog open={twoFaDialogOpen} onOpenChange={handleTwoFaDialogClose}>
+      <Dialog open={twoFaDialogOpen} onOpenChange={handleTwoFaDialogClose} modal={!isTelegramInApp}>
         <DialogContent className="sm:max-w-md bg-card/95 backdrop-blur-sm border-border/50">
           <DialogHeader>
             <DialogTitle>Вход через Telegram</DialogTitle>
             <DialogDescription>
-              {twoFaStep === 1 
+              {twoFaStep === 1
                 ? "Введите ваш email, указанный при регистрации, для получения кода подтверждения в Telegram"
                 : "Введите код подтверждения, отправленный в ваш Telegram"}
             </DialogDescription>
@@ -439,16 +470,32 @@ export default function Login() {
               <div className="space-y-2">
                 <Label htmlFor="verification-code">Код из Telegram</Label>
                 <Input
+                  ref={verificationInputRef}
                   id="verification-code"
                   type="text"
-                  placeholder="123456"
+                  placeholder="1234"
                   value={twoFaCode}
-                  onChange={(e) => setTwoFaCode(e.target.value)}
-                  maxLength={6}
+                  onChange={(e) => setTwoFaCode(e.target.value.replace(/\D/g, "").slice(0, 4))}
+                  inputMode="numeric"
+                  autoComplete="one-time-code"
+                  enterKeyHint="done"
+                  pattern="[0-9]*"
+                  maxLength={4}
                   required
                   data-testid="input-verification-code"
                 />
               </div>
+              {isTelegramInApp && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  className="w-full"
+                  onClick={blurActiveElement}
+                  data-testid="button-hide-keyboard"
+                >
+                  Скрыть клавиатуру
+                </Button>
+              )}
               <div className="flex gap-2">
                 <Button
                   type="button"
@@ -462,7 +509,7 @@ export default function Login() {
                 <Button
                   type="submit"
                   className="flex-1"
-                  disabled={verifyCodeMutation.isPending || !twoFaCode}
+                  disabled={verifyCodeMutation.isPending || twoFaCode.length !== 4 || !twoFaSessionId}
                   data-testid="button-verify-code"
                 >
                   {verifyCodeMutation.isPending ? (

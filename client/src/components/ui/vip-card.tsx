@@ -17,9 +17,10 @@ type VipCardProps = {
     hoveredVipId: string | null,
     vipTiers?: VipTier[]
     setHoveredVipId: React.Dispatch<React.SetStateAction<string | null>>
+    expandToLeft?: boolean
 }
 
-const VipCard: React.FC<VipCardProps> = ({ purchasedCourseIds, vip, hoveredVipId, vipTiers, setHoveredVipId }) => {
+const VipCard: React.FC<VipCardProps> = ({ purchasedCourseIds, vip, hoveredVipId, vipTiers, setHoveredVipId, expandToLeft = false }) => {
 
     const isPurchased = purchasedCourseIds.has(vip.id);
     const tier = vip.vipTier || 'bronze';
@@ -65,54 +66,58 @@ const VipCard: React.FC<VipCardProps> = ({ purchasedCourseIds, vip, hoveredVipId
                     variant="premium"
                     glowColor={config.glowColor}
                     hover={true}
-                    className={`relative overflow-visible cursor-pointer flex flex-col h-full min-h-[390px] ${isHovered ? 'absolute top-0 left-0 w-[400px] min-h-0 z-40 shadow-2xl scale-[1.02] transition-[width,height,transform,box-shadow] duration-300 ease-out' : 'transition-[width,height,transform,box-shadow] duration-300 ease-out'
+                    expandOnHover={true}
+                    className={`relative overflow-visible cursor-pointer flex flex-col h-full min-h-[340px] ${isHovered ? `absolute top-0 ${expandToLeft ? 'right-0 left-auto' : 'left-0'} w-[400px] h-auto min-h-[340px] z-40 shadow-2xl scale-[1.02] transition-[width,height,transform,box-shadow] duration-300 ease-out` : 'transition-[width,height,transform,box-shadow] duration-300 ease-out'
                         }`}
+                    style={{ willChange: isHovered ? 'transform, width, height, box-shadow' : 'auto' }}
                     data-testid={`card-vip-${tier}`}
                 >
                     <div
                         className="flex flex-col flex-1"
                     >
 
-                        <CardHeader className="space-y-3 pb-4 relative z-10 min-h-[120px]">
-                            <div className="flex items-center justify-between">
-                                {config.isDiamond ? (
-                                    <Diamond className="diamond-sparkle" />
-                                ) : (
-                                    <div className={`h-10 w-10 rounded-full ${config.sphereClass}`} />
-                                )}
+                        <CardHeader className="space-y-1 pb-2 !px-5 !py-4 relative z-10 min-h-[84px]">
+                            <div className="flex items-start justify-between gap-3">
+                                <div className="flex items-center gap-2.5 min-w-0">
+                                    {config.isDiamond ? (
+                                        <Diamond className="diamond-sparkle w-8 h-8 flex-shrink-0" />
+                                    ) : (
+                                        <div className={`h-8 w-8 rounded-full ${config.sphereClass} flex-shrink-0`} />
+                                    )}
+                                    <h3 className="font-bold text-2xl tracking-tight leading-tight break-words">
+                                        {tierData?.displayName || vip.title}
+                                    </h3>
+                                </div>
                                 {isPurchased && (
-                                    <Badge variant="default" className="bg-green-600 text-sm">
+                                    <Badge variant="default" className="bg-green-600 text-sm whitespace-nowrap">
                                         <Shield className="h-3 w-3 mr-1" />
                                         Активна
                                     </Badge>
                                 )}
                             </div>
-                            <h3 className="font-bold text-3xl tracking-tight">
-                                {tierData?.displayName || vip.title}
-                            </h3>
                             {isHovered && (
-                                <p className="text-base text-muted-foreground/90 leading-relaxed">
+                                <p className="text-base text-muted-foreground/90 leading-snug">
                                     {tierData?.description || (vip.description ? htmlToText(vip.description) : 'Эксклюзивный доступ к премиум контенту и персональной поддержке')}
                                 </p>
                             )}
                         </CardHeader>
 
-                        <CardContent className="space-y-4 pb-4 flex-1 relative z-10 min-h-[180px]">
-                            <div className="flex items-baseline gap-2">
+                        <CardContent className="space-y-1.5 pb-2 !px-5 flex-1 relative z-10 min-h-[120px]">
+                            <div className="flex items-baseline gap-1.5">
                                 <span className="text-4xl font-bold bg-gradient-to-r from-foreground to-foreground/80 bg-clip-text text-transparent">
                                     {formatPrice(tierData?.price || vip.price || "0")}
                                 </span>
                             </div>
 
                             {!isHovered ? (
-                                <p className="text-base text-muted-foreground/90 line-clamp-3 leading-relaxed">
+                                <p className="text-base text-muted-foreground/90 line-clamp-3 leading-snug">
                                     {tierData?.description || (vip.description ? htmlToText(vip.description) : 'Эксклюзивный доступ к премиум контенту и персональной поддержке')}
                                 </p>
                             ) : (
-                                <div className="space-y-2">
+                                <div className="space-y-1">
                                     <p className="text-base font-semibold text-muted-foreground">Что входит:</p>
                                     {(tierData?.features || []).map((feature: string, idx: number) => (
-                                        <div key={idx} className="flex items-start gap-2">
+                                        <div key={idx} className="flex items-start gap-1">
                                             <Check className="h-4 w-4 text-primary mt-0.5 flex-shrink-0" />
                                             <span className="text-base">{feature}</span>
                                         </div>
@@ -121,7 +126,7 @@ const VipCard: React.FC<VipCardProps> = ({ purchasedCourseIds, vip, hoveredVipId
                             )}
                         </CardContent>
 
-                        <CardFooter className="pt-0 relative z-10">
+                        <CardFooter className="pt-0 !px-5 !pb-4 relative z-10">
                             <Button
                                 className={`w-full relative overflow-hidden backdrop-blur-sm font-semibold shadow-lg transition-all duration-300 group ${isPurchased
                                     ? 'bg-white/5 border-2 border-green-500/30 text-white'

@@ -30,6 +30,15 @@ class VideoProcessingQueue {
     try {
       console.log('[VideoQueue] Восстановление очереди из базы...');
 
+      await db
+        .update(lessons)
+        .set({
+          processingStatus: 'failed',
+          errorMessage: 'Ошибка выгрузки видео на CDN',
+          conversionProgress: 0
+        })
+        .where(eq(lessons.processingStatus, 'uploading'))
+
       const pending = await db
         .select({
           id: lessons.id,

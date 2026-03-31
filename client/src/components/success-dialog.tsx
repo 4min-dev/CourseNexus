@@ -49,6 +49,11 @@ export function SuccessDialog({
               <div className="space-y-2">
                 <div className="flex items-start gap-2">
                   <ArrowRight className="h-4 w-4 mt-0.5 shrink-0 text-primary" />
+                  <p className="text-muted-foreground">Свяжитесь с <a href="https://t.me/kurs_helper">администрацией</a> для активации</p>
+                </div>
+
+                {/* <div className="flex items-start gap-2">
+                  <ArrowRight className="h-4 w-4 mt-0.5 shrink-0 text-primary" />
                   <p className="text-muted-foreground">Перейдите в библиотеку и найдите ваш VIP пакет</p>
                 </div>
                 <div className="flex items-start gap-2">
@@ -58,7 +63,7 @@ export function SuccessDialog({
                 <div className="flex items-start gap-2">
                   <ArrowRight className="h-4 w-4 mt-0.5 shrink-0 text-primary" />
                   <p className="text-muted-foreground">Начните обучение прямо сейчас - курсы доступны без ограничений</p>
-                </div>
+                </div> */}
               </div>
             ) : (
               <div className="space-y-2">
@@ -80,15 +85,15 @@ export function SuccessDialog({
         </Alert>
 
         <DialogFooter className="flex-col sm:flex-col gap-3 mt-4">
-          <Button 
-            className="w-full" 
+          <Button
+            className="w-full"
             onClick={onGoToCourse}
             data-testid="button-go-to-course"
           >
             {isVip ? (
               <>
                 <Crown className="mr-2 h-4 w-4" />
-                Выбрать курсы
+                Связаться с администрацией
               </>
             ) : (
               <>
@@ -97,8 +102,8 @@ export function SuccessDialog({
               </>
             )}
           </Button>
-          <Button 
-            variant="outline" 
+          <Button
+            variant="outline"
             className="w-full"
             onClick={onContinueShopping}
             data-testid="button-continue-shopping"

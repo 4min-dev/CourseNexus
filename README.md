@@ -27,9 +27,12 @@
 - Start: `npm start`
 
 **Docker**
-- Prod (Neon): `docker compose -f docker-compose.prod.yml up --build`
-  - Читает `.env`, ожидает `DATABASE_URL` (Neon) и `DB_DRIVER=neon` (установлено внутри файла).
-- Dev (локальный Postgres в Compose): `docker compose -f docker-compose.dev.yml up`
+- Prod (blue/green on one host): `docker compose -f docker-compose.prod.yml up -d --build`
+  - Поднимает `app_blue` (127.0.0.1:5001) и `app_green` (127.0.0.1:5002) параллельно текущему прод-инстансу.
+  - Использует существующую docker-сеть/БД (по умолчанию `coursenexus_default`).
+  - Для zero-downtime переключения используйте `./scripts/deploy-bluegreen.sh`.
+  - Детали: `docs/deploy/BLUE_GREEN.md`.
+- Dev (локальный Postgres в Compose): `docker compose -f docker-compose.yml up`
   - Поднимает Postgres (db service) и пробрасывает `DATABASE_URL=postgresql://coursenexus:coursenexus@db:5432/coursenexus`.
   - App запускается с `npm run dev`, код монтируется из хоста.
   - После первого старта выполните `npm run db:push` (внутри контейнера или на хосте) чтобы прогнать миграции в dev-базу.

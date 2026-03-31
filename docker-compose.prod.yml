@@ -1,0 +1,65 @@
+services:
+  app_blue:
+    restart: unless-stopped
+    build:
+      context: .
+      target: production
+    image: coursenexus-app:prod
+    container_name: coursenexus_app_blue
+    env_file:
+      - .env
+    environment:
+      - NODE_ENV=production
+      - PORT=5002
+      - DB_DRIVER=pg
+      - DATABASE_URL=${DATABASE_URL:-postgresql://coursenexus:coursenexus@coursenexus_db:5432/coursenexus}
+      - PUBLIC_OBJECT_SEARCH_PATHS=${PUBLIC_OBJECT_SEARCH_PATHS:-/prod-bucket/public}
+      - PRIVATE_OBJECT_DIR=${PRIVATE_OBJECT_DIR:-/prod-bucket/private}
+      - BUNNY_STORAGE_ZONE=${BUNNY_STORAGE_ZONE}
+      - BUNNY_STORAGE_API_KEY=${BUNNY_STORAGE_API_KEY}
+      - BUNNY_STORAGE_HOST=${BUNNY_STORAGE_HOST:-storage.bunnycdn.com}
+    ports:
+      - "127.0.0.1:5001:5002"
+    networks:
+      - app_net
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"fetch('http://127.0.0.1:5002/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
+      interval: 10s
+      timeout: 4s
+      retries: 10
+      start_period: 25s
+
+  app_green:
+    restart: unless-stopped
+    build:
+      context: .
+      target: production
+    image: coursenexus-app:prod
+    container_name: coursenexus_app_green
+    env_file:
+      - .env
+    environment:
+      - NODE_ENV=production
+      - PORT=5002
+      - DB_DRIVER=pg
+      - DATABASE_URL=${DATABASE_URL:-postgresql://coursenexus:coursenexus@coursenexus_db:5432/coursenexus}
+      - PUBLIC_OBJECT_SEARCH_PATHS=${PUBLIC_OBJECT_SEARCH_PATHS:-/prod-bucket/public}
+      - PRIVATE_OBJECT_DIR=${PRIVATE_OBJECT_DIR:-/prod-bucket/private}
+      - BUNNY_STORAGE_ZONE=${BUNNY_STORAGE_ZONE}
+      - BUNNY_STORAGE_API_KEY=${BUNNY_STORAGE_API_KEY}
+      - BUNNY_STORAGE_HOST=${BUNNY_STORAGE_HOST:-storage.bunnycdn.com}
+    ports:
+      - "127.0.0.1:5002:5002"
+    networks:
+      - app_net
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"fetch('http://127.0.0.1:5002/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
+      interval: 10s
+      timeout: 4s
+      retries: 10
+      start_period: 25s
+
+networks:
+  app_net:
+    external: true
+    name: ${EXISTING_DOCKER_NETWORK:-coursenexus_default}

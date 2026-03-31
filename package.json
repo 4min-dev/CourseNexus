@@ -1,16 +1,18 @@
 {
   "name": "rest-express",
   "version": "1.0.0",
-  "type": "module",
+  "type": "commonjs",
   "license": "MIT",
   "scripts": {
     "dev": "NODE_ENV=development tsx server/index.ts",
-    "build": "vite build && esbuild server/index.ts --platform=node --packages=external --bundle --format=esm --outdir=dist",
-    "start": "NODE_ENV=production node dist/index.js",
+    "build": "vite build && esbuild server/index.ts --platform=node --packages=external --bundle --format=esm --outdir=dist --out-extension:.js=.mjs",
+    "start": "NODE_ENV=production node dist/index.mjs",
     "check": "tsc",
-    "db:push": "drizzle-kit push"
+    "db:push": "drizzle-kit push",
+    "db:seed:dev": "tsx server/dev-seed.ts"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.958.0",
     "@aws-sdk/s3-request-presigner": "^3.940.0",
     "@google-cloud/storage": "^7.17.1",
     "@hookform/resolvers": "^3.10.0",
@@ -66,14 +68,17 @@
     "bcrypt": "^6.0.0",
     "busboy": "^1.6.0",
     "canvas-confetti": "^1.9.3",
+    "cheerio": "^1.2.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "cmdk": "^1.1.1",
     "connect-pg-simple": "^10.0.0",
     "date-fns": "^3.6.0",
+    "dotenv": "^17.2.3",
     "drizzle-orm": "^0.39.1",
     "drizzle-zod": "^0.7.0",
     "embla-carousel-react": "^8.6.0",
+    "exceljs": "^4.4.0",
     "express": "^4.21.2",
     "express-session": "^1.18.1",
     "form-data": "^4.0.4",
@@ -84,10 +89,15 @@
     "memoizee": "^0.4.17",
     "memorystore": "^1.6.7",
     "multer": "^2.0.2",
+    "nanoid": "^5.1.6",
     "next-themes": "^0.4.6",
-    "node-fetch": "^3.3.2",
+    "node-cron": "^4.2.1",
+    "node-fetch": "^2.7.0",
     "passport": "^0.7.0",
     "passport-local": "^1.0.0",
+    "pg": "^8.16.3",
+    "puppeteer": "^24.37.5",
+    "puppeteer-core": "^24.37.5",
     "react": "^18.3.1",
     "react-day-picker": "^8.10.1",
     "react-dom": "^18.3.1",
@@ -121,11 +131,31 @@
     "autoprefixer": "^10.4.20",
     "drizzle-kit": "^0.31.4",
     "esbuild": "^0.25.0",
+    "playwright": "^1.58.2",
     "postcss": "^8.4.47",
     "tailwindcss": "^3.4.17",
     "tsx": "^4.20.5",
     "typescript": "5.6.3",
     "vite": "^5.4.20"
+  },
+  "overrides": {
+    "https-proxy-agent": "^7.0.6",
+    "picomatch": "2.3.2",
+    "fdir": {
+      "picomatch": "2.3.2"
+    },
+    "tinyglobby": {
+      "picomatch": "2.3.2"
+    },
+    "anymatch": {
+      "picomatch": "2.3.2"
+    },
+    "readdirp": {
+      "picomatch": "2.3.2"
+    },
+    "micromatch": {
+      "picomatch": "2.3.2"
+    }
   },
   "optionalDependencies": {
     "bufferutil": "^4.0.8"

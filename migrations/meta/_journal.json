@@ -22,6 +22,41 @@
       "when": 1763831450454,
       "tag": "0002_redundant_tarot",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1767662688624,
+      "tag": "0003_white_tyger_tiger",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1771696952800,
+      "tag": "0004_pale_emma_frost",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1771715785739,
+      "tag": "0005_cloudy_micromacro",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1771763253717,
+      "tag": "0006_jittery_praxagora",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1773402646025,
+      "tag": "0007_complex_senator_kelly",
+      "breakpoints": true
     }
   ]
 }

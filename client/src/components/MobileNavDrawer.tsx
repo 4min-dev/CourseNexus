@@ -30,20 +30,23 @@ import {
   Bell,
   Headphones,
   Heart,
+  Wallet,
 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { AwardIcon } from "@/components/award-icon";
 import { formatPrice } from "@/lib/formatPrice";
 import type { User as UserType } from "@shared/schema";
+import type { MouseEvent } from "react";
 
 interface MobileNavDrawerProps {
   isOpen: boolean;
   onClose: () => void;
   user?: UserType;
   onOpenFilters?: () => void;
+  logout: () => void
 }
 
-export function MobileNavDrawer({ isOpen, onClose, user, onOpenFilters }: MobileNavDrawerProps) {
+export function MobileNavDrawer({ isOpen, onClose, user, onOpenFilters, logout }: MobileNavDrawerProps) {
   const regularBalance = parseFloat(user?.balance || "0");
   const referralBalance = parseFloat(user?.referralBalance || "0");
   const totalBalance = regularBalance + referralBalance;
@@ -73,28 +76,34 @@ export function MobileNavDrawer({ isOpen, onClose, user, onOpenFilters }: Mobile
   const handleLogout = async () => {
     // Close the sheet first to prevent event conflicts
     onClose();
-    
+
     // Small delay to allow sheet animation to complete
     await new Promise(resolve => setTimeout(resolve, 100));
-    
+
     // Clear all Telegram reminder session flags before logout
     Object.keys(sessionStorage).forEach(key => {
       if (key.startsWith('telegramReminderShown:')) {
         sessionStorage.removeItem(key);
       }
     });
-    
-    // Redirect to logout (same as desktop version)
-    window.location.href = '/api/logout';
+
+    logout()
   };
 
   const handleLinkClick = () => {
     onClose();
   };
 
+  const handleShopLinkClick = (e: MouseEvent) => {
+    e.preventDefault();
+    onClose();
+    // Keep behavior consistent with manual refresh after navigation to /shop.
+    window.location.assign("/shop");
+  };
+
   return (
     <Sheet open={isOpen} onOpenChange={onClose}>
-      <SheetContent side="left" className="w-[85vw] sm:w-[400px] p-0 flex flex-col backdrop-blur-xl bg-background/95">
+      <SheetContent side="left" className="w-[85vw] sm:w-[400px] p-0 flex flex-col bg-background/95">
         <SheetHeader className="px-6 py-5">
           <SheetTitle className="text-2xl font-bold">Меню</SheetTitle>
         </SheetHeader>
@@ -103,8 +112,8 @@ export function MobileNavDrawer({ isOpen, onClose, user, onOpenFilters }: Mobile
           <div className="flex flex-col gap-4 p-5">
             {/* User Section - iOS Card with Gradient */}
             {user && (
-              <div 
-                className="rounded-3xl bg-gradient-to-br from-purple-500/10 via-pink-500/10 to-purple-500/10 backdrop-blur-sm p-5 shadow-lg border border-border/50" 
+              <div
+                className="rounded-3xl bg-gradient-to-br from-purple-500/10 via-pink-500/10 to-purple-500/10 backdrop-blur-sm p-5 shadow-lg border border-border/50"
                 data-testid="mobile-nav-user-section"
               >
                 <div className="flex items-center gap-4 mb-4">
@@ -129,27 +138,39 @@ export function MobileNavDrawer({ isOpen, onClose, user, onOpenFilters }: Mobile
                 </div>
 
                 <div className="grid grid-cols-2 gap-3">
-                  <div className="rounded-2xl bg-card/50 backdrop-blur-sm border border-border/50 p-3 shadow-sm">
+                  <a href="/payment" className="rounded-2xl bg-card/50 backdrop-blur-sm border border-border/50 p-3 shadow-sm">
                     <p className="text-xs text-muted-foreground mb-1">Баланс</p>
                     <p className="font-semibold text-sm" data-testid="text-mobile-balance">
                       {formatPrice(totalBalance)} ₽
                     </p>
-                  </div>
-                  <div className="rounded-2xl bg-card/50 backdrop-blur-sm border border-border/50 p-3 shadow-sm">
+                  </a>
+                  <a href="/bonuses" className="rounded-2xl bg-card/50 backdrop-blur-sm border border-border/50 p-3 shadow-sm">
                     <p className="text-xs text-muted-foreground mb-1">Фантики</p>
                     <p className="font-semibold text-sm text-purple-600 dark:text-purple-400" data-testid="text-mobile-fantiks">
                       {user.fantiks || 0}
                     </p>
-                  </div>
+                  </a>
                 </div>
               </div>
             )}
+
+            <div className="rounded-2xl bg-card/50 backdrop-blur-sm border border-border/50 shadow-sm overflow-hidden">
+              <Link href="/payment" onClick={handleLinkClick}>
+                <button
+                  className="w-full flex items-center gap-3 px-5 py-4 hover:bg-muted/30 text-left min-h-[44px] transition-all hover:scale-[1.01]"
+                  data-testid="link-payment"
+                >
+                  <Wallet className="h-5 w-5" />
+                  <span className="font-semibold">Пополнить баланс</span>
+                </button>
+              </Link>
+            </div>
 
             {/* Магазин - iOS Card with Accordion */}
             <div className="rounded-2xl bg-card/50 backdrop-blur-sm border border-border/50 shadow-sm overflow-hidden">
               <Accordion type="single" collapsible className="w-full">
                 <AccordionItem value="shop" className="border-0">
-                  <AccordionTrigger 
+                  <AccordionTrigger
                     className="px-5 py-4 hover:bg-muted/30 min-h-[44px] hover:no-underline transition-all"
                     data-testid="accordion-shop"
                   >
@@ -160,7 +181,7 @@ export function MobileNavDrawer({ isOpen, onClose, user, onOpenFilters }: Mobile
                   </AccordionTrigger>
                   <AccordionContent className="pb-0">
                     <div className="flex flex-col gap-2 px-2 pb-2">
-                      <Link href="/shop" onClick={handleLinkClick}>
+                      <Link href="/shop" onClick={handleShopLinkClick}>
                         <button
                           className="w-full flex items-center gap-3 px-5 py-3 rounded-xl hover:bg-muted/30 text-left min-h-[44px] transition-all hover:scale-[1.01]"
                           data-testid="link-courses"
@@ -216,7 +237,7 @@ export function MobileNavDrawer({ isOpen, onClose, user, onOpenFilters }: Mobile
             <div className="rounded-2xl bg-card/50 backdrop-blur-sm border border-border/50 shadow-sm overflow-hidden">
               <Accordion type="single" collapsible className="w-full">
                 <AccordionItem value="activities" className="border-0">
-                  <AccordionTrigger 
+                  <AccordionTrigger
                     className="px-5 py-4 hover:bg-muted/30 min-h-[44px] hover:no-underline transition-all"
                     data-testid="accordion-activities"
                   >

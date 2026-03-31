@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import AdminLayout from "@/components/AdminLayout";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -14,7 +14,8 @@ import { Search, Shield, ShieldOff, Ban, CheckCircle, Coins, DollarSign, Users, 
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { formatPrice } from "@/lib/formatPrice";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import AdminUserCourseCard from "@/components/ui/admin-user-course-card";
+import { Category, Subcategory } from "@shared/schema";
 
 const USERS_PER_PAGE = 20;
 const COURSES_PER_PAGE = 10;
@@ -56,9 +57,17 @@ export default function AdminUsers() {
   const [userForReferralPercent, setUserForReferralPercent] = useState<User | null>(null);
   const [selectedUserForPurchases, setSelectedUserForPurchases] = useState<User | null>(null);
   const [isGrantCourseDialogOpen, setIsGrantCourseDialogOpen] = useState(false);
-  const [selectedCourseToGrant, setSelectedCourseToGrant] = useState<string>("");
+  const [selectedCoursesToGrant, setSelectedCoursesToGrant] = useState<string[]>([]);
   const [courseSearchQuery, setCourseSearchQuery] = useState("");
   const [coursePage, setCoursePage] = useState(1);
+
+  const { data: categories } = useQuery<Category[]>({
+    queryKey: ["/api/categories"],
+  });
+
+  const { data: subcategories } = useQuery<Subcategory[]>({
+    queryKey: ["/api/subcategories"],
+  });
 
   // Debounce search input
   useEffect(() => {
@@ -69,10 +78,10 @@ export default function AdminUsers() {
   }, [searchInput]);
 
   // Fetch users with search
-  const queryUrl = searchQuery 
+  const queryUrl = searchQuery
     ? `/api/admin/users?search=${encodeURIComponent(searchQuery)}`
     : "/api/admin/users";
-    
+
   const { data: users, isLoading } = useQuery<User[]>({
     queryKey: [queryUrl],
     staleTime: 0,
@@ -82,7 +91,7 @@ export default function AdminUsers() {
   // Separate admins and regular users
   const allAdmins = users?.filter(u => u.isAdmin) || [];
   const allRegularUsers = users?.filter(u => !u.isAdmin) || [];
-  
+
   // Pagination calculations for regular users only
   const totalRegularUsers = allRegularUsers.length;
   const totalPages = Math.ceil(totalRegularUsers / USERS_PER_PAGE);
@@ -108,10 +117,10 @@ export default function AdminUsers() {
       return apiRequest("PUT", `/api/admin/users/${userId}/admin`, { isAdmin });
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ 
-        predicate: (query) => 
-          Array.isArray(query.queryKey) && 
-          typeof query.queryKey[0] === 'string' && 
+      queryClient.invalidateQueries({
+        predicate: (query) =>
+          Array.isArray(query.queryKey) &&
+          typeof query.queryKey[0] === 'string' &&
           query.queryKey[0].startsWith('/api/admin/users')
       });
       toast({ title: "Успешно", description: "Статус администратора обновлён" });
@@ -126,10 +135,10 @@ export default function AdminUsers() {
       return apiRequest("PUT", `/api/admin/users/${userId}/blocked`, { isBlocked });
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ 
-        predicate: (query) => 
-          Array.isArray(query.queryKey) && 
-          typeof query.queryKey[0] === 'string' && 
+      queryClient.invalidateQueries({
+        predicate: (query) =>
+          Array.isArray(query.queryKey) &&
+          typeof query.queryKey[0] === 'string' &&
           query.queryKey[0].startsWith('/api/admin/users')
       });
       toast({ title: "Успешно", description: "Статус блокировки обновлён" });
@@ -144,10 +153,10 @@ export default function AdminUsers() {
       return apiRequest("POST", `/api/admin/users/${userId}/balance`, { amount });
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ 
-        predicate: (query) => 
-          Array.isArray(query.queryKey) && 
-          typeof query.queryKey[0] === 'string' && 
+      queryClient.invalidateQueries({
+        predicate: (query) =>
+          Array.isArray(query.queryKey) &&
+          typeof query.queryKey[0] === 'string' &&
           query.queryKey[0].startsWith('/api/admin/users')
       });
       toast({ title: "Успешно", description: "Баланс пополнен" });
@@ -165,15 +174,15 @@ export default function AdminUsers() {
       return apiRequest("POST", `/api/admin/users/balance/all`, { amount });
     },
     onSuccess: (data: any) => {
-      queryClient.invalidateQueries({ 
-        predicate: (query) => 
-          Array.isArray(query.queryKey) && 
-          typeof query.queryKey[0] === 'string' && 
+      queryClient.invalidateQueries({
+        predicate: (query) =>
+          Array.isArray(query.queryKey) &&
+          typeof query.queryKey[0] === 'string' &&
           query.queryKey[0].startsWith('/api/admin/users')
       });
-      toast({ 
-        title: "Успешно", 
-        description: `Баланс пополнен для ${data.updatedCount} пользователей` 
+      toast({
+        title: "Успешно",
+        description: `Баланс пополнен для ${data.updatedCount} пользователей`
       });
       setIsBalanceAllDialogOpen(false);
       setBalanceAllAmount("");
@@ -188,16 +197,16 @@ export default function AdminUsers() {
       return apiRequest("POST", `/api/admin/users/${userId}/withdraw-referral`, { amount });
     },
     onSuccess: (data: any) => {
-      queryClient.invalidateQueries({ 
-        predicate: (query) => 
-          Array.isArray(query.queryKey) && 
-          typeof query.queryKey[0] === 'string' && 
+      queryClient.invalidateQueries({
+        predicate: (query) =>
+          Array.isArray(query.queryKey) &&
+          typeof query.queryKey[0] === 'string' &&
           query.queryKey[0].startsWith('/api/admin/users')
       });
       const amount = data?.amount ? (typeof data.amount === 'string' ? parseFloat(data.amount) : data.amount) : 0;
-      toast({ 
-        title: "Успешно", 
-        description: `Выведено ${formatPrice(amount)} ₽` 
+      toast({
+        title: "Успешно",
+        description: `Выведено ${formatPrice(amount)} ₽`
       });
       setIsWithdrawDialogOpen(false);
       setWithdrawAmount("");
@@ -214,10 +223,10 @@ export default function AdminUsers() {
       return apiRequest("PUT", `/api/admin/users/${userId}/referral-percent`, { referralBonusPercent: percent });
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ 
-        predicate: (query) => 
-          Array.isArray(query.queryKey) && 
-          typeof query.queryKey[0] === 'string' && 
+      queryClient.invalidateQueries({
+        predicate: (query) =>
+          Array.isArray(query.queryKey) &&
+          typeof query.queryKey[0] === 'string' &&
           query.queryKey[0].startsWith('/api/admin/users')
       });
       toast({ title: "Успешно", description: "Реферальный процент обновлён" });
@@ -253,10 +262,10 @@ export default function AdminUsers() {
       return apiRequest("DELETE", `/api/admin/users/${userId}/purchases/${purchaseId}`, {});
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ 
-        predicate: (query) => 
-          Array.isArray(query.queryKey) && 
-          typeof query.queryKey[0] === 'string' && 
+      queryClient.invalidateQueries({
+        predicate: (query) =>
+          Array.isArray(query.queryKey) &&
+          typeof query.queryKey[0] === 'string' &&
           (query.queryKey[0].startsWith('/api/admin/users') || query.queryKey[0].includes('/purchases'))
       });
       toast({ title: "Успешно", description: "Покупка отменена, баланс возвращён" });
@@ -271,10 +280,10 @@ export default function AdminUsers() {
       return apiRequest("DELETE", `/api/admin/users/${userId}/vip-packages/${packageId}`, {});
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ 
-        predicate: (query) => 
-          Array.isArray(query.queryKey) && 
-          typeof query.queryKey[0] === 'string' && 
+      queryClient.invalidateQueries({
+        predicate: (query) =>
+          Array.isArray(query.queryKey) &&
+          typeof query.queryKey[0] === 'string' &&
           (query.queryKey[0].startsWith('/api/admin/users') || query.queryKey[0].includes('/vip-packages'))
       });
       toast({ title: "Успешно", description: "VIP-пакет отменён, баланс возвращён" });
@@ -289,15 +298,15 @@ export default function AdminUsers() {
       return apiRequest("POST", `/api/admin/users/${userId}/purchases/grant`, { courseId });
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ 
-        predicate: (query) => 
-          Array.isArray(query.queryKey) && 
-          typeof query.queryKey[0] === 'string' && 
+      queryClient.invalidateQueries({
+        predicate: (query) =>
+          Array.isArray(query.queryKey) &&
+          typeof query.queryKey[0] === 'string' &&
           (query.queryKey[0].startsWith('/api/admin/users') || query.queryKey[0].includes('/purchases'))
       });
       toast({ title: "Успешно", description: "Курс успешно выдан пользователю" });
       setIsGrantCourseDialogOpen(false);
-      setSelectedCourseToGrant("");
+      setSelectedCoursesToGrant([]);
     },
     onError: (error: any) => {
       const message = error.message || "Не удалось выдать курс";
@@ -307,24 +316,24 @@ export default function AdminUsers() {
 
   const handleAddBalance = () => {
     if (!selectedUser) return;
-    
+
     const trimmedAmount = balanceAmount.trim();
     if (!trimmedAmount) {
       toast({ title: "Ошибка", description: "Введите сумму", variant: "destructive" });
       return;
     }
-    
+
     const amount = parseFloat(trimmedAmount);
     if (isNaN(amount)) {
       toast({ title: "Ошибка", description: "Введите число", variant: "destructive" });
       return;
     }
-    
+
     if (amount === 0) {
       toast({ title: "Ошибка", description: "Сумма не может быть нулевой", variant: "destructive" });
       return;
     }
-    
+
     addBalanceMutation.mutate({ userId: selectedUser.id, amount });
   };
 
@@ -334,36 +343,36 @@ export default function AdminUsers() {
       toast({ title: "Ошибка", description: "Введите сумму", variant: "destructive" });
       return;
     }
-    
+
     const amount = parseFloat(trimmedAmount);
     if (isNaN(amount)) {
       toast({ title: "Ошибка", description: "Введите число", variant: "destructive" });
       return;
     }
-    
+
     if (amount === 0) {
       toast({ title: "Ошибка", description: "Сумма не может быть нулевой", variant: "destructive" });
       return;
     }
-    
+
     addBalanceAllMutation.mutate(amount);
   };
 
   const handleWithdrawReferral = () => {
     if (!userToWithdraw) return;
-    
+
     const trimmedAmount = withdrawAmount.trim();
     if (!trimmedAmount) {
       toast({ title: "Ошибка", description: "Введите сумму", variant: "destructive" });
       return;
     }
-    
+
     const amount = parseFloat(trimmedAmount);
     if (isNaN(amount)) {
       toast({ title: "Ошибка", description: "Введите число", variant: "destructive" });
       return;
     }
-    
+
     if (amount <= 0) {
       toast({ title: "Ошибка", description: "Сумма должна быть положительной", variant: "destructive" });
       return;
@@ -374,52 +383,40 @@ export default function AdminUsers() {
       toast({ title: "Ошибка", description: "Недостаточно средств на реферальном балансе", variant: "destructive" });
       return;
     }
-    
+
     withdrawReferralMutation.mutate({ userId: userToWithdraw.id, amount });
   };
 
   const handleSetReferralPercent = () => {
     if (!userForReferralPercent) return;
-    
+
     const trimmedPercent = referralPercent.trim();
-    
+
     // Если поле пустое - сбрасываем на null (использовать общий процент)
     if (!trimmedPercent) {
       setReferralPercentMutation.mutate({ userId: userForReferralPercent.id, percent: null });
       return;
     }
-    
+
     const percent = parseInt(trimmedPercent);
     if (isNaN(percent)) {
       toast({ title: "Ошибка", description: "Введите целое число", variant: "destructive" });
       return;
     }
-    
+
     if (percent < 0 || percent > 100) {
       toast({ title: "Ошибка", description: "Процент должен быть от 0 до 100", variant: "destructive" });
       return;
     }
-    
-    setReferralPercentMutation.mutate({ userId: userForReferralPercent.id, percent });
-  };
 
-  const handleGrantCourse = () => {
-    if (!selectedUserForPurchases || !selectedCourseToGrant) {
-      toast({ title: "Ошибка", description: "Выберите курс", variant: "destructive" });
-      return;
-    }
-    
-    grantCourseMutation.mutate({ 
-      userId: selectedUserForPurchases.id, 
-      courseId: selectedCourseToGrant 
-    });
+    setReferralPercentMutation.mutate({ userId: userForReferralPercent.id, percent });
   };
 
   // Filter courses that user doesn't already have
   const availableCoursesToGrant = allCourses?.filter((course: any) => {
     const hasCourse = (userPurchases as any[])?.some((purchase: any) => purchase.courseId === course.id);
     if (hasCourse) return false;
-    
+
     // Apply search filter
     if (courseSearchQuery.trim()) {
       const query = courseSearchQuery.toLowerCase();
@@ -428,7 +425,7 @@ export default function AdminUsers() {
       const categoryMatch = course.categoryName?.toLowerCase().includes(query);
       return titleMatch || platformMatch || categoryMatch;
     }
-    
+
     return true;
   }) || [];
 
@@ -448,6 +445,33 @@ export default function AdminUsers() {
   const allAdminCount = allAdmins.length;
   const allRegularCount = allRegularUsers.length;
 
+  const toggleCourseSelection = (courseId: string) => {
+    setSelectedCoursesToGrant(prev =>
+      prev.includes(courseId)
+        ? prev.filter(id => id !== courseId)
+        : [...prev, courseId]
+    );
+  };
+
+  const handleGrantCourses = () => {
+    if (!selectedUserForPurchases || selectedCoursesToGrant.length === 0) {
+      toast({ title: "Ошибка", description: "Выберите хотя бы один курс", variant: "destructive" });
+      return;
+    }
+
+    // Выдаём каждый курс по очереди (или делаем один батч-запрос на бэкенде)
+    selectedCoursesToGrant.forEach(courseId => {
+      grantCourseMutation.mutate({
+        userId: selectedUserForPurchases.id,
+        courseId
+      });
+    });
+
+    // Очищаем выбор после успешной выдачи
+    setSelectedCoursesToGrant([]);
+    toast({ title: "Успешно", description: `Выдано ${selectedCoursesToGrant.length} курсов` });
+  };
+
   const renderUserCard = (user: User) => {
     const fullName = [user.firstName, user.lastName].filter(Boolean).join(" ") || "Без имени";
     const initials = fullName.split(" ").map(n => n[0]).join("").toUpperCase().slice(0, 2);
@@ -460,14 +484,14 @@ export default function AdminUsers() {
               <AvatarImage src={user.profileImageUrl || undefined} />
               <AvatarFallback>{initials}</AvatarFallback>
             </Avatar>
-            
+
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-2 mb-1">
                 <h3 className="font-semibold truncate">{fullName}</h3>
                 {user.isAdmin && <Badge variant="default"><Shield className="h-3 w-3 mr-1" />Админ</Badge>}
                 {user.isBlocked && <Badge variant="destructive"><Ban className="h-3 w-3 mr-1" />Заблокирован</Badge>}
               </div>
-              
+
               <div className="space-y-1 text-sm text-muted-foreground">
                 {user.email && <p className="truncate">{user.email}</p>}
                 {user.telegramUsername && <p>{user.telegramUsername.startsWith('@') ? user.telegramUsername : `@${user.telegramUsername}`}</p>}
@@ -602,7 +626,7 @@ export default function AdminUsers() {
               Всего: {users?.length || 0} • Админы: {allAdminCount} • Пользователи: {allRegularCount}
             </p>
           </div>
-          
+
           <Dialog open={isBalanceAllDialogOpen} onOpenChange={setIsBalanceAllDialogOpen}>
             <DialogTrigger asChild>
               <Button data-testid="button-add-balance-all">
@@ -758,7 +782,7 @@ export default function AdminUsers() {
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>
-              {confirmAction?.type === 'admin' 
+              {confirmAction?.type === 'admin'
                 ? (confirmAction.user.isAdmin ? 'Снять права администратора?' : 'Назначить администратором?')
                 : (confirmAction?.user.isBlocked ? 'Разблокировать пользователя?' : 'Заблокировать пользователя?')
               }
@@ -770,16 +794,16 @@ export default function AdminUsers() {
                     <strong>{[confirmAction.user.firstName, confirmAction.user.lastName].filter(Boolean).join(" ") || "Пользователь"}</strong>
                   </p>
                   {confirmAction.user.email && <p className="text-sm">{confirmAction.user.email}</p>}
-                  
+
                   {confirmAction.type === 'admin' && (
                     <p className="mt-4">
-                      {confirmAction.user.isAdmin 
+                      {confirmAction.user.isAdmin
                         ? 'Пользователь потеряет доступ к административной панели и всем её функциям.'
                         : 'Пользователь получит полный доступ к административной панели, включая управление курсами, категориями и другими пользователями.'
                       }
                     </p>
                   )}
-                  
+
                   {confirmAction.type === 'block' && (
                     <p className="mt-4">
                       {confirmAction.user.isBlocked
@@ -797,19 +821,19 @@ export default function AdminUsers() {
             <AlertDialogAction
               onClick={() => {
                 if (!confirmAction) return;
-                
+
                 if (confirmAction.type === 'admin') {
-                  toggleAdminMutation.mutate({ 
-                    userId: confirmAction.user.id, 
-                    isAdmin: !confirmAction.user.isAdmin 
+                  toggleAdminMutation.mutate({
+                    userId: confirmAction.user.id,
+                    isAdmin: !confirmAction.user.isAdmin
                   });
                 } else {
-                  toggleBlockedMutation.mutate({ 
-                    userId: confirmAction.user.id, 
-                    isBlocked: !confirmAction.user.isBlocked 
+                  toggleBlockedMutation.mutate({
+                    userId: confirmAction.user.id,
+                    isBlocked: !confirmAction.user.isBlocked
                   });
                 }
-                
+
                 setConfirmAction(null);
               }}
               data-testid="button-confirm-action"
@@ -1057,7 +1081,7 @@ export default function AdminUsers() {
         setIsGrantCourseDialogOpen(open);
         if (!open) {
           setCourseSearchQuery("");
-          setSelectedCourseToGrant("");
+          setSelectedCoursesToGrant([]);
           setCoursePage(1);
         }
       }}>
@@ -1075,7 +1099,7 @@ export default function AdminUsers() {
               )}
             </DialogDescription>
           </DialogHeader>
-          <div className="space-y-4">
+          <div className="space-y-4 overflow-hidden">
             {isLoadingCourses ? (
               <div className="text-center py-4 text-muted-foreground">Загрузка курсов...</div>
             ) : (
@@ -1110,48 +1134,12 @@ export default function AdminUsers() {
                       </div>
                       <div className="space-y-2 max-h-[400px] overflow-y-auto pr-2">
                         {paginatedCourses.map((course: any) => (
-                          <Card
-                            key={course.id}
-                            className={`cursor-pointer transition-all ${
-                              selectedCourseToGrant === course.id
-                                ? "ring-2 ring-primary bg-accent"
-                                : "hover-elevate"
-                            }`}
-                            onClick={() => setSelectedCourseToGrant(course.id)}
-                            data-testid={`card-course-grant-${course.id}`}
-                          >
-                            <CardContent className="p-3">
-                              <div className="flex items-start gap-3">
-                                <div className="flex-1 min-w-0">
-                                  <h4 className="font-semibold text-sm leading-tight mb-1">
-                                    {course.title}
-                                  </h4>
-                                  <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
-                                    {course.platform && (
-                                      <Badge variant="secondary" className="text-xs">
-                                        {course.platform}
-                                      </Badge>
-                                    )}
-                                    {course.categoryName && (
-                                      <Badge variant="outline" className="text-xs">
-                                        {course.categoryName}
-                                      </Badge>
-                                    )}
-                                    {course.year && (
-                                      <Badge variant="outline" className="text-xs">
-                                        {course.year}
-                                      </Badge>
-                                    )}
-                                  </div>
-                                </div>
-                                <div className="flex-shrink-0 text-right">
-                                  <p className="font-semibold text-primary">
-                                    {formatPrice(parseFloat(course.price))} ₽
-                                  </p>
-                                </div>
-                              </div>
-                            </CardContent>
-                          </Card>
+                          <AdminUserCourseCard key={course.id}
+                            course={course}
+                            isSelected={selectedCoursesToGrant.includes(course.id)}
+                            onToggle={() => toggleCourseSelection(course.id)}
+                            subcategories={subcategories}
+                            categories={categories} />
                         ))}
                       </div>
                     </div>
@@ -1185,12 +1173,12 @@ export default function AdminUsers() {
                     )}
 
                     <Button
-                      onClick={handleGrantCourse}
-                      disabled={!selectedCourseToGrant || grantCourseMutation.isPending}
+                      onClick={handleGrantCourses}
+                      disabled={selectedCoursesToGrant.length === 0 || grantCourseMutation.isPending}
                       className="w-full"
                       data-testid="button-confirm-grant-course"
                     >
-                      {grantCourseMutation.isPending ? "Выдача..." : "Выдать курс"}
+                      {grantCourseMutation.isPending ? "Выдача..." : `Выдать ${selectedCoursesToGrant.length} курс${selectedCoursesToGrant.length > 1 ? 'а' : ''}`}
                     </Button>
                   </>
                 )}

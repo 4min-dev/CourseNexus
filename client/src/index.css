@@ -213,6 +213,13 @@
     @apply border-border;
   }
 
+
+  @supports not (zoom: 1) {
+    html {
+      font-size: 90%;
+    }
+  }
+
   body {
     @apply font-sans antialiased bg-background text-foreground;
   }
@@ -1868,4 +1875,153 @@
     filter: invert(1);
     cursor: pointer;
   }
+}
+
+.animate-marquee {
+  animation: marquee var(--marquee-duration, 40s) linear infinite;
+}
+
+@keyframes marquee {
+  from {
+    transform: translateX(0)
+  }
+
+  to {
+    transform: translateX(-50%)
+  }
+}
+
+/* ========================================
+ * PERFORMANCE TIER OVERRIDES
+ * Low-end devices: keep style, reduce GPU-heavy effects.
+ * ======================================== */
+
+html.perf-low .backdrop-blur-sm,
+html.perf-low .backdrop-blur {
+  --tw-backdrop-blur: blur(2px) !important;
+}
+
+html.perf-low .backdrop-blur-md {
+  --tw-backdrop-blur: blur(4px) !important;
+}
+
+html.perf-low .backdrop-blur-lg,
+html.perf-low .backdrop-blur-xl {
+  --tw-backdrop-blur: blur(6px) !important;
+}
+
+html.perf-low .backdrop-blur-2xl,
+html.perf-low .backdrop-blur-3xl {
+  --tw-backdrop-blur: blur(8px) !important;
+}
+
+/* Blur utilities (used for big "glow orbs"). */
+html.perf-low .blur-3xl {
+  --tw-blur: blur(24px) !important;
+}
+html.perf-low .blur-2xl {
+  --tw-blur: blur(16px) !important;
+}
+
+/* Inline backdrop-filter (e.g. Header/Register overlays). */
+html.perf-low [style*="backdrop-filter"],
+html.perf-low [style*="backdropFilter"] {
+  backdrop-filter: blur(10px) saturate(140%) !important;
+  -webkit-backdrop-filter: blur(10px) saturate(140%) !important;
+}
+
+/* Decorative pulses are expensive on sticky / full-width layers. */
+html.perf-low header .animate-pulse {
+  animation: none !important;
+}
+
+/* Marquees: keep content, stop infinite movement. */
+html.perf-low .animate-marquee {
+  animation-play-state: paused !important;
+}
+
+/* Reduce expensive drop-shadow/filter animations on low tier. */
+html.perf-low .animate-question-premium,
+html.perf-low .animate-question-glow,
+html.perf-low .vip-shimmer,
+html.perf-low .diamond-sparkle,
+html.perf-low .award-epic,
+html.perf-low .award-legendary,
+html.perf-low .award-emoji-star,
+html.perf-low .award-emoji-target,
+html.perf-low .award-emoji-book,
+html.perf-low .award-emoji-pen {
+  animation: none !important;
+  filter: none !important;
+}
+
+/* Parallax background: pause expensive decorative CSS animations when idle. */
+[data-parallax-idle="1"] .parallax-shimmer::before,
+[data-parallax-idle="1"] .parallax-glow,
+[data-parallax-idle="1"] .parallax-dot-glow,
+[data-parallax-idle="1"] .parallax-icon-shimmer,
+[data-parallax-idle="1"] .parallax-star-twinkle,
+[data-parallax-idle="1"] .parallax-gradient-rotate {
+  animation-play-state: paused !important;
+}
+
+/* When idle, also drop "will-change" hints (they keep GPU layers alive). */
+[data-parallax-idle="1"] [data-speed] {
+  will-change: auto !important;
+}
+
+/* Landing page idle mode: pause decorative infinite animations across the page. */
+html[data-page-idle="1"] [data-landing-main="1"] .animate-pulse,
+html[data-page-idle="1"] [data-landing-main="1"] .animate-marquee,
+html[data-page-idle="1"] [data-landing-main="1"] .parallax-shimmer::before,
+html[data-page-idle="1"] [data-landing-main="1"] .parallax-glow,
+html[data-page-idle="1"] [data-landing-main="1"] .parallax-dot-glow,
+html[data-page-idle="1"] [data-landing-main="1"] .parallax-icon-shimmer,
+html[data-page-idle="1"] [data-landing-main="1"] .parallax-star-twinkle,
+html[data-page-idle="1"] [data-landing-main="1"] .parallax-gradient-rotate,
+html[data-page-idle="1"] [data-landing-main="1"] .vip-shimmer,
+html[data-page-idle="1"] [data-landing-main="1"] .diamond-sparkle {
+  animation-play-state: paused !important;
+}
+
+/* Shop page idle mode: keep visuals, pause continuous decorative movement. */
+html[data-page-idle="1"] [data-shop-main="1"] .animate-marquee,
+html[data-page-idle="1"] [data-shop-main="1"] .animate-pulse,
+html[data-page-idle="1"] [data-shop-main="1"] .vip-shimmer {
+  animation-play-state: paused !important;
+}
+
+html[data-page-idle="1"] [data-shop-main="1"] .will-change-transform {
+  will-change: auto !important;
+}
+
+/* iOS landscape safe-mode for shop: cut expensive continuous animations. */
+[data-shop-main="1"][data-mobile-safe-mode="1"] .animate-marquee,
+[data-shop-main="1"][data-mobile-safe-mode="1"] .animate-pulse,
+[data-shop-main="1"][data-mobile-safe-mode="1"] .vip-shimmer {
+  animation: none !important;
+}
+
+[data-shop-main="1"][data-mobile-safe-mode="1"] .will-change-transform {
+  will-change: auto !important;
+}
+
+/* Extra iPhone landscape safe-mode: reduce GPU-heavy compositing. */
+[data-shop-main="1"][data-mobile-safe-mode="1"] .backdrop-blur-sm,
+[data-shop-main="1"][data-mobile-safe-mode="1"] .backdrop-blur,
+[data-shop-main="1"][data-mobile-safe-mode="1"] .backdrop-blur-md,
+[data-shop-main="1"][data-mobile-safe-mode="1"] .backdrop-blur-lg,
+[data-shop-main="1"][data-mobile-safe-mode="1"] .backdrop-blur-xl,
+[data-shop-main="1"][data-mobile-safe-mode="1"] .backdrop-blur-2xl,
+[data-shop-main="1"][data-mobile-safe-mode="1"] .backdrop-blur-3xl,
+[data-shop-main="1"][data-mobile-safe-mode="1"] [style*="backdrop-filter"],
+[data-shop-main="1"][data-mobile-safe-mode="1"] [style*="backdropFilter"] {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+[data-shop-main="1"][data-mobile-safe-mode="1"] .shadow-lg,
+[data-shop-main="1"][data-mobile-safe-mode="1"] .shadow-xl,
+[data-shop-main="1"][data-mobile-safe-mode="1"] .shadow-2xl {
+  box-shadow: none !important;
 }

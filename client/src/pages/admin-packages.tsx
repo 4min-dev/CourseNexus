@@ -19,6 +19,7 @@ import { useToast } from "@/hooks/use-toast";
 import { ObjectUploader } from "@/components/ObjectUploader";
 import type { Course } from "@shared/schema";
 import { PackageThumbnailUploader } from "@/components/ui/PackageThumbnailUploader";
+import { debugLog } from "@/lib/debug";
 
 interface CoursePackage {
   id: string;
@@ -85,23 +86,23 @@ function PackageForm({ pkg, categories, onSubmit, onCancel }: {
   }, [pkgKey]); // Зависимость от полного ключа пакета
 
   const handleThumbnailUpload = async (uploadedFiles: { fileName: string; fileUrl: string }[]) => {
-    console.log('[THUMBNAIL] Upload callback triggered', uploadedFiles);
+    debugLog('[THUMBNAIL] Upload callback triggered', uploadedFiles);
 
     try {
       if (!uploadedFiles || uploadedFiles.length === 0) {
-        console.log('[THUMBNAIL] Нет загруженных файлов');
+        debugLog('[THUMBNAIL] Нет загруженных файлов');
         return;
       }
 
       const uploadedFile = uploadedFiles[0];
-      console.log('[THUMBNAIL] Загруженный файл:', uploadedFile);
+      debugLog('[THUMBNAIL] Загруженный файл:', uploadedFile);
 
       const thumbnailUrl = uploadedFile.fileUrl; // ← уже готовая публичная ссылка!
-      console.log('[THUMBNAIL] Публичная ссылка на обложку:', thumbnailUrl);
+      debugLog('[THUMBNAIL] Публичная ссылка на обложку:', thumbnailUrl);
 
       // Обновляем formData
       setFormData(prev => {
-        console.log('[THUMBNAIL] Обновление formData:', { prevThumbnail: prev.thumbnailUrl, newThumbnail: thumbnailUrl });
+        debugLog('[THUMBNAIL] Обновление formData:', { prevThumbnail: prev.thumbnailUrl, newThumbnail: thumbnailUrl });
         return { ...prev, thumbnailUrl };
       });
 
@@ -112,7 +113,7 @@ function PackageForm({ pkg, categories, onSubmit, onCancel }: {
         description: "Обложка успешно загружена и готова к использованию",
       });
 
-      console.log('[THUMBNAIL] Загрузка завершена успешно!');
+      debugLog('[THUMBNAIL] Загрузка завершена успешно!');
     } catch (error: any) {
       console.error("[THUMBNAIL] Ошибка при обработке загруженной обложки:", error);
       setIsUploadingThumbnail(false);
@@ -416,9 +417,9 @@ function ManageCoursesDialog({ packageId, initialPackage, allCourses, onClose, o
       const addedCourseIds = Array.from(currentCourseIds).filter(id => !initialCourseIds.current.has(id));
       const removedCourseIds = Array.from(initialCourseIds.current).filter(id => !currentCourseIds.has(id));
 
-      console.log('[Package Save] Adding courses:', addedCourseIds);
-      console.log('[Package Save] Removing courses:', removedCourseIds);
-      console.log('[Package Save] Total courses after save:', localCourses.length);
+      debugLog('[Package Save] Adding courses:', addedCourseIds);
+      debugLog('[Package Save] Removing courses:', removedCourseIds);
+      debugLog('[Package Save] Total courses after save:', localCourses.length);
 
       // Add new courses
       for (let i = 0; i < addedCourseIds.length; i++) {
@@ -426,21 +427,21 @@ function ManageCoursesDialog({ packageId, initialPackage, allCourses, onClose, o
         const course = localCourses.find(c => c.id === courseId);
         if (course) {
           const displayOrder = localCourses.indexOf(course);
-          console.log(`[Package Save] Adding course ${courseId} at position ${displayOrder}`);
+          debugLog(`[Package Save] Adding course ${courseId} at position ${displayOrder}`);
           await addCourseMutation.mutateAsync({ packageId, courseId, displayOrder });
         }
       }
 
       // Remove deleted courses
       for (const courseId of removedCourseIds) {
-        console.log(`[Package Save] Removing course ${courseId}`);
+        debugLog(`[Package Save] Removing course ${courseId}`);
         await removeCourseMutation.mutateAsync({ packageId, courseId });
       }
 
       // Update display order for all remaining courses
       for (let i = 0; i < localCourses.length; i++) {
         const course = localCourses[i];
-        console.log(`[Package Save] Updating order for course ${course.id} to ${i}`);
+        debugLog(`[Package Save] Updating order for course ${course.id} to ${i}`);
         await updateCourseOrderMutation.mutateAsync({
           packageId,
           courseId: course.id,
@@ -448,12 +449,12 @@ function ManageCoursesDialog({ packageId, initialPackage, allCourses, onClose, o
         });
       }
 
-      console.log('[Package Save] Invalidating cache...');
+      debugLog('[Package Save] Invalidating cache...');
       // Invalidate cache to refresh data
       await queryClient.invalidateQueries({ queryKey: ["/api/admin/packages"] });
       await queryClient.invalidateQueries({ queryKey: ["/api/packages"] });
 
-      console.log('[Package Save] All changes saved successfully');
+      debugLog('[Package Save] All changes saved successfully');
       toast({
         title: "Изменения сохранены",
         description: "Все изменения успешно сохранены",

@@ -1,0 +1,1 @@
+ALTER TABLE "lesson_progress" ADD COLUMN "last_watched_seconds" integer DEFAULT 0;

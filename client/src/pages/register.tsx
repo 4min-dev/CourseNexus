@@ -10,10 +10,13 @@ import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { ArrowLeft, Shield, ExternalLink } from "lucide-react";
 import { SiTelegram } from "react-icons/si";
-import Shop from "@/pages/shop";
 import { NeonLogo } from "@/components/NeonLogo";
+import { ShopPreview } from "@/components/shop-preview";
 import { useReferralTracking } from "@/hooks/useReferralTracking";
 import { useLandingVisit } from "@/hooks/useLandingVisit";
+import { debugLog } from "@/lib/debug";
+
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 export default function Register() {
   const [, setLocation] = useLocation();
@@ -105,11 +108,16 @@ export default function Register() {
     setIsLoading(true);
 
     try {
+      const normalizedReferralCode = formData.referralCode.trim().toUpperCase();
+      const normalizedLandingVisitId = landingVisitId && UUID_REGEX.test(landingVisitId)
+        ? landingVisitId
+        : undefined;
+
       const response = await apiRequest("POST", "/api/register", {
         ...formData,
-        referralCode: formData.referralCode || undefined,
+        referralCode: normalizedReferralCode || undefined,
         telegramCode: formData.telegramCode || undefined,
-        landingVisitId: landingVisitId || undefined,
+        landingVisitId: normalizedLandingVisitId,
       });
 
       await queryClient.invalidateQueries({ queryKey: ["/api/auth/user"] });
@@ -134,7 +142,7 @@ export default function Register() {
       if (!hasTelegramCode) {
         // Set flag to show Telegram reminder on /shop page
         sessionStorage.setItem('showTelegramReminder', 'true');
-        console.log('[Register] Set showTelegramReminder flag in sessionStorage');
+        debugLog('[Register] Set showTelegramReminder flag in sessionStorage');
       }
       
       // Navigate to shop - modal will be shown there if flag is set
@@ -152,42 +160,20 @@ export default function Register() {
 
 
   return (
-    <div className="relative min-h-screen overflow-hidden">
-      {/* Lightly Blurred Shop Page Background - iOS style */}
-      <div 
-        className="absolute inset-0 pointer-events-none select-none"
+    <div className="relative min-h-screen overflow-hidden isolate bg-background">
+      <div className="absolute inset-0 z-0 pointer-events-none select-none overflow-hidden">
+        <ShopPreview />
+      </div>
+
+      <div
+        className="absolute inset-0 z-10 bg-gradient-to-br from-background/42 via-background/34 to-background/42"
         style={{
-          filter: 'blur(2px)',
-          overflow: 'hidden',
+          backdropFilter: 'blur(3px) saturate(118%)',
+          WebkitBackdropFilter: 'blur(3px) saturate(118%)',
         }}
-      >
-        <Shop />
-      </div>
-
-      {/* Subtle light reflections - тонкие отражения без ряби */}
-      <div className="absolute inset-0 pointer-events-none">
-        {/* Отражения от карточек курсов */}
-        <div className="absolute top-[25%] left-[15%] w-64 h-64 bg-gradient-radial from-pink-500/12 via-pink-500/4 to-transparent rounded-full blur-3xl" />
-        <div className="absolute top-[25%] right-[15%] w-64 h-64 bg-gradient-radial from-purple-500/12 via-purple-500/4 to-transparent rounded-full blur-3xl" />
-        <div className="absolute top-[45%] left-[25%] w-56 h-56 bg-gradient-radial from-cyan-500/10 via-cyan-500/3 to-transparent rounded-full blur-3xl" />
-        <div className="absolute top-[45%] right-[25%] w-56 h-56 bg-gradient-radial from-blue-500/10 via-blue-500/3 to-transparent rounded-full blur-3xl" />
-        
-        {/* Отражения от кнопок */}
-        <div className="absolute top-[35%] left-[35%] w-40 h-40 bg-gradient-radial from-fuchsia-500/15 via-fuchsia-500/5 to-transparent rounded-full blur-2xl" />
-        <div className="absolute top-[55%] right-[35%] w-40 h-40 bg-gradient-radial from-violet-500/15 via-violet-500/5 to-transparent rounded-full blur-2xl" />
-      </div>
-
-      {/* Frosted Glass overlay - iOS style */}
-      <div 
-        className="absolute inset-0 bg-gradient-to-r from-background/65 via-background/50 to-background/65" 
-        style={{
-          backdropFilter: 'blur(8px) saturate(180%)',
-          WebkitBackdropFilter: 'blur(8px) saturate(180%)'
-        }} 
       />
 
-      {/* Content */}
-      <div className="relative min-h-screen flex items-center justify-center p-4 animate-in fade-in duration-300">
+      <div className="relative z-20 min-h-screen flex items-center justify-center p-4 animate-in fade-in duration-300">
         {/* Back button */}
         <Button
           variant="ghost"
@@ -291,7 +277,7 @@ export default function Register() {
                         <button
                           type="button"
                           onClick={() => window.open(`https://t.me/${siteSettings?.telegramBotUsername || 'proverka1323bot'}`, '_blank')}
-                          className="text-primary hover:underline font-medium inline-flex items-center gap-1"
+                          className="text-primary hover:underline font-medium inline-flex items-center gap-1 max-[360px]:max-w-full max-[360px]:text-[11px] max-[360px]:leading-tight max-[360px]:break-all"
                           data-testid="link-telegram-bot"
                         >
                           @{siteSettings?.telegramBotUsername || 'proverka1323bot'}
@@ -325,7 +311,7 @@ export default function Register() {
 
               <Button
                 type="submit"
-                className="w-full"
+                className="w-full max-[360px]:text-sm max-[360px]:px-2"
                 disabled={isLoading}
                 data-testid="button-register"
               >
@@ -333,11 +319,11 @@ export default function Register() {
               </Button>
             </form>
 
-            <div className="mt-4 text-center text-sm">
+            <div className="mt-4 text-center text-sm max-[360px]:text-xs">
               <span className="text-muted-foreground">Уже есть аккаунт? </span>
               <Button
                 variant="ghost"
-                className="p-0 h-auto"
+                className="p-0 h-auto max-[360px]:px-1 max-[360px]:whitespace-nowrap"
                 onClick={() => setLocation("/login")}
                 data-testid="link-login"
               >

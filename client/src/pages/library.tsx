@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useMemo } from "react";
-import { useQuery, useMutation, useQueries } from "@tanstack/react-query";
+import { useQuery, useMutation } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -15,7 +15,8 @@ import { Footer } from "@/components/footer";
 import { Pagination } from "@/components/pagination";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useAuth } from "@/hooks/useAuth";
-import { line } from "drizzle-orm/pg-core";
+import { TagsMarquee } from "@/components/ui/tags-marquee";
+import { debugLog } from "@/lib/debug";
 
 interface VipPackage {
   id: string;
@@ -55,7 +56,7 @@ interface ProgramPurchase {
   program?: Program;
 }
 
-const COURSES_PER_PAGE = 10;
+const COURSES_PER_PAGE = 12;
 
 export default function Library() {
   const { user } = useAuth();
@@ -64,7 +65,7 @@ export default function Library() {
 
   const [selectedCategories, setSelectedCategories] = useState<{
     platform?: string;
-    level?: string;
+    levels?: string[];
     year?: number;
     minRating?: number;
     author?: string;
@@ -78,7 +79,9 @@ export default function Library() {
     queryFn: async () => {
       const params = new URLSearchParams();
       if (selectedCategories.platform) params.append("platform", selectedCategories.platform);
-      if (selectedCategories.level) params.append("level", selectedCategories.level);
+      if (selectedCategories.levels && selectedCategories.levels.length > 0) {
+        params.append("level", selectedCategories.levels.join(','));
+      }
       if (selectedCategories.year) params.append("year", selectedCategories.year.toString());
       if (selectedCategories.minRating !== undefined) params.append("minRating", selectedCategories.minRating.toString());
       if (selectedCategories.author) params.append("author", selectedCategories.author);
@@ -308,40 +311,7 @@ export default function Library() {
 
   const activeVipPackages = vipPackages?.filter(pkg => !pkg.isActivated) || [];
 
-  const platformQueries = useQueries({
-    queries: paginatedLibrary.map((course) => ({
-      queryKey: ['course-platforms', course.courseId],
-      queryFn: async () => {
-        const response = await fetch(`/api/admin/courses/${course.courseId}/subcategories`, {
-          credentials: 'include',
-        });
-        if (!response.ok) {
-          throw new Error('Failed to fetch subcategories');
-        }
-        return response.json();
-      },
-      enabled: !!course.id,
-      staleTime: 5 * 60 * 1000,
-      retry: 1,
-    })),
-  });
-
   const filteredLibrary = library || []
-
-  const subcategoriesQueries = useQueries({
-    queries: filteredLibrary.map((lib) => ({
-      queryKey: ["/api/admin/courses", lib.course.id, "subcategories"],
-      queryFn: async (): Promise<string[]> => {
-        const response = await fetch(`/api/admin/courses/${lib.course.id}/subcategories`, {
-          credentials: "include",
-        });
-        if (!response.ok) return [];
-        return response.json();
-      },
-      enabled: !!lib.course.id,
-      staleTime: 5 * 60 * 1000,
-    })),
-  });
 
   return (
     <div className="min-h-screen bg-background relative">
@@ -377,7 +347,7 @@ export default function Library() {
             </div>
 
             {/* VIP Packages Section */}
-            {activeVipPackages.length > 0 && (
+            {/* {activeVipPackages.length > 0 && (
               <div className="space-y-3 md:space-y-4">
                 <h2 className="text-xl md:text-2xl font-bold">VIP Пакеты</h2>
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 md:gap-6">
@@ -434,7 +404,7 @@ export default function Library() {
                   ))}
                 </div>
               </div>
-            )}
+            )} */}
 
             {/* Programs Section */}
             {!programsLoading && programPurchases && programPurchases.length > 0 && (
@@ -527,29 +497,20 @@ export default function Library() {
                   <h2 className="text-xl md:text-2xl font-bold">Мои курсы</h2>
                   <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 md:gap-6">
                     {paginatedLibrary.map(({ course, purchaseDate }, index) => {
-                      const platformQuery = platformQueries[index];
-                      console.log('platformQuery', platformQuery.data)
-                      const subcategoryIds = platformQuery?.data ?? [];
+                      const subcategoryIds = course.subcategoryIds ?? [];
 
                       const getPlatforms = () => {
                         if (!subcategoryIds.length || !subcategories || !categories) return [];
                         const matched = subcategories.filter((sub) => subcategoryIds.includes(sub.id) && sub.isActive);
-                        console.log('matched', matched)
+                        debugLog('matched', matched)
                         const categoryIds = [...new Set(matched.map(sub => sub.categoryId))];
                         return categories.filter((cat) => categoryIds.includes(cat.id) && cat.isActive);
                       };
 
                       const platforms = getPlatforms();
 
-                      const originalIndex = library.findIndex(c => c.course.id === course.id);
-
-                      const courseSubcategoryIds = originalIndex !== -1
-                        ? subcategoriesQueries[originalIndex]?.data ?? []
-                        : [];
-
-
                       const selectedSubcategories = subcategories?.filter(sub =>
-                        courseSubcategoryIds.includes(sub.id) && sub.isActive
+                        subcategoryIds.includes(sub.id) && sub.isActive
                       ) ?? []
 
                       const parentCategorires = categories?.filter(cat =>
@@ -563,10 +524,10 @@ export default function Library() {
                       const categoriesWithoutSub = categories?.filter((cat) => course.level?.includes(cat.id) && cat.isActive) || []
 
                       return (
-                        <Link key={course.id} href={`/library/${course.id}`}>
-                          <div>
-                            <Card className="group overflow-hidden transition-all duration-200 cursor-pointer border-2 hover:border-primary/50 hover:shadow-xl hover:shadow-primary/10 hover:-translate-y-1 bg-gradient-to-br from-background via-background to-primary/5" data-testid={`card-library-course-${course.id}`}>
-                              <div className="aspect-video w-full bg-gradient-to-br from-primary/10 to-primary/5 relative overflow-hidden">
+                        <Link key={course.id} href={`/library/${course.id}`} className="h-full">
+                          <div className="h-full">
+                            <Card className="group h-full flex flex-col overflow-hidden transition-all duration-200 cursor-pointer border-2 hover:border-primary/50 hover:shadow-xl hover:shadow-primary/10 hover:-translate-y-1 bg-gradient-to-br from-background via-background to-primary/5" data-testid={`card-library-course-${course.id}`}>
+                              <div className="aspect-video w-full bg-gradient-to-br from-primary/10 to-primary/5 relative overflow-hidden flex-shrink-0">
                                 {course.thumbnailImage ? (
                                   <img
                                     src={course.thumbnailImage}
@@ -580,7 +541,7 @@ export default function Library() {
                                 )}
                               </div>
 
-                              <CardHeader className="space-y-3 p-4 md:p-6">
+                              <CardHeader className="space-y-3 p-4 md:p-6 flex-1">
                                 <h3 className="font-bold text-lg md:text-xl line-clamp-2 transition-colors duration-200">
                                   {course.title}
                                 </h3>
@@ -596,38 +557,34 @@ export default function Library() {
                                     <span className="text-sm font-medium">{course.authorName || 'Автор'}</span>
                                   </div>
                                 </div>
-                                <div className="flex flex-wrap gap-2">
-                                  {
-                                    platforms.length > 0 && platforms.map((platform) => (
-                                      <Badge variant="outline" className="text-xs font-medium">
-                                        {platform.name}
-                                      </Badge>
-                                    ))
-                                  }
-                                  {((Array.isArray(selectedSubcategories) && selectedSubcategories.length > 0) || categoriesWithoutSub) && (
-                                    <div className="flex flex-wrap gap-2">
-                                      {
-                                        selectedSubcategories && selectedSubcategories.length > 0 ? selectedSubcategories.map(subCategory => (
-                                          <Badge key={subCategory.id} variant="outline" className="text-xs font-medium">
-                                            {subCategory.name}
-                                          </Badge>
-                                        )) : categoriesWithoutSub?.map(subCategory => (
-                                          <Badge key={subCategory.id} variant="outline" className="text-xs font-medium">
-                                            {subCategory.name}
-                                          </Badge>
-                                        ))
-                                      }
-                                    </div>
-                                  )}
-                                  {course.year && (
-                                    <Badge variant="outline" className="text-xs font-medium">
-                                      {course.year}
-                                    </Badge>
-                                  )}
-                                </div>
+
+                                {(() => {
+                                  const tagItems: { id?: string; name: string }[] = [];
+                                  platforms.forEach(p => tagItems.push({ id: p.id, name: p.name }));
+                                  const subcats = selectedSubcategories && selectedSubcategories.length > 0
+                                    ? selectedSubcategories
+                                    : categoriesWithoutSub || [];
+                                  subcats.forEach(s => tagItems.push({ id: s.id, name: s.name }));
+                                  if (course.year) tagItems.push({ name: String(course.year) });
+                                  return tagItems.length > 0 ? (
+                                    <TagsMarquee
+                                      items={tagItems}
+                                      repeatCount={2}
+                                      className="my-0"
+                                    />
+                                  ) : null;
+                                })()}
+
+                                {course.description && (
+                                  <div
+                                    className="prose prose-sm dark:prose-invert max-w-none text-sm text-muted-foreground line-clamp-4 leading-relaxed"
+                                    data-testid={`text-course-description-${course.id}`}
+                                    dangerouslySetInnerHTML={{ __html: course.description || '' }}
+                                  />
+                                )}
                               </CardHeader>
 
-                              <CardContent>
+                              <CardContent className="mt-auto">
                                 <p className="text-xs text-muted-foreground">
                                   Куплено: {new Date(purchaseDate!).toLocaleDateString("ru-RU")}
                                 </p>

@@ -8,7 +8,7 @@ const Slider = React.forwardRef<
   React.ComponentPropsWithoutRef<typeof SliderPrimitive.Root>
 >(({ className, ...props }, ref) => {
   const values = Array.isArray(props.value) ? props.value : props.defaultValue ? (Array.isArray(props.defaultValue) ? props.defaultValue : [props.defaultValue]) : [0];
-  
+
   return (
     <SliderPrimitive.Root
       ref={ref}
@@ -22,9 +22,9 @@ const Slider = React.forwardRef<
         <SliderPrimitive.Range className="absolute h-full bg-primary" />
       </SliderPrimitive.Track>
       {values.map((_, index) => (
-        <SliderPrimitive.Thumb 
+        <SliderPrimitive.Thumb
           key={index}
-          className="block h-5 w-5 rounded-full border-2 border-primary bg-background ring-offset-background transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50" 
+          className="block h-4 w-4 lg:h-5 lg:w-5 rounded-full border-2 border-primary bg-background ring-offset-background transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50"
         />
       ))}
     </SliderPrimitive.Root>

@@ -1,23 +1,26 @@
 import crypto from 'crypto';
-import { getUpdates, sendTelegramMessage, sendTelegramPhoto, generateVerificationCode, deleteTelegramWebhook, answerCallbackQuery } from './telegram';
+import { getUpdates, generateVerificationCode, deleteTelegramWebhook, answerCallbackQuery, setTelegramWebhook, sendTelegramPhotoByUrl } from './telegram';
 import type { TelegramUpdate } from './telegram';
+import { storage } from './storage';
+import { db } from './db';
+import { users } from '@shared/schema';
+import { and, isNotNull, lt, eq } from 'drizzle-orm';
 
-// In-memory storage for linking codes (indexed by code hash)
 interface LinkingSession {
-  codeHash: string; // SHA-256 hash of code (plaintext never stored)
-  telegramId: number; // Telegram user ID (from.id)
+  codeHash: string;
+  telegramId: number;
   chatId: number;
   username?: string;
   firstName: string;
   lastName?: string;
-  phoneNumber?: string; // Phone number from Telegram contact
-  userId?: string; // User ID from website (set when code is verified)
+  phoneNumber?: string;
+  userId?: string;
   expiresAt: Date;
-  verified: boolean; // Has the user verified the code on the website?
+  verified: boolean;
 }
 
 interface TwoFactorSession {
-  codeHash: string; // SHA-256 hash of code (plaintext never stored)
+  codeHash: string;
   chatId: number;
   email: string;
   expiresAt: Date;
@@ -25,138 +28,247 @@ interface TwoFactorSession {
 }
 
 interface PasswordResetSession {
-  codeHash: string; // SHA-256 hash of code (plaintext never stored)
-  userId: string; // User ID who requested reset
+  codeHash: string;
+  userId: string;
   email: string;
   chatId: number;
   expiresAt: Date;
   attempts: number;
 }
 
-// Storage maps - indexed by code hash for linking, sessionId for 2FA/password reset
-const linkingSessions = new Map<string, LinkingSession>(); // key: codeHash
-const twoFactorSessions = new Map<string, TwoFactorSession>(); // key: sessionId
-const passwordResetSessions = new Map<string, PasswordResetSession>(); // key: sessionId
+const linkingSessions = new Map<string, LinkingSession>();
+const twoFactorSessions = new Map<string, TwoFactorSession>();
+const passwordResetSessions = new Map<string, PasswordResetSession>();
 
-// Rate limiting maps
+const photoUrl = 'https://cdn.go.vkurse.io/vkurse/1771888850920_photo_2026-02-10_02-01-04.jpg';
+
 const linkingAttempts = new Map<string, { count: number; resetAt: Date }>();
 const verificationAttempts = new Map<string, { count: number; resetAt: Date }>();
 
-// Cleanup expired sessions every 5 minutes
+// ────────────────────────────────────────────────
+// Тексты напоминаний (все 4 варианта)
+// ────────────────────────────────────────────────
+
+export const lastReminderLevelMap = new Map<string, number>(); // userId → индекс шаблона (0..3)
+
+
+// ────────────────────────────────────────────────
+// Тексты напоминаний (все 4 варианта) — оставляем как есть
+// ────────────────────────────────────────────────
+
+const INACTIVITY_TEMPLATES = [
+  {
+    minDays: 7,
+    maxDays: 13,
+    getText: (days: number, name?: string) =>
+      `Тебя не было уже ${days} дней а здесь кипит работа над новыми материалами 🎯\n\n` +
+      `Вышли курсы и модули которые точно стоит увидеть 💥\n` +
+      `Давай продолжим твой рост?\n\n` +
+      `<a href="https://go.vkurse.io/">Посмотреть новинки</a> 🚀`
+  },
+  {
+    minDays: 14,
+    maxDays: 29,
+    getText: (days: number, name?: string) =>
+      `Тебя не было уже ${days} дней а мы выложили новые курсы и сделали платформу еще удобнее 🔥\n\n` +
+      `Свежий контент + новые инструменты для твоих целей 🚀\n\n` +
+      `Самое время вернуться и наверстать 😏\n` +
+      `<a href="https://go.vkurse.io/">Смотреть что нового</a>`
+  },
+  {
+    minDays: 30,
+    maxDays: 59,
+    getText: (days: number, name?: string) =>
+      `Тебя не было уже месяц а здесь всё ещё те же топ-курсы от известных спикеров по реально низкой цене 🔥\n\n` +
+      `Ты уже знаешь систему — не теряй преимущество и доступ к свежему контенту без наценок 🚀\n\n` +
+      `Загляни в свой аккаунт и продолжи на своих условиях\n` +
+      `<a href="https://go.vkurse.io/">Войти в аккаунт</a>`
+  },
+  {
+    minDays: 60,
+    maxDays: Infinity,
+    getText: (days: number, name?: string) =>
+      `Тебя не было уже ${days >= 60 ? 'два месяца' : days + ' дней'} а сайт серьёзно обновился 😏\n\n` +
+      `Новые материалы новые инструменты новые разделы — всё ждёт твоего взгляда\n\n` +
+      `Загляни и оцени изменения\n` +
+      `<a href="https://go.vkurse.io/">Открыть сайт</a> 🚀`
+  }
+];
+
+// ────────────────────────────────────────────────
+// Основная функция отправки напоминаний (анти-спам)
+// ────────────────────────────────────────────────
+
+export async function sendInactivityReminders() {
+  const now = new Date();
+  const sevenDaysAgo = new Date(now);
+  sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+
+  let candidates;
+  try {
+    candidates = await db
+      .select({
+        id: users.id,
+        telegramChatId: users.telegramChatId,
+        telegramFirstName: users.telegramFirstName,
+        firstName: users.firstName,
+        lastActivityAt: users.lastActivityAt
+      })
+      .from(users)
+      .where(
+        and(
+          isNotNull(users.telegramChatId),
+          lt(users.lastActivityAt, sevenDaysAgo)
+        )
+      )
+      .limit(800);
+
+    console.log(`[Inactivity] Найдено кандидатов: ${candidates?.length || 0}`);
+  } catch (err) {
+    console.error('[Inactivity] Ошибка выборки:', err);
+    return;
+  }
+
+  if (!candidates?.length) {
+    console.log('[Inactivity] Нет неактивных пользователей с Telegram');
+    return;
+  }
+
+  let sent = 0;
+
+  for (const user of candidates) {
+    if (!user.telegramChatId || !/^\d{5,15}$/.test(user.telegramChatId)) {
+      console.log(`[Inactivity] Пропуск некорректного chat_id: ${user.telegramChatId || 'NULL'} для user ${user.id}`);
+      continue;
+    }
+
+    const daysAbsent = Math.floor(
+      (now.getTime() - new Date(user.lastActivityAt!).getTime()) / (1000 * 60 * 60 * 24)
+    );
+
+    const currentTemplateIndex = INACTIVITY_TEMPLATES.findIndex(
+      t => daysAbsent >= t.minDays && daysAbsent <= t.maxDays
+    );
+
+    if (currentTemplateIndex === -1) continue;
+
+    const currentTemplate = INACTIVITY_TEMPLATES[currentTemplateIndex];
+
+    // Проверка: отправляли ли уже напоминание на этом или более высоком уровне
+    const lastLevel = lastReminderLevelMap.get(user.id);
+    if (lastLevel !== undefined && currentTemplateIndex <= lastLevel) {
+      console.log(
+        `[Inactivity] Пропуск ${user.id}: уровень не вырос (${currentTemplateIndex} ≤ ${lastLevel})`
+      );
+      continue;
+    }
+
+    const name = user.telegramFirstName || user.firstName || undefined;
+    const message = currentTemplate.getText(daysAbsent, name);
+
+    try {
+      const success = await sendTelegramPhotoByUrl(
+        user.telegramChatId,
+        photoUrl,
+        message
+      );
+
+      if (success) {
+        sent++;
+
+        // Сохраняем уровень, на котором отправили напоминание
+        lastReminderLevelMap.set(user.id, currentTemplateIndex);
+
+        console.log(
+          `[Inactivity] Отправлено ${user.id} (${user.telegramChatId}): ${daysAbsent} дней ` +
+          `(уровень ${currentTemplateIndex} — ${currentTemplate.minDays}–${currentTemplate.maxDays} дней)`
+        );
+
+        // небольшая задержка между отправками, чтобы не попасть под лимиты Telegram
+        await new Promise(r => setTimeout(r, 1500 + Math.random() * 2000));
+      }
+    } catch (err) {
+      console.error(`[Inactivity] Ошибка отправки ${user.id} (${user.telegramChatId}):`, err);
+    }
+  }
+
+  console.log(`[Inactivity] Всего отправлено новых напоминаний: ${sent}`);
+}
+
+// ────────────────────────────────────────────────
+// Очистка сессий (без изменений)
+// ────────────────────────────────────────────────
+
 setInterval(() => {
   const now = new Date();
 
-  // Clean linking sessions
   Array.from(linkingSessions.entries()).forEach(([codeHash, session]) => {
-    if (session.expiresAt < now) {
-      linkingSessions.delete(codeHash);
-    }
+    if (session.expiresAt < now) linkingSessions.delete(codeHash);
   });
 
-  // Clean 2FA sessions
   Array.from(twoFactorSessions.entries()).forEach(([sessionId, session]) => {
-    if (session.expiresAt < now) {
-      twoFactorSessions.delete(sessionId);
-    }
+    if (session.expiresAt < now) twoFactorSessions.delete(sessionId);
   });
 
-  // Clean password reset sessions
   Array.from(passwordResetSessions.entries()).forEach(([sessionId, session]) => {
-    if (session.expiresAt < now) {
-      passwordResetSessions.delete(sessionId);
-    }
+    if (session.expiresAt < now) passwordResetSessions.delete(sessionId);
   });
 
-  // Clean rate limit maps
   Array.from(linkingAttempts.entries()).forEach(([key, data]) => {
-    if (data.resetAt < now) {
-      linkingAttempts.delete(key);
-    }
+    if (data.resetAt < now) linkingAttempts.delete(key);
   });
+
   Array.from(verificationAttempts.entries()).forEach(([key, data]) => {
-    if (data.resetAt < now) {
-      verificationAttempts.delete(key);
-    }
+    if (data.resetAt < now) verificationAttempts.delete(key);
   });
 }, 5 * 60 * 1000);
 
-/**
- * Hash a code using SHA-256
- */
+// ────────────────────────────────────────────────
+// Остальные функции (без изменений)
+// ────────────────────────────────────────────────
+
 function hashCode(code: string): string {
   return crypto.createHash('sha256').update(code).digest('hex');
 }
 
-/**
- * Verify linking code (called from website)
- */
 export function verifyLinkingCode(code: string): LinkingSession | null {
   const codeHash = hashCode(code);
   const session = linkingSessions.get(codeHash);
-
-  if (!session) {
-    return null;
-  }
-
+  if (!session) return null;
   if (session.expiresAt < new Date()) {
     linkingSessions.delete(codeHash);
     return null;
   }
-
-  // Mark as verified
   session.verified = true;
-
   return session;
 }
 
-/**
- * Delete linking session after successful linking
- */
 export function deleteLinkingSession(code: string): void {
   const codeHash = hashCode(code);
   linkingSessions.delete(codeHash);
 }
 
-/**
- * Create a 2FA session for login (returns code for immediate dispatch, never stores plaintext)
- */
 export function create2FASession(email: string, chatId: number): { sessionId: string; code: string } {
   const sessionId = crypto.randomUUID();
   const code = generateVerificationCode();
   const codeHash = hashCode(code);
-  const expiresAt = new Date(Date.now() + 5 * 60 * 1000); // 5 minutes
+  const expiresAt = new Date(Date.now() + 5 * 60 * 1000);
 
-  // SECURITY: Store only hash, never plaintext code
-  twoFactorSessions.set(sessionId, {
-    codeHash,
-    chatId,
-    email,
-    expiresAt,
-    attempts: 0,
-  });
+  twoFactorSessions.set(sessionId, { codeHash, chatId, email, expiresAt, attempts: 0 });
 
   console.log(`[Telegram Bot] Created 2FA session for email: ${email}`);
 
-  // Return code for immediate Telegram dispatch, caller must not store it
   return { sessionId, code };
 }
 
-/**
- * Verify 2FA code
- */
 export function verify2FACode(sessionId: string, code: string): { valid: boolean; email?: string } {
   const session = twoFactorSessions.get(sessionId);
-
-  if (!session) {
-    return { valid: false };
-  }
-
+  if (!session) return { valid: false };
   if (session.expiresAt < new Date()) {
     twoFactorSessions.delete(sessionId);
     return { valid: false };
   }
 
-  // Rate limiting: max 5 attempts per session
   session.attempts++;
   if (session.attempts > 5) {
     twoFactorSessions.delete(sessionId);
@@ -164,58 +276,34 @@ export function verify2FACode(sessionId: string, code: string): { valid: boolean
   }
 
   const codeHash = hashCode(code);
-  if (session.codeHash !== codeHash) {
-    return { valid: false };
-  }
+  if (session.codeHash !== codeHash) return { valid: false };
 
-  // Valid code - delete session (single use)
   const email = session.email;
   twoFactorSessions.delete(sessionId);
-
   return { valid: true, email };
 }
 
-/**
- * Create a password reset session (returns sessionId and code for immediate dispatch)
- */
 export function createPasswordResetSession(userId: string, email: string, chatId: number): { sessionId: string; code: string } {
   const sessionId = crypto.randomUUID();
   const code = generateVerificationCode();
   const codeHash = hashCode(code);
-  const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
+  const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
 
-  // SECURITY: Store only hash, never plaintext code
-  passwordResetSessions.set(sessionId, {
-    codeHash,
-    userId,
-    email,
-    chatId,
-    expiresAt,
-    attempts: 0,
-  });
+  passwordResetSessions.set(sessionId, { codeHash, userId, email, chatId, expiresAt, attempts: 0 });
 
   console.log(`[Telegram Bot] Created password reset session for user: ${userId}`);
 
-  // Return code for immediate Telegram dispatch, caller must not store it
   return { sessionId, code };
 }
 
-/**
- * Verify password reset code and return userId if valid
- */
 export function verifyPasswordResetCode(sessionId: string, code: string): { valid: boolean; userId?: string; email?: string } {
   const session = passwordResetSessions.get(sessionId);
-
-  if (!session) {
-    return { valid: false };
-  }
-
+  if (!session) return { valid: false };
   if (session.expiresAt < new Date()) {
     passwordResetSessions.delete(sessionId);
     return { valid: false };
   }
 
-  // Rate limiting: max 5 attempts per session
   session.attempts++;
   if (session.attempts > 5) {
     passwordResetSessions.delete(sessionId);
@@ -223,60 +311,40 @@ export function verifyPasswordResetCode(sessionId: string, code: string): { vali
   }
 
   const codeHash = hashCode(code);
-  if (session.codeHash !== codeHash) {
-    return { valid: false };
-  }
+  if (session.codeHash !== codeHash) return { valid: false };
 
-  // Valid code - delete session (single use)
   const userId = session.userId;
   const email = session.email;
   passwordResetSessions.delete(sessionId);
-
   return { valid: true, userId, email };
 }
 
-/**
- * Process /reset_password command (generate and send password reset code)
- */
-async function processResetPasswordCommand(telegramId: number, chatId: number, firstName: string): Promise<void> {
-  // Check if this Telegram is linked to a user
+export async function processResetPasswordCommand(telegramId: number, chatId: number, firstName: string): Promise<void> {
   const { storage } = await import('./storage');
   const user = await storage.getUserByTelegramChatId(chatId.toString());
 
   if (!user) {
-    // Not linked - cannot reset password
-    await sendTelegramPhoto(
+    await sendTelegramPhotoByUrl(
       chatId,
-      'attached_assets/bot_welcome_logo.png',
-      `❌ <b>Telegram не привязан</b>\n\nТвой Telegram не привязан ни к одному аккаунту на платформе <b>"В Курсе ?"</b>\n\nЧтобы сбросить пароль, сначала привязи Telegram к своему аккаунту командой /start 🔗`
+      photoUrl,
+      `❌ <b>Telegram не привязан</b>\n\nТвой Telegram не привязан ни к одному аккаунту на платформе <b>"В Курсе ?"</b>\n\nЧтобы сбросить пароль, сначала привяжи Telegram к своему аккаунту командой /start 🔗`
     );
     console.log(`[Telegram Bot] Password reset attempt from unlinked chatId ${chatId}`);
     return;
   }
 
-  // User is linked - generate reset code
   const { sessionId, code } = createPasswordResetSession(user.id, user.email!, chatId);
 
-  // Generate reset link with sessionId
   const appBaseUrl = (process.env.APP_BASE_URL || 'http://localhost:5000').replace(/\/$/, '');
   const resetLink = `${appBaseUrl}/reset-password?session=${sessionId}`;
 
-  // Inline keyboard с кнопкой для перехода на страницу сброса
   const inlineKeyboard = {
-    inline_keyboard: [
-      [
-        {
-          text: "🔐 Сбросить пароль",
-          url: resetLink
-        }
-      ]
-    ]
+    inline_keyboard: [[{ text: "🔐 Сбросить пароль", url: resetLink }]]
   };
 
-  // Send password reset code
-  await sendTelegramPhoto(
+  await sendTelegramPhotoByUrl(
     chatId,
-    'attached_assets/bot_welcome_logo.png',
+    photoUrl,
     `🔐 <b>Сброс пароля</b>\n\nПривет${firstName ? ', ' + firstName : ''}! Ты запросил сброс пароля для аккаунта:\n\n📧 <code>${user.email}</code>\n\n<b>Для установки нового пароля:</b>\n\n1️⃣ Нажми на кнопку ниже или перейди по ссылке:\n${resetLink}\n\n2️⃣ Введи этот код:\n\n🔐 <code>${code}</code>\n\n3️⃣ Установи новый пароль\n\n⏱️ Код действителен 10 минут.\n\n⚠️ Если ты не запрашивал сброс пароля, просто проигнорируй это сообщение.`,
     inlineKeyboard
   );
@@ -284,46 +352,35 @@ async function processResetPasswordCommand(telegramId: number, chatId: number, f
   console.log(`[Telegram Bot] Sent password reset link to user ${user.id} (chatId ${chatId})`);
 }
 
-/**
- * Process /start command (generate and send linking code)
- */
-async function processStartCommand(telegramId: number, chatId: number, username: string | undefined, firstName: string, lastName: string | undefined): Promise<void> {
-  // Use user ID as fallback if username is not set
+export async function processStartCommand(telegramId: number, chatId: number, username: string | undefined, firstName: string, lastName: string | undefined): Promise<void> {
   const effectiveUsername = username || telegramId.toString();
 
-  // Check if this Telegram is already linked to a user
-  const { storage } = await import('./storage');
+  console.log('existingUser before');
   const existingUser = await storage.getUserByTelegramChatId(chatId.toString());
+  console.log('existingUser after');
 
   if (existingUser) {
-    // Already linked - send photo with friendly message
-    await sendTelegramPhoto(
+    await sendTelegramPhotoByUrl(
       chatId,
-      'attached_assets/bot_welcome_logo.png',
+      photoUrl,
       `👋 <b>С возвращением${firstName ? ', ' + firstName : ''}!</b>\n\nТвой аккаунт уже привязан к платформе <b>"В Курсе ?"</b> 🎉\n\n✅ Двухфакторная защита активна\n✅ Уведомления настроены\n\nЕсли нужна помощь — я всегда на связи! 🚀`
     );
     console.log(`[Telegram Bot] User ${existingUser.id} already linked (chatId ${chatId})`);
     return;
   }
 
-  // Not linked yet - check if there's an existing active session and update username
   const now = new Date();
   Array.from(linkingSessions.entries()).forEach(([codeHash, session]) => {
     if (session.chatId === chatId && session.expiresAt > now && !session.verified) {
-      // Update username in case user changed it
       session.username = effectiveUsername;
       console.log(`[Telegram Bot] Updated username for existing session: ${effectiveUsername}`);
     }
   });
 
-  // Generate unique 6-digit verification code
   const code = generateVerificationCode();
   const codeHash = hashCode(code);
-
-  // Session expires in 10 minutes
   const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
 
-  // Create linking session indexed by code hash
   linkingSessions.set(codeHash, {
     codeHash,
     telegramId,
@@ -336,20 +393,12 @@ async function processStartCommand(telegramId: number, chatId: number, username:
   });
 
   const inlineKeyboard = {
-    inline_keyboard: [
-      [
-        {
-          text: "🔄 Получить новый код",
-          callback_data: "get_new_code"
-        }
-      ]
-    ]
+    inline_keyboard: [[{ text: "🔄 Получить новый код", callback_data: "get_new_code" }]]
   };
 
-  // Send welcome photo with code and inline button
-  await sendTelegramPhoto(
+  await sendTelegramPhotoByUrl(
     chatId,
-    'attached_assets/bot_welcome_logo.png',
+    photoUrl,
     `👋 <b>Привет${firstName ? ', ' + firstName : ''}!</b>\n\nЯ бот образовательной платформы <b>"В Курсе ?"</b> и твой главный помощник! 🚀\n\n<b>Для чего необходимо привязать Telegram:</b>\n\n• 🌐 <b>Всегда на связи</b> — интернет в России сейчас непредсказуем, но мы всегда найдём способ тебя уведомить!\n\n• 🔗 <b>Зеркала сайта</b> — если основной сайт заблокируют, я первым пришлю ссылку на зеркало\n\n• 🔐 <b>Безопасность</b> — двухфакторная защита твоего аккаунта\n\n• 📚 <b>Не пропустишь ничего</b> — уведомления о новых уроках в купленных курсах и важные обновления\n\n<b>Давай начнём!</b> Введи этот код на сайте:\n\n🔐 <code>${code}</code>\n\n⏱️ Код действителен 10 минут.`,
     inlineKeyboard
   );
@@ -357,84 +406,70 @@ async function processStartCommand(telegramId: number, chatId: number, username:
   console.log(`[Telegram Bot] Sent linking code to chat_id ${chatId} (${effectiveUsername})`);
 }
 
-
-/**
- * Main bot polling loop
- */
 let isRunning = false;
 let offset: number | undefined = undefined;
 
 export async function startTelegramBot(): Promise<void> {
-  if (isRunning) {
-    console.log('[Telegram Bot] Bot is already running');
-    return;
-  }
+  if (!process.env.TELEGRAM_BOT_TOKEN) return;
 
-  if (!process.env.TELEGRAM_BOT_TOKEN) {
-    console.error('[Telegram Bot] TELEGRAM_BOT_TOKEN not configured, bot will not start');
-    return;
-  }
+  const webhookUrl = 'https://go.vkurse.io/telegram-webhook';
 
-  console.log('[Telegram Bot] Starting polling-based bot...');
+  console.log('[Telegram] Setting webhook to:', webhookUrl);
 
-  // Delete webhook first (switch to polling mode)
   await deleteTelegramWebhook();
+  const success = await setTelegramWebhook(webhookUrl);
 
-  isRunning = true;
+  if (!success) {
+    console.error('[Telegram] Webhook setup failed, falling back to polling');
+    pollUpdates();
+  }
 
-  // Start polling loop
-  pollUpdates();
+  console.log('[Telegram Bot] Bot started');
 }
 
 async function pollUpdates(): Promise<void> {
   while (isRunning) {
     try {
-      const updates: TelegramUpdate[] = await getUpdates(offset, 30);
+      console.time('[Telegram] getUpdates duration');
+      const updates: TelegramUpdate[] = await getUpdates(offset, 100);
+      console.timeEnd('[Telegram] getUpdates duration');
 
       for (const update of updates) {
-        // Update offset to acknowledge this update
         offset = update.update_id + 1;
 
-        // Process callback query (inline button press)
         if (update.callback_query) {
-          const callbackQuery = update.callback_query;
-          const telegramId = callbackQuery.from.id;
-          const chatId = callbackQuery.message?.chat.id;
-          const username = callbackQuery.from.username;
-          const firstName = callbackQuery.from.first_name;
-          const lastName = callbackQuery.from.last_name;
+          const cq = update.callback_query;
+          const telegramId = cq.from.id;
+          const chatId = cq.message?.chat.id;
+          const username = cq.from.username;
+          const firstName = cq.from.first_name;
+          const lastName = cq.from.last_name;
 
-          console.log(`[Telegram Bot] Received callback query from ${chatId}: ${callbackQuery.data}`);
+          console.log(`[Telegram Bot] Received callback query from ${chatId}: ${cq.data}`);
 
-          // Handle "get_new_code" button press
-          if (callbackQuery.data === 'get_new_code' && chatId) {
-            // Answer callback query immediately (acknowledge button press)
-            await answerCallbackQuery(callbackQuery.id, '🔄 Генерирую новый код...');
-
-            // Generate and send new code
+          if (cq.data === 'get_new_code' && chatId) {
+            await answerCallbackQuery(cq.id, '🔄 Генерирую новый код...');
             await processStartCommand(telegramId, chatId, username, firstName, lastName);
           }
         }
 
-        // Process message
         if (update.message) {
-          const telegramId = update.message.from.id;
-          const chatId = update.message.chat.id;
-          const username = update.message.from.username;
-          const firstName = update.message.from.first_name;
-          const lastName = update.message.from.last_name;
+          const msg = update.message;
+          const telegramId = msg.from.id;
+          const chatId = msg.chat.id;
+          const username = msg.from.username;
+          const firstName = msg.from.first_name;
+          const lastName = msg.from.last_name;
 
-          // Handle text messages
-          if (update.message.text) {
-            const text = update.message.text;
+          if (msg.text) {
+            const text = msg.text;
             console.log(`[Telegram Bot] Received message from ${chatId}: ${text}`);
 
-            // Handle /start command
             if (text.startsWith('/start')) {
+              console.log('[Telegram Bot] Start process command');
               await processStartCommand(telegramId, chatId, username, firstName, lastName);
             }
 
-            // Handle /reset_password command
             if (text.startsWith('/reset_password')) {
               await processResetPasswordCommand(telegramId, chatId, firstName);
             }
@@ -443,7 +478,6 @@ async function pollUpdates(): Promise<void> {
       }
     } catch (error) {
       console.error('[Telegram Bot] Error in polling loop:', error);
-      // Wait a bit before retrying
       await new Promise(resolve => setTimeout(resolve, 5000));
     }
   }

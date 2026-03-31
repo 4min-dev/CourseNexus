@@ -124,9 +124,20 @@ import {
   schedulerRuns,
   type SchedulerRun,
   type InsertSchedulerRun,
+  chatConversations,
+  chatMessages,
+  chatTemplates,
+  chatSettings,
+  type ChatConversation,
+  type InsertChatConversation,
+  type ChatMessage,
+  type InsertChatMessage,
+  type ChatTemplate,
+  type InsertChatTemplate,
+  type ChatSettings,
 } from "@shared/schema";
 import { db } from "./db";
-import { eq, and, desc, like, or, sql, getTableColumns, isNotNull, isNull, inArray, not, gte, lt, lte } from "drizzle-orm";
+import { eq, and, desc, like, or, sql, getTableColumns, isNotNull, isNull, inArray, not, gte, lt, lte, SQL, arrayOverlaps } from "drizzle-orm";
 import { randomUUID } from "crypto";
 import { sendNotificationToTelegram } from "./telegram";
 import { deleteFromCDNNow } from "./cdnnowStorage";
@@ -207,7 +218,7 @@ export interface IStorage {
   getPurchase(userId: string, courseId: string): Promise<Purchase | undefined>;
   getPurchasesByCourse(courseId: string): Promise<Purchase[]>;
   createPurchase(purchase: InsertPurchase): Promise<Purchase>;
-  getLibrary(userId: string): Promise<(Purchase & { course: Course })[]>;
+  getLibrary(userId: string, filters?: { levelIds?: string[]; year?: number; minPrice?: number; maxPrice?: number; minRating?: number; author?: string; search?: string }): Promise<(Purchase & { course: Course })[]>;
 
   getFavorites(userId: string): Promise<(Favorite & { course: Course })[]>;
   getFavorite(userId: string, courseId: string): Promise<Favorite | undefined>;
@@ -751,101 +762,137 @@ export class DatabaseStorage implements IStorage {
     return (await result)[0]!;
   }
 
-  async getCourses(filters?: {
-    levelIds?: string[];                    // Новый параметр: массив ID категорий для фильтра по level[]
-    year?: number;
-    minPrice?: number;
-    maxPrice?: number;
-    minRating?: number;
-    author?: string;
-    search?: string;
-    subcategoryId?: string;
-    vipOnly?: boolean;
-    excludeVipPackages?: boolean;
-    excludePurchased?: string | null;
-    forAdmin?: boolean;
-  }): Promise<Course[]> {
-    const conditions: SQL[] = [];
+  async getDistinctYears(
+    platformId?: string,
+    level?: string,
+    author?: string,
+    minRating?: number
+  ): Promise<number[]> {
+    const conditions = [isNotNull(courses.year)]
 
-    // Скрытые курсы в магазине/библиотеке
-    if (!filters?.forAdmin) {
-      conditions.push(eq(courses.hiddenInShop, false));
+    if (platformId) {
+      conditions.push(sql`${courses.level} @> ARRAY[${platformId}]::text[]`)
     }
 
-    if (!filters?.forAdmin && filters?.excludePurchased) {
-      conditions.push(eq(courses.hiddenInLibrary, false));
-    }
-
-    // === ФИЛЬТРАЦИЯ ПО level[] (платформы, уровни и любые другие категории) ===
-    if (filters?.levelIds && filters.levelIds.length > 0) {
-      const ids = filters.levelIds
-        .map(id => id.trim())
-        .filter(id => id.length > 0);
-
-      if (ids.length > 0) {
-        // Формируем корректный PostgreSQL array literal: {"id1","id2",...}
-        // Кавычки обязательны, потому что ID — это UUID (с дефисами)
-        const pgArrayLiteral = `{${ids.map(id => `"${id}"`).join(',')}}`;
-
-        conditions.push(
-          sql`${courses.level} && ${pgArrayLiteral}::text[]`
-        );
+    if (level) {
+      const levelIds = level.split(',').map(id => id.trim()).filter(Boolean)
+      if (levelIds.length > 0) {
+        const pgArray = `{${levelIds.map(id => `"${id}"`).join(',')}}`
+        conditions.push(sql`${courses.level} @> ${pgArray}::text[]`)
       }
     }
 
-    // Год
-    if (filters?.year) {
-      conditions.push(eq(courses.year, filters.year));
+    if (author) {
+      conditions.push(eq(courses.authorName, author))
     }
 
-    // Автор
-    if (filters?.author) {
-      conditions.push(eq(courses.authorName, filters.author));
+    if (minRating !== undefined) {
+      conditions.push(sql`CAST(${courses.rating} AS DECIMAL) >= ${minRating}`)
     }
 
-    // Цена
-    if (filters?.minPrice !== undefined) {
-      conditions.push(sql`CAST(${courses.price} AS DECIMAL) >= ${filters.minPrice}`);
-    }
-    if (filters?.maxPrice !== undefined) {
-      conditions.push(sql`CAST(${courses.price} AS DECIMAL) <= ${filters.maxPrice}`);
+    const result = await db
+      .select({ year: courses.year })
+      .from(courses)
+      .where(and(...conditions))
+      .groupBy(courses.year)
+
+    return result
+      .map(r => r.year)
+      .filter((y): y is number => y !== null)
+      .sort((a, b) => b - a)
+  }
+
+  async getCourses(filters = {}) {
+    const conditions = []
+
+    if (!filters.forAdmin) {
+      conditions.push(eq(courses.hiddenInShop, false))
     }
 
-    // Рейтинг
-    if (filters?.minRating !== undefined) {
-      conditions.push(sql`CAST(${courses.rating} AS DECIMAL) >= ${filters.minRating}`);
+    if (!filters.forAdmin && filters.excludePurchased) {
+      conditions.push(eq(courses.hiddenInLibrary, false))
     }
 
-    // VIP-подписка
-    if (filters?.vipOnly) {
-      conditions.push(eq(courses.isVipSubscription, true));
-    }
-    if (filters?.excludeVipPackages) {
-      conditions.push(eq(courses.isVipSubscription, false));
+    if (filters.levelIds && filters.levelIds.length > 0) {
+      const ids = filters.levelIds.map(id => id.trim()).filter(Boolean)
+      console.log('[DB] level filter ids:', ids)
+      if (ids.length > 0) {
+        const pgArrayLiteral = `{${ids.map(id => `"${id}"`).join(',')}}`
+        console.log('[DB] level pg array:', pgArrayLiteral)
+        conditions.push(sql`${courses.level} @> ${pgArrayLiteral}::text[]`)
+      }
     }
 
-    // Поиск по тексту
-    if (filters?.search) {
-      const searchLower = filters.search.toLowerCase().trim();
-      const searchWords = searchLower.split(/\s+/).filter(word => word.length > 0);
+    if (filters.subcategoryId) {
+      console.log('[DB] subcategory filter id:', filters.subcategoryId)
+      conditions.push(
+        sql`EXISTS (
+        SELECT 1 FROM ${courseSubcategories}
+        WHERE course_id = ${courses}.id
+        AND subcategory_id = ${filters.subcategoryId}
+      )`
+      )
+    }
 
-      for (const word of searchWords) {
-        const pattern = `%${word}%`;
+    if (filters.year) {
+      conditions.push(eq(courses.year, filters.year))
+    }
+
+    if (filters.excludeCurrentYear) {
+      conditions.push(sql`${courses.year} != ${filters.excludeCurrentYear}`)
+    }
+
+    if (filters.author) {
+      conditions.push(eq(courses.authorName, filters.author))
+    }
+
+    if (filters.minPrice !== undefined) {
+      conditions.push(sql`CAST(${courses.price} AS DECIMAL) >= ${filters.minPrice}`)
+    }
+    if (filters.maxPrice !== undefined) {
+      conditions.push(sql`CAST(${courses.price} AS DECIMAL) <= ${filters.maxPrice}`)
+    }
+
+    if (filters.minRating !== undefined) {
+      conditions.push(sql`CAST(${courses.rating} AS DECIMAL) >= ${filters.minRating}`)
+    }
+
+    if (filters.vipOnly) {
+      conditions.push(eq(courses.isVipSubscription, true))
+    }
+    if (filters.excludeVipPackages) {
+      conditions.push(eq(courses.isVipSubscription, false))
+    }
+
+    if (filters.search) {
+      const searchLower = filters.search.toLowerCase().trim()
+      const words = searchLower.split(/\s+/).filter(w => w.length > 0)
+      for (const word of words) {
+        const pattern = `%${word}%`
         conditions.push(
           or(
             sql`LOWER(${courses.title}) LIKE ${pattern}`,
             sql`LOWER(${courses.description}) LIKE ${pattern}`,
             sql`LOWER(${courses.authorName}) LIKE ${pattern}`
-          )!
-        );
+          )
+        )
       }
     }
 
-    // Базовый запрос
+    if (filters.excludePurchased) {
+      conditions.push(
+        sql`NOT EXISTS (
+          SELECT 1 FROM ${purchases}
+          WHERE ${purchases.courseId} = ${courses.id}
+          AND ${purchases.userId} = ${filters.excludePurchased}
+        )`
+      )
+    }
+
     let query = db
       .select({
         course: courses,
-        previewVideoUrl: sql<string | null>`(
+        previewVideoUrl: sql`(
         SELECT l.video_url
         FROM ${lessons} l
         INNER JOIN ${courseSections} cs ON l.section_id = cs.id
@@ -853,186 +900,135 @@ export class DatabaseStorage implements IStorage {
           AND l.video_url IS NOT NULL
         ORDER BY cs."order", l."order"
         LIMIT 1
-      )`.as('preview_video_url'),
+      )`.as('preview_video_url')
       })
       .from(courses)
-      .$dynamic();
+      .$dynamic()
 
-    // Фильтр по конкретной подкатегории
-    if (filters?.subcategoryId) {
-      query = query
-        .innerJoin(courseSubcategories, eq(courses.id, courseSubcategories.courseId))
-        .where(
-          and(
-            eq(courseSubcategories.subcategoryId, filters.subcategoryId),
-            conditions.length > 0 ? and(...conditions) : undefined
-          )
-        ) as any;
-    } else if (conditions.length > 0) {
-      query = query.where(and(...conditions));
+    if (conditions.length > 0) {
+      query = query.where(and(...conditions))
     }
 
-    // Выполнение запроса
-    const result = await query.orderBy(desc(courses.createdAt));
+    const finalTake = filters.take && filters.take > 0 ? filters.take : undefined
+    const finalSkip = filters.skip ?? 0
 
-    // Формирование результата
-    let coursesData: Course[] = result.map((r: any) => ({
-      ...r.course,
-      previewVideoUrl: r.previewVideoUrl,
-    }));
-
-    // Исключение купленных курсов (если нужно)
-    if (filters?.excludePurchased) {
-      const purchasedCourseIds = await db
-        .select({ courseId: purchases.courseId })
-        .from(purchases)
-        .where(eq(purchases.userId, filters.excludePurchased))
-        .then(rows => new Set(rows.map(r => r.courseId)));
-
-      coursesData = coursesData.filter(c => !purchasedCourseIds.has(c.id));
+    if (finalTake !== undefined) {
+      query = query.limit(finalTake)
+    }
+    if (finalSkip > 0) {
+      query = query.offset(finalSkip)
     }
 
-    return coursesData;
-  }
+    query = query.orderBy(desc(courses.createdAt))
 
+    let total = 0
+    if (filters.countTotal) {
+      const countQuery = db
+        .select({ count: sql`count(*)` })
+        .from(courses)
+        .$dynamic()
 
-  async getDistinctYears(platform?: string, level?: string, author?: string, minRating?: number): Promise<number[]> {
-    const platformMap: Record<string, string> = {
-      'wb': 'Wildberries',
-      'ozon': 'Ozon',
-      'yandex': 'Yandex Market',
-    };
-
-    const conditions = [isNotNull(courses.year)];
-
-    if (platform) {
-
-      const platformSlugs = platform.split(',').map(p => p.trim()).filter(Boolean);
-
-
-      const allPlatformVariants: string[] = [];
-      platformSlugs.forEach(slug => {
-        allPlatformVariants.push(slug);
-        if (platformMap[slug]) {
-          allPlatformVariants.push(platformMap[slug]);
-        }
-      });
-
-      if (allPlatformVariants.length > 1) {
-        conditions.push(inArray(courses.platform, allPlatformVariants));
-      } else if (allPlatformVariants.length === 1) {
-        conditions.push(eq(courses.platform, allPlatformVariants[0]));
+      if (conditions.length > 0) {
+        countQuery.where(and(...conditions))
       }
+
+      const [{ count }] = await countQuery
+      total = Number(count)
     }
 
-    if (level) {
-      conditions.push(sql`${courses.level} @> ARRAY[${level}]::text[]`);
+    const result = await query
+
+
+    let coursesData = result.map(r => ({
+      ...r.course,
+      previewVideoUrl: r.previewVideoUrl
+    }))
+
+    if (coursesData.length > 0) {
+      const courseIds = coursesData.map(c => c.id)
+
+      const subcats = await db
+        .select({
+          courseId: courseSubcategories.courseId,
+          subcategoryId: courseSubcategories.subcategoryId
+        })
+        .from(courseSubcategories)
+        .where(inArray(courseSubcategories.courseId, courseIds))
+
+      const subcatsMap = new Map()
+
+      subcats.forEach(row => {
+        if (!subcatsMap.has(row.courseId)) {
+          subcatsMap.set(row.courseId, [])
+        }
+        subcatsMap.get(row.courseId).push(row.subcategoryId)
+      })
+
+      coursesData = coursesData.map(course => ({
+        ...course,
+        subcategoryIds: subcatsMap.get(course.id) || []
+      }))
     }
 
-    if (author) {
-      conditions.push(eq(courses.authorName, author));
+    if (filters.countTotal) {
+      return { courses: coursesData, total }
     }
 
-    if (minRating !== undefined) {
-      conditions.push(sql`CAST(${courses.rating} AS DECIMAL) >= ${minRating}`);
-    }
-
-    const result = await db
-      .select({ year: courses.year })
-      .from(courses)
-      .where(and(...conditions))
-      .groupBy(courses.year);
-
-    return result
-      .map(r => r.year)
-      .filter((y): y is number => y !== null)
-      .sort((a, b) => b - a);
+    return coursesData
   }
 
   async getMaxPrice(platform?: string): Promise<number> {
-    const platformMap: Record<string, string> = {
-      'wb': 'Wildberries',
-      'ozon': 'Ozon',
-      'yandex': 'Yandex Market',
-    };
-
     let query = db
       .select({
         maxPrice: sql<string>`MAX(CAST(${courses.price} AS DECIMAL))`.as('max_price')
       })
       .from(courses)
-      .$dynamic();
+      .$dynamic()
 
     if (platform) {
-
-      const platformSlugs = platform.split(',').map(p => p.trim()).filter(Boolean);
-
-
-      const allPlatformVariants: string[] = [];
-      platformSlugs.forEach(slug => {
-        allPlatformVariants.push(slug);
-        if (platformMap[slug]) {
-          allPlatformVariants.push(platformMap[slug]);
-        }
-      });
-
-      if (allPlatformVariants.length > 1) {
-        query = query.where(inArray(courses.platform, allPlatformVariants));
-      } else if (allPlatformVariants.length === 1) {
-        query = query.where(eq(courses.platform, allPlatformVariants[0]));
+      const platforms = platform.split(',').map(p => p.trim()).filter(Boolean)
+      if (platforms.length > 0) {
+        query = query.where(inArray(courses.platform, platforms))
       }
     }
 
-    const [result] = await query;
-    const maxPrice = result?.maxPrice ? parseFloat(result.maxPrice) : 50000;
-    return isNaN(maxPrice) ? 50000 : maxPrice;
+    const [result] = await query
+    const maxPrice = result?.maxPrice ? parseFloat(result.maxPrice) : 50000
+    return isNaN(maxPrice) ? 50000 : maxPrice
   }
 
-  async getDistinctAuthors(platform?: string, level?: string, year?: number, minRating?: number, search?: string): Promise<string[]> {
-    const platformMap: Record<string, string> = {
-      'wb': 'Wildberries',
-      'ozon': 'Ozon',
-      'yandex': 'Yandex Market',
-    };
+  async getDistinctAuthors(
+    platformId?: string,
+    level?: string,
+    year?: number,
+    minRating?: number,
+    search?: string
+  ): Promise<string[]> {
+    const conditions = [isNotNull(courses.authorName)]
 
-    const conditions = [isNotNull(courses.authorName)];
-
-    if (platform) {
-
-      const platformSlugs = platform.split(',').map(p => p.trim()).filter(Boolean);
-
-
-      const allPlatformVariants: string[] = [];
-      platformSlugs.forEach(slug => {
-        allPlatformVariants.push(slug);
-        if (platformMap[slug]) {
-          allPlatformVariants.push(platformMap[slug]);
-        }
-      });
-
-      if (allPlatformVariants.length > 1) {
-        conditions.push(inArray(courses.platform, allPlatformVariants));
-      } else if (allPlatformVariants.length === 1) {
-        conditions.push(eq(courses.platform, allPlatformVariants[0]));
-      }
+    if (platformId) {
+      conditions.push(sql`${courses.level} @> ARRAY[${platformId}]::text[]`)
     }
 
     if (level) {
-      conditions.push(sql`${courses.level} @> ARRAY[${level}]::text[]`);
+      const levelIds = level.split(',').map(id => id.trim()).filter(Boolean)
+      if (levelIds.length > 0) {
+        const pgArray = `{${levelIds.map(id => `"${id}"`).join(',')}}`
+        conditions.push(sql`${courses.level} @> ${pgArray}::text[]`)
+      }
     }
 
     if (year !== undefined) {
-      conditions.push(eq(courses.year, year));
+      conditions.push(eq(courses.year, year))
     }
 
     if (minRating !== undefined) {
-      conditions.push(sql`CAST(${courses.rating} AS DECIMAL) >= ${minRating}`);
+      conditions.push(sql`CAST(${courses.rating} AS DECIMAL) >= ${minRating}`)
     }
 
     if (search) {
-      conditions.push(like(courses.authorName, `%${search}%`));
+      conditions.push(like(courses.authorName, `%${search}%`))
     }
-
 
     const authorsWithClicks = await db
       .select({
@@ -1049,126 +1045,90 @@ export class DatabaseStorage implements IStorage {
       )
       .where(and(...conditions))
       .groupBy(courses.authorName)
-      .orderBy(desc(sql`click_count`));
+      .orderBy(desc(sql`click_count`))
 
     return authorsWithClicks
       .map(r => r.authorName)
-      .filter((a): a is string => a !== null && a !== '');
+      .filter((a): a is string => a !== null && a !== '')
   }
 
-  async getDistinctLevels(platform?: string, year?: number, author?: string, minRating?: number): Promise<string[]> {
-
-    const platformMap: Record<string, string> = {
-      'wb': 'Wildberries',
-      'ozon': 'Ozon',
-      'yandex': 'Yandex Market',
-      'ii': 'ii',
-      'artificial-intelligence': 'artificial-intelligence',
-      'infographics-photoshop': 'infographics-photoshop',
-    };
-
-    const conditions = [isNotNull(courses.level)];
+  async getDistinctLevels(
+    platform?: string,
+    year?: number,
+    author?: string,
+    minRating?: number
+  ): Promise<string[]> {
+    const conditions = [isNotNull(courses.level)]
 
     if (platform) {
-
-      const platformSlugs = platform.split(',').map(p => p.trim()).filter(Boolean);
-
-
-      const allPlatformVariants: string[] = [];
-      platformSlugs.forEach(slug => {
-        allPlatformVariants.push(slug);
-        if (platformMap[slug]) {
-          allPlatformVariants.push(platformMap[slug]);
-        }
-      });
-
-      if (allPlatformVariants.length > 1) {
-        conditions.push(inArray(courses.platform, allPlatformVariants));
-      } else if (allPlatformVariants.length === 1) {
-        conditions.push(eq(courses.platform, allPlatformVariants[0]));
+      const platforms = platform.split(',').map(p => p.trim()).filter(Boolean)
+      if (platforms.length > 0) {
+        conditions.push(inArray(courses.platform, platforms))
       }
     }
 
     if (year !== undefined) {
-      conditions.push(eq(courses.year, year));
+      conditions.push(eq(courses.year, year))
     }
 
     if (author) {
-      conditions.push(eq(courses.authorName, author));
+      conditions.push(eq(courses.authorName, author))
     }
 
     if (minRating !== undefined) {
-      conditions.push(sql`CAST(${courses.rating} AS DECIMAL) >= ${minRating}`);
+      conditions.push(sql`CAST(${courses.rating} AS DECIMAL) >= ${minRating}`)
     }
 
-
     const result = await db.execute<{ level: string }>(sql`
-      SELECT DISTINCT unnest(level) as level
-      FROM courses
-      WHERE ${sql.join(conditions, sql` AND `)}
-      ORDER BY level
-    `);
-
-    console.log('result.rows', result.rows)
+    SELECT DISTINCT unnest(level) as level
+    FROM courses
+    WHERE ${sql.join(conditions, sql` AND `)}
+    ORDER BY level
+  `)
 
     return result.rows
       .map(r => r.level)
-      .filter((l): l is string => l !== null && l !== '');
+      .filter((l): l is string => l !== null && l !== '')
   }
 
-  async getAvailableRatings(platform?: string, level?: string, year?: number, author?: string): Promise<number[]> {
-    const platformMap: Record<string, string> = {
-      'wb': 'Wildberries',
-      'ozon': 'Ozon',
-      'yandex': 'Yandex Market',
-      'ii': 'ii',
-      'artificial-intelligence': 'artificial-intelligence',
-      'infographics-photoshop': 'infographics-photoshop',
-    };
-
-    const conditions = [isNotNull(courses.rating)];
+  async getAvailableRatings(
+    platform?: string,
+    level?: string,
+    year?: number,
+    author?: string
+  ): Promise<number[]> {
+    const conditions = [isNotNull(courses.rating)]
 
     if (platform) {
-      const platformSlugs = platform.split(',').map(p => p.trim()).filter(Boolean);
-      const allPlatformVariants: string[] = [];
-      platformSlugs.forEach(slug => {
-        allPlatformVariants.push(slug);
-        if (platformMap[slug]) {
-          allPlatformVariants.push(platformMap[slug]);
-        }
-      });
-
-      if (allPlatformVariants.length > 1) {
-        conditions.push(inArray(courses.platform, allPlatformVariants));
-      } else if (allPlatformVariants.length === 1) {
-        conditions.push(eq(courses.platform, allPlatformVariants[0]));
+      const platforms = platform.split(',').map(p => p.trim()).filter(Boolean)
+      if (platforms.length > 0) {
+        conditions.push(inArray(courses.platform, platforms))
       }
     }
 
     if (level) {
-      conditions.push(sql`${courses.level} @> ARRAY[${level}]::text[]`);
+      conditions.push(sql`${courses.level} @> ARRAY[${level}]::text[]`)
     }
 
     if (year !== undefined) {
-      conditions.push(eq(courses.year, year));
+      conditions.push(eq(courses.year, year))
     }
 
     if (author) {
-      conditions.push(eq(courses.authorName, author));
+      conditions.push(eq(courses.authorName, author))
     }
 
-
     const result = await db.execute<{ rating: number }>(sql`
-      SELECT DISTINCT FLOOR(CAST(${courses.rating} AS DECIMAL)) as rating
-      FROM courses
-      WHERE ${sql.join(conditions, sql` AND `)}
-      AND CAST(${courses.rating} AS DECIMAL) >= 1
-      ORDER BY rating DESC
-    `);
+    SELECT DISTINCT FLOOR(CAST(${courses.rating} AS DECIMAL)) as rating
+    FROM courses
+    WHERE ${sql.join(conditions, sql` AND `)}
+    AND CAST(${courses.rating} AS DECIMAL) >= 1
+    ORDER BY rating DESC
+  `)
 
     return result.rows
       .map(r => r.rating)
-      .filter((r): r is number => r !== null && r >= 1 && r <= 5);
+      .filter((r): r is number => r !== null && r >= 1 && r <= 5)
   }
 
   async trackFilterClick(data: { filterType: string; filterId?: string; filterValue: string; userId?: string }): Promise<void> {
@@ -1181,8 +1141,23 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getCourse(id: string): Promise<Course | undefined> {
-    const [course] = await db.select().from(courses).where(eq(courses.id, id));
-    return course;
+    const [result] = await db
+      .select({
+        course: courses,
+        subcategoryIds: sql<string[]>`(
+          SELECT COALESCE(array_agg(subcategory_id), ARRAY[]::text[])
+          FROM ${courseSubcategories}
+          WHERE course_id = ${courses}.id
+        )`.as('subcategory_ids'),
+      })
+      .from(courses)
+      .where(eq(courses.id, id));
+
+    if (!result) return undefined;
+    return {
+      ...result.course,
+      subcategoryIds: result.subcategoryIds || [],
+    };
   }
 
   async getCourseStats(courseId: string): Promise<{
@@ -1213,63 +1188,70 @@ export class DatabaseStorage implements IStorage {
     return coursesData;
   }
 
-  async getTopCoursesByCategory(categoryId: string, platform?: string, limit: number = 5): Promise<Array<Course & { purchaseCount: number }>> {
-    const platformMap: Record<string, string> = {
-      'wb': 'Wildberries',
-      'ozon': 'Ozon',
-      'yandex': 'Yandex Market',
-    };
-
-
+  async getTopCoursesByCategory(categoryId: string, platformId?: string, limit: number = 5): Promise<Array<Course & { purchaseCount: number }>> {
     const categorySubcategories = await db
       .select({ id: subcategories.id })
       .from(subcategories)
-      .where(eq(subcategories.categoryId, categoryId));
+      .where(eq(subcategories.categoryId, categoryId))
 
     if (categorySubcategories.length === 0) {
-      return [];
+      return []
     }
 
-    const subcategoryIds = categorySubcategories.map(s => s.id);
+    const subcategoryIds = categorySubcategories.map(s => s.id)
 
+    const conditions = [
+      inArray(courseSubcategories.subcategoryId, subcategoryIds)
+    ]
+
+    if (platformId) {
+      conditions.push(sql`${courses.level} @> ARRAY[${platformId}]::text[]`)
+    }
 
     const topCourses = await db
       .select({
         ...getTableColumns(courses),
+        subcategoryIds: sql<string[]>`(
+          SELECT COALESCE(array_agg(subcategory_id), ARRAY[]::text[])
+          FROM ${courseSubcategories}
+          WHERE course_id = ${courses}.id
+        )`.as('subcategory_ids'),
         purchaseCount: sql<number>`CAST(COUNT(DISTINCT ${purchases.id}) AS INTEGER)`,
       })
       .from(courses)
       .innerJoin(courseSubcategories, eq(courses.id, courseSubcategories.courseId))
       .leftJoin(purchases, eq(courses.id, purchases.courseId))
-      .where(
-        and(
-          inArray(courseSubcategories.subcategoryId, subcategoryIds),
-          platform ? eq(courses.platform, platformMap[platform] || platform) : undefined
-        )
-      )
+      .where(and(...conditions))
       .groupBy(courses.id)
       .orderBy(desc(sql`COUNT(DISTINCT ${purchases.id})`), desc(courses.createdAt))
-      .limit(limit);
+      .limit(limit)
 
-    return topCourses;
+    return topCourses.map((c: any) => ({
+      ...c,
+      subcategoryIds: c.subcategoryIds || [],
+    }))
   }
 
   async getFrequentlyBoughtTogether(courseId: string, limit: number = 6): Promise<Array<Course & { purchaseCount: number }>> {
-    const frequentlyBought = await db.execute<Course & { purchaseCount: number }>(sql`
-      SELECT 
-        c.*,
-        CAST(COUNT(DISTINCT p2.user_id) AS INTEGER) as "purchaseCount"
-      FROM purchases p1
-      INNER JOIN purchases p2 ON p1.user_id = p2.user_id AND p2.course_id != ${courseId}
-      INNER JOIN courses c ON c.id = p2.course_id
-      WHERE p1.course_id = ${courseId}
-        AND CAST(c.price AS NUMERIC) > 0
-      GROUP BY c.id
-      ORDER BY COUNT(DISTINCT p2.user_id) DESC, c.created_at DESC
-      LIMIT ${limit}
-    `);
+    const frequentlyBought = await db
+      .select({
+        ...getTableColumns(courses),
+        purchaseCount: sql<number>`CAST(COUNT(DISTINCT ${purchases.userId}) AS INTEGER)`.as('purchase_count'),
+      })
+      .from(purchases)
+      .innerJoin(courses, eq(purchases.courseId, courses.id))
+      .where(
+        and(
+          inArray(purchases.userId, db.select({ userId: purchases.userId }).from(purchases).where(eq(purchases.courseId, courseId))),
+          sql`${purchases.courseId} != ${courseId}`,
+          sql`CAST(${courses.price} AS NUMERIC) > 0`
+        )
+      )
+      .groupBy(courses.id)
+      .orderBy(desc(sql`COUNT(DISTINCT ${purchases.userId})`), desc(courses.createdAt))
+      .limit(limit);
 
-    return frequentlyBought.rows;
+    return frequentlyBought;
   }
 
   async createCourse(courseData: InsertCourse): Promise<Course> {
@@ -1445,10 +1427,36 @@ export class DatabaseStorage implements IStorage {
       )
       .orderBy(desc(favorites.createdAt));
 
-    return results.map((result) => ({
+    const favoritesData = results.map((result) => ({
       ...result.favorites,
       course: result.courses,
     }));
+
+    // Attach subcategoryIds in one query (avoid N+1 requests from the client).
+    if (favoritesData.length > 0) {
+      const courseIds = favoritesData.map(f => f.course.id);
+      const subcats = await db
+        .select({
+          courseId: courseSubcategories.courseId,
+          subcategoryId: courseSubcategories.subcategoryId,
+        })
+        .from(courseSubcategories)
+        .where(inArray(courseSubcategories.courseId, courseIds));
+
+      const subcatsMap = new Map<string, string[]>();
+      for (const row of subcats) {
+        const arr = subcatsMap.get(row.courseId) ?? [];
+        arr.push(row.subcategoryId);
+        subcatsMap.set(row.courseId, arr);
+      }
+
+      return favoritesData.map(f => ({
+        ...f,
+        course: { ...f.course, subcategoryIds: subcatsMap.get(f.course.id) ?? [] },
+      }));
+    }
+
+    return favoritesData;
   }
 
   async getFavorite(userId: string, courseId: string): Promise<Favorite | undefined> {
@@ -1477,8 +1485,7 @@ export class DatabaseStorage implements IStorage {
   async getLibrary(
     userId: string,
     filters?: {
-      platform?: string;
-      level?: string;
+      levelIds?: string[];
       year?: number;
       minPrice?: number;
       maxPrice?: number;
@@ -1487,20 +1494,6 @@ export class DatabaseStorage implements IStorage {
       search?: string;
     }
   ): Promise<(Purchase & { course: Course })[]> {
-
-    const platformMap: Record<string, string> = {
-      'wb': 'Wildberries',
-      'ozon': 'Ozon',
-      'yandex': 'Yandex Market',
-    };
-
-    const levelMap: Record<string, string> = {
-      'beginner': 'Начинающий',
-      'intermediate': 'Средний',
-      'advanced': 'Продвинутый',
-    };
-
-
 
     const results = await db
       .select()
@@ -1519,31 +1512,23 @@ export class DatabaseStorage implements IStorage {
       course: result.courses,
     }));
 
-
     if (filters) {
-      const mappedPlatform = filters.platform ? (platformMap[filters.platform] || filters.platform) : undefined;
-      const mappedLevel = filters.level ? (levelMap[filters.level] || filters.level) : undefined;
-
       filteredResults = filteredResults.filter((item) => {
         const course = item.course;
 
-
-        if (mappedPlatform && course.platform !== mappedPlatform) return false;
-
-
-        if (mappedLevel && course.level && !course.level.includes(mappedLevel)) return false;
-
+        if (filters.levelIds && filters.levelIds.length > 0) {
+          const courseLevel = course.level || [];
+          const hasAllMatches = filters.levelIds.every(id => courseLevel.includes(id));
+          if (!hasAllMatches) return false;
+        }
 
         if (filters.year && course.year !== filters.year) return false;
-
 
         const price = parseFloat(course.price || "0");
         if (filters.minPrice !== undefined && price < filters.minPrice) return false;
         if (filters.maxPrice !== undefined && price > filters.maxPrice) return false;
 
-
         if (filters.author && course.authorName !== filters.author) return false;
-
 
         if (filters.search) {
           const searchLower = filters.search.toLowerCase();
@@ -1556,6 +1541,30 @@ export class DatabaseStorage implements IStorage {
 
         return true;
       });
+    }
+
+    // Attach subcategoryIds in one query (avoid N+1 requests from the client).
+    if (filteredResults.length > 0) {
+      const courseIds = filteredResults.map(r => r.course.id);
+      const subcats = await db
+        .select({
+          courseId: courseSubcategories.courseId,
+          subcategoryId: courseSubcategories.subcategoryId,
+        })
+        .from(courseSubcategories)
+        .where(inArray(courseSubcategories.courseId, courseIds));
+
+      const subcatsMap = new Map<string, string[]>();
+      for (const row of subcats) {
+        const arr = subcatsMap.get(row.courseId) ?? [];
+        arr.push(row.subcategoryId);
+        subcatsMap.set(row.courseId, arr);
+      }
+
+      return filteredResults.map(r => ({
+        ...r,
+        course: { ...r.course, subcategoryIds: subcatsMap.get(r.course.id) ?? [] },
+      }));
     }
 
     return filteredResults;
@@ -2365,16 +2374,25 @@ export class DatabaseStorage implements IStorage {
     };
   }
 
-  async updateLessonProgress(userId: string, lessonId: string, completed: boolean, watchedSeconds?: number): Promise<LessonProgress> {
+  async updateLessonProgress(
+    userId: string,
+    lessonId: string,
+    completed: boolean,
+    watchedSeconds?: number,
+    lastWatchedSeconds?: number
+  ): Promise<LessonProgress> {
     const updateData: any = {
       completed,
       completedAt: completed ? new Date() : null,
-      lastAccessedAt: new Date(),
-    };
-
+      lastAccessedAt: new Date()
+    }
 
     if (watchedSeconds !== undefined) {
-      updateData.watchedSeconds = sql`${lessonProgress.watchedSeconds} + ${watchedSeconds}`;
+      updateData.watchedSeconds = sql`${lessonProgress.watchedSeconds} + ${watchedSeconds}`
+    }
+
+    if (lastWatchedSeconds !== undefined) {
+      updateData.lastWatchedSeconds = lastWatchedSeconds
     }
 
     const [progress] = await db
@@ -2384,15 +2402,16 @@ export class DatabaseStorage implements IStorage {
         lessonId,
         completed,
         completedAt: completed ? new Date() : undefined,
-        watchedSeconds: watchedSeconds || 0,
+        watchedSeconds: watchedSeconds ?? 0,
+        lastWatchedSeconds: lastWatchedSeconds ?? 0
       })
       .onConflictDoUpdate({
         target: [lessonProgress.userId, lessonProgress.lessonId],
-        set: updateData,
+        set: updateData
       })
-      .returning();
+      .returning()
 
-    return progress;
+    return progress
   }
 
   async getCourseProgress(userId: string, courseId: string): Promise<{ completed: number, total: number, percentage: number }> {
@@ -2428,6 +2447,15 @@ export class DatabaseStorage implements IStorage {
     return { completed, total, percentage };
   }
 
+  async setLastViewedLesson(userId: string, courseId: string, lessonId: string) {
+    await db
+      .update(users)
+      .set({
+        lastViewedLessonId: lessonId,
+        updatedAt: new Date()
+      })
+      .where(eq(users.id, userId))
+  }
 
   async getAdminStats(): Promise<{ totalUsers: number; totalCourses: number; totalPurchases: number; totalRevenue: string }> {
     const [userCount] = await db.select({ count: sql<number>`COUNT(*)` }).from(users);
@@ -2975,41 +3003,46 @@ export class DatabaseStorage implements IStorage {
   }
 
 
-  async getCoursePackages(categoryId?: string | null): Promise<(CoursePackage & { courses: Course[]; totalPrice: number; discountedPrice: number })[]> {
+  async getCoursePackages(categoryId?: string | null, parentId?: string | null): Promise<(CoursePackage & { courses: Course[]; totalPrice: number; discountedPrice: number })[]> {
+    let whereCondition = eq(coursePackages.isActive, true)
 
-
-
-
-
-
-    let whereCondition;
+    let categoryWhere: SQL | undefined
 
     if (categoryId) {
-
       const [categoryInfo] = await db
         .select({ parentId: categories.parentId })
         .from(categories)
-        .where(eq(categories.id, categoryId));
+        .where(eq(categories.id, categoryId))
 
-      const parentId = categoryInfo?.parentId;
+      const catParentId = categoryInfo?.parentId
 
+      categoryWhere = or(
+        sql`${categoryId} = ANY(${coursePackages.categoryIds})`,
+        catParentId ? sql`${catParentId} = ANY(${coursePackages.categoryIds})` : sql`false`
+      )
+    } else if (parentId) {
+      const childCategories = await db
+        .select({ id: categories.id })
+        .from(categories)
+        .where(eq(categories.parentId, parentId))
 
-      if (parentId) {
-        whereCondition = and(
-          eq(coursePackages.isActive, true),
-          sql`(${categoryId} = ANY(${coursePackages.categoryIds}) OR ${parentId} = ANY(${coursePackages.categoryIds}) OR ${coursePackages.categoryIds} IS NULL OR array_length(${coursePackages.categoryIds}, 1) IS NULL)`
-        );
-      } else {
-        whereCondition = and(
-          eq(coursePackages.isActive, true),
-          sql`(${categoryId} = ANY(${coursePackages.categoryIds}) OR ${coursePackages.categoryIds} IS NULL OR array_length(${coursePackages.categoryIds}, 1) IS NULL)`
-        );
+      const childIds = childCategories.map(c => c.id)
+      const targetIds = [...childIds, parentId]
+
+      if (targetIds.length > 0) {
+        categoryWhere = arrayOverlaps(coursePackages.categoryIds, targetIds)
       }
+    }
+
+    const emptyCondition = sql`cardinality(${coursePackages.categoryIds}) = 0`
+
+    if (categoryId || parentId) {
+      if (categoryWhere) {
+        whereCondition = and(whereCondition, categoryWhere)
+      }
+      whereCondition = or(whereCondition, emptyCondition)
     } else {
-      whereCondition = and(
-        eq(coursePackages.isActive, true),
-        sql`(${coursePackages.categoryIds} IS NULL OR array_length(${coursePackages.categoryIds}, 1) IS NULL)`
-      );
+      whereCondition = and(whereCondition, emptyCondition)
     }
 
     const packagesWithCourses = await db
@@ -3022,39 +3055,36 @@ export class DatabaseStorage implements IStorage {
       .leftJoin(packageCourses, eq(packageCourses.packageId, coursePackages.id))
       .leftJoin(courses, eq(courses.id, packageCourses.courseId))
       .where(whereCondition)
-      .orderBy(coursePackages.displayOrder, packageCourses.displayOrder);
+      .orderBy(coursePackages.displayOrder, packageCourses.displayOrder)
 
-
-    const packagesMap = new Map<string, CoursePackage & { courses: Course[] }>();
+    const packagesMap = new Map<string, CoursePackage & { courses: Course[] }>()
 
     for (const row of packagesWithCourses) {
       if (!packagesMap.has(row.package.id)) {
         packagesMap.set(row.package.id, {
           ...row.package,
           courses: [],
-        });
+        })
       }
 
-
       if (row.course) {
-        packagesMap.get(row.package.id)!.courses.push(row.course);
+        packagesMap.get(row.package.id)!.courses.push(row.course)
       }
     }
 
-
     return Array.from(packagesMap.values()).map((pkg) => {
       const totalPrice = pkg.courses.reduce((sum, course) => {
-        return sum + parseFloat(course.price || '0');
-      }, 0);
-      const discount = pkg.discount || 0;
-      const discountedPrice = totalPrice * (1 - discount / 100);
+        return sum + parseFloat(course.price || '0')
+      }, 0)
+      const discount = pkg.discount || 0
+      const discountedPrice = totalPrice * (1 - discount / 100)
 
       return {
         ...pkg,
         totalPrice,
         discountedPrice,
-      };
-    });
+      }
+    })
   }
 
   async getCoursePackage(id: string): Promise<(CoursePackage & { courses: Course[]; totalPrice: number; discountedPrice: number }) | undefined> {
@@ -3143,7 +3173,33 @@ export class DatabaseStorage implements IStorage {
       .where(eq(packageCourses.packageId, packageId))
       .orderBy(packageCourses.displayOrder);
 
-    return results.map((r) => r.course);
+    const coursesData = results.map((r) => r.course);
+
+    // Attach subcategoryIds in one query (avoid N+1 requests from the client).
+    if (coursesData.length > 0) {
+      const courseIds = coursesData.map(c => c.id);
+      const subcats = await db
+        .select({
+          courseId: courseSubcategories.courseId,
+          subcategoryId: courseSubcategories.subcategoryId,
+        })
+        .from(courseSubcategories)
+        .where(inArray(courseSubcategories.courseId, courseIds));
+
+      const subcatsMap = new Map<string, string[]>();
+      for (const row of subcats) {
+        const arr = subcatsMap.get(row.courseId) ?? [];
+        arr.push(row.subcategoryId);
+        subcatsMap.set(row.courseId, arr);
+      }
+
+      return coursesData.map(c => ({
+        ...c,
+        subcategoryIds: subcatsMap.get(c.id) ?? [],
+      }));
+    }
+
+    return coursesData;
   }
 
   async getAllCoursePackages(): Promise<(CoursePackage & { courses: Course[]; totalPrice: number; discountedPrice: number; purchaseCount?: number })[]> {
@@ -4470,27 +4526,30 @@ export class DatabaseStorage implements IStorage {
   }
 
 
-  async createNotification(data: InsertNotification): Promise<Notification> {
+  async createNotification(
+    data: InsertNotification,
+    options: { skipTelegram?: boolean } = {}
+  ): Promise<Notification> {
     const [notification] = await db
       .insert(notifications)
       .values(data)
       .returning();
 
-
-    try {
-      const user = await this.getUser(data.userId);
-      if (user?.telegramChatId) {
-        await sendNotificationToTelegram(
-          user.telegramChatId,
-          data.type,
-          data.title,
-          data.message
-        );
-        console.log(`[Notifications] Sent to Telegram for user ${data.userId}`);
+    if (!options.skipTelegram) {
+      try {
+        const user = await this.getUser(data.userId);
+        if (user?.telegramChatId) {
+          await sendNotificationToTelegram(
+            user.telegramChatId,
+            data.type,
+            data.title,
+            data.message
+          );
+          console.log(`[Notifications] Sent to Telegram for user ${data.userId}`);
+        }
+      } catch (error) {
+        console.error('[Notifications] Failed to send to Telegram:', error);
       }
-    } catch (error) {
-      console.error('[Notifications] Failed to send to Telegram:', error);
-
     }
 
     return notification;
@@ -5131,7 +5190,7 @@ export class DatabaseStorage implements IStorage {
 
   async addOrUpdatePendingLessonNotification(courseId: string, lessonId: string): Promise<void> {
     const scheduledFor = new Date();
-    scheduledFor.setMinutes(scheduledFor.getMinutes() + 30);
+    scheduledFor.setMinutes(scheduledFor.getMinutes() + 60)
 
     const existing = await db
       .select()
@@ -5347,6 +5406,199 @@ export class DatabaseStorage implements IStorage {
         errorMessage,
       })
       .where(eq(schedulerRuns.id, id));
+  }
+
+  async getChatConversationsByUser(userId: string): Promise<ChatConversation[]> {
+    return db.select().from(chatConversations).where(eq(chatConversations.userId, userId)).orderBy(desc(chatConversations.lastMessageAt));
+  }
+
+  async getChatConversationsByGuest(guestToken: string): Promise<ChatConversation[]> {
+    return db.select().from(chatConversations).where(eq(chatConversations.guestToken, guestToken)).orderBy(desc(chatConversations.lastMessageAt));
+  }
+
+  async getChatConversation(id: string): Promise<ChatConversation | undefined> {
+    const [conv] = await db.select().from(chatConversations).where(eq(chatConversations.id, id));
+    return conv;
+  }
+
+  async createChatConversation(data: Partial<InsertChatConversation> & { userId?: string | null }): Promise<ChatConversation> {
+    const [conv] = await db.insert(chatConversations).values({
+      userId: data.userId || null,
+      subject: data.subject || null,
+      status: data.status || 'open',
+      priority: data.priority || 'normal',
+      tags: data.tags || [],
+      guestName: (data as any).guestName || null,
+      guestToken: (data as any).guestToken || null,
+    }).returning();
+    return conv;
+  }
+
+  async linkGuestConversations(guestToken: string, userId: string): Promise<number> {
+    const guestConvs = await db.select().from(chatConversations).where(eq(chatConversations.guestToken, guestToken));
+    if (guestConvs.length === 0) return 0;
+
+    const userConvs = await db.select().from(chatConversations)
+      .where(and(eq(chatConversations.userId, userId), sql`${chatConversations.guestToken} IS NULL`))
+      .orderBy(desc(chatConversations.lastMessageAt));
+
+    if (userConvs.length > 0) {
+      const targetConv = userConvs[0];
+      for (const gc of guestConvs) {
+        await db.update(chatMessages)
+          .set({ conversationId: targetConv.id, senderId: userId })
+          .where(eq(chatMessages.conversationId, gc.id));
+        await db.delete(chatConversations).where(eq(chatConversations.id, gc.id));
+      }
+      const allMsgs = await db.select().from(chatMessages)
+        .where(eq(chatMessages.conversationId, targetConv.id))
+        .orderBy(desc(chatMessages.createdAt))
+        .limit(1);
+      if (allMsgs.length > 0) {
+        await db.update(chatConversations).set({
+          lastMessage: allMsgs[0].text.substring(0, 200),
+          lastMessageAt: allMsgs[0].createdAt,
+          updatedAt: new Date(),
+        }).where(eq(chatConversations.id, targetConv.id));
+      }
+      return guestConvs.length;
+    }
+
+    const result = await db.update(chatConversations)
+      .set({ userId, guestToken: null, guestName: null, updatedAt: new Date() })
+      .where(eq(chatConversations.guestToken, guestToken))
+      .returning();
+
+    await db.update(chatMessages)
+      .set({ senderId: userId })
+      .where(and(
+        sql`${chatMessages.senderId} IS NULL`,
+        inArray(chatMessages.conversationId, result.map(c => c.id))
+      ));
+
+    return result.length;
+  }
+
+  async updateChatConversation(id: string, data: Partial<ChatConversation>): Promise<ChatConversation | undefined> {
+    const [conv] = await db.update(chatConversations).set({ ...data, updatedAt: new Date() }).where(eq(chatConversations.id, id)).returning();
+    return conv;
+  }
+
+  async getChatMessages(conversationId: string): Promise<ChatMessage[]> {
+    return db.select().from(chatMessages).where(eq(chatMessages.conversationId, conversationId)).orderBy(chatMessages.createdAt);
+  }
+
+  async createChatMessage(data: InsertChatMessage): Promise<ChatMessage> {
+    const [msg] = await db.insert(chatMessages).values(data).returning();
+    await db.update(chatConversations).set({
+      lastMessage: data.text.substring(0, 200),
+      lastMessageAt: new Date(),
+      updatedAt: new Date(),
+      ...(data.role === 'client' ? { unreadAdmin: sql`${chatConversations.unreadAdmin} + 1` } : { unreadUser: sql`${chatConversations.unreadUser} + 1` }),
+    }).where(eq(chatConversations.id, data.conversationId));
+    return msg;
+  }
+
+  async markChatMessagesRead(conversationId: string, role: string): Promise<void> {
+    const readerRole = role === 'admin' ? 'client' : 'admin';
+    await db.update(chatMessages).set({ isRead: true }).where(and(eq(chatMessages.conversationId, conversationId), eq(chatMessages.role, readerRole)));
+    if (role === 'admin') {
+      await db.update(chatConversations).set({ unreadAdmin: 0 }).where(eq(chatConversations.id, conversationId));
+    } else {
+      await db.update(chatConversations).set({ unreadUser: 0 }).where(eq(chatConversations.id, conversationId));
+    }
+  }
+
+  async getChatMessageById(id: string): Promise<ChatMessage | undefined> {
+    const [msg] = await db.select().from(chatMessages).where(eq(chatMessages.id, id));
+    return msg;
+  }
+
+  async updateChatMessageReactions(id: string, reactions: string[]): Promise<ChatMessage | undefined> {
+    const [msg] = await db.update(chatMessages).set({ reactions }).where(eq(chatMessages.id, id)).returning();
+    return msg;
+  }
+
+  async getAllChatConversations(filters?: { status?: string; priority?: string; assigneeId?: string }): Promise<any[]> {
+    let query = db.select({
+      conversation: chatConversations,
+      userName: sql<string>`COALESCE((SELECT first_name || ' ' || last_name FROM users WHERE id = ${chatConversations.userId}), ${chatConversations.guestName}, 'Гость')`,
+      userEmail: sql<string>`COALESCE((SELECT email FROM users WHERE id = ${chatConversations.userId}), '—')`,
+      assigneeName: sql<string>`(SELECT first_name || ' ' || last_name FROM users WHERE id = ${chatConversations.assigneeId})`,
+    }).from(chatConversations).orderBy(desc(chatConversations.lastMessageAt)).$dynamic();
+
+    const conditions: SQL[] = [];
+    if (filters?.status) conditions.push(eq(chatConversations.status, filters.status));
+    if (filters?.priority) conditions.push(eq(chatConversations.priority, filters.priority));
+    if (filters?.assigneeId) conditions.push(eq(chatConversations.assigneeId, filters.assigneeId));
+
+    if (conditions.length > 0) {
+      query = query.where(and(...conditions));
+    }
+
+    return query;
+  }
+
+  async getChatStats(): Promise<{ total: number; open: number; pending: number; resolved: number; unread: number }> {
+    const [stats] = await db.select({
+      total: sql<number>`count(*)::int`,
+      open: sql<number>`count(*) filter (where status = 'open')::int`,
+      pending: sql<number>`count(*) filter (where status = 'pending')::int`,
+      resolved: sql<number>`count(*) filter (where status = 'resolved')::int`,
+      unread: sql<number>`sum(unread_admin)::int`,
+    }).from(chatConversations);
+    return { total: stats.total || 0, open: stats.open || 0, pending: stats.pending || 0, resolved: stats.resolved || 0, unread: stats.unread || 0 };
+  }
+
+  async getChatTemplates(): Promise<ChatTemplate[]> {
+    return db.select().from(chatTemplates).orderBy(desc(chatTemplates.uses));
+  }
+
+  async createChatTemplate(data: InsertChatTemplate): Promise<ChatTemplate> {
+    const [tpl] = await db.insert(chatTemplates).values(data).returning();
+    return tpl;
+  }
+
+  async updateChatTemplate(id: string, data: Partial<ChatTemplate>): Promise<ChatTemplate | undefined> {
+    const [tpl] = await db.update(chatTemplates).set({ ...data, updatedAt: new Date() }).where(eq(chatTemplates.id, id)).returning();
+    return tpl;
+  }
+
+  async deleteChatTemplate(id: string): Promise<void> {
+    await db.delete(chatTemplates).where(eq(chatTemplates.id, id));
+  }
+
+  async incrementChatTemplateUses(id: string): Promise<void> {
+    await db.update(chatTemplates).set({ uses: sql`${chatTemplates.uses} + 1` }).where(eq(chatTemplates.id, id));
+  }
+
+  async getChatSettings(): Promise<ChatSettings> {
+    const [settings] = await db.select().from(chatSettings).limit(1);
+    if (settings) return settings;
+    const [created] = await db.insert(chatSettings).values({}).returning();
+    return created;
+  }
+
+  async updateChatSettings(data: Partial<ChatSettings>): Promise<ChatSettings> {
+    const existing = await this.getChatSettings();
+    const [settings] = await db.update(chatSettings).set({ ...data, updatedAt: new Date() }).where(eq(chatSettings.id, existing.id)).returning();
+    return settings!;
+  }
+
+  async getChatUserInfo(userId: string): Promise<any> {
+    const [user] = await db.select({
+      id: users.id,
+      email: users.email,
+      firstName: users.firstName,
+      lastName: users.lastName,
+      balance: users.balance,
+      fantiks: users.fantiks,
+      createdAt: users.createdAt,
+      city: users.registrationCity,
+    }).from(users).where(eq(users.id, userId));
+    if (!user) return null;
+    const purchaseCount = await db.select({ count: sql<number>`count(*)::int` }).from(purchases).where(eq(purchases.userId, userId));
+    return { ...user, purchases: purchaseCount[0]?.count || 0 };
   }
 }
 

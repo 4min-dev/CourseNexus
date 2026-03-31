@@ -48,18 +48,14 @@ export class VideoConverter {
       if (!url.startsWith('http')) {
         url = 'https://' + url;
       }
-      if (!url.includes('nowcdn.co')) {
-        url = 'https://p40911.nowcdn.co/' + url.replace(/^\/+/, '');
+      if (!url.includes('cdn.go')) {
+        url = 'https://cdn.go.vkurse.io/' + url.replace(/^\/+/, '');
       }
 
       // КРИТИЧЕСКАЯ ПРОВЕРКА: есть ли имя файла?
       const filename = url.split('/').pop();
       if (!filename || filename.includes('?') || !filename.includes('.') || filename.length < 3) {
         throw new Error(`Invalid video URL — missing or invalid filename: ${url}`);
-      }
-
-      if (!url.startsWith('https://p40911.nowcdn.co/')) {
-        throw new Error(`Invalid video URL domain: ${url}`);
       }
 
       console.log('[VideoConverter] Скачиваем видео:', url);
@@ -133,7 +129,7 @@ export class VideoConverter {
       ACL: 'public-read',
     }));
 
-    return `https://p40911.nowcdn.co/${key}`;
+    return `https://cdn.go.vkurse.io/${key}`;
   }
 
   private getDuration(inputPath: string): Promise<number> {
@@ -166,12 +162,18 @@ export class VideoConverter {
         '-c:a', 'aac',
         '-b:a', '128k',
         '-vf', 'scale=trunc(iw/2)*2:trunc(ih/2)*2',
-        '-progress', 'pipe:1',  // Важно: прогресс в stdout
+        '-threads', '4',
+        '-progress', 'pipe:1',
         '-y',
         output
       ];
 
-      const ffmpeg = spawn('/usr/bin/ffmpeg', args);
+      const ffmpeg = spawn('cpulimit', [
+        '-l', '180',
+        '--',
+        '/usr/bin/ffmpeg',
+        ...args
+      ]);
 
       let durationSec = 0;
       let lastProgress = -1;           // Чтобы не спамить одинаковыми значениями

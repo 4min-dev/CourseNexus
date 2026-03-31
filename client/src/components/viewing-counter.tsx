@@ -27,7 +27,7 @@ export function ViewingCounter({ value, courseId }: ViewingCounterProps) {
   return (
     <div className="flex items-center gap-1 text-xs text-muted-foreground" data-testid="viewing-counter">
       <Eye className="h-3 w-3" />
-      <span data-testid="viewing-count">{value} смотрят</span>
+      <span data-testid="viewing-count">{viewingCount} смотрят</span>
     </div>
   );
 }

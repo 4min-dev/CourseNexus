@@ -1,11 +1,11 @@
 import { ChevronRight, ChevronDown, FolderOpen, Star, Crown, Heart, ShoppingBag, BookOpen, Gift, RefreshCw, Search, X, HelpCircle } from "lucide-react";
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, type MouseEvent } from "react";
 import { cn } from "@/lib/utils";
 import { Slider } from "@/components/ui/slider";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useQuery } from "@tanstack/react-query";
-import { Link } from "wouter";
+import { Link, useLocation } from "wouter";
 import type { Category as DbCategory, Subcategory } from "@shared/schema";
 import { formatPrice } from "@/lib/formatPrice";
 import { Input } from "@/components/ui/input";
@@ -60,10 +60,13 @@ interface SidebarProps {
   }) => void;
   isOpen: boolean;
   showPriceFilter?: boolean;
-  catalogPath?: string; // Path for "Каталог курсов" link
+  catalogPath?: string;
+  hideVipAndFavorites?: boolean;
 }
 
-export function Sidebar({ selectedCategories, onCategoryChange, isOpen, showPriceFilter = true, catalogPath = "/shop" }: SidebarProps) {
+export function Sidebar({ selectedCategories, onCategoryChange, isOpen, showPriceFilter = true, catalogPath = "/shop", hideVipAndFavorites = false }: SidebarProps) {
+  const [location, setLocation] = useLocation();
+
   const [expandedNodes, setExpandedNodes] = useState<Set<string>>(
     new Set(["root", "platforms"])
   );
@@ -203,6 +206,13 @@ export function Sidebar({ selectedCategories, onCategoryChange, isOpen, showPric
     selectedCategories.maxPrice ?? maxPrice,
   ]);
 
+  const handleShopLinkClick = (e: MouseEvent) => {
+    if (typeof window !== "undefined" && window.innerWidth < 1024) {
+      e.preventDefault();
+      window.location.assign("/shop");
+    }
+  };
+
   const toggleNode = (nodeId: string) => {
     const newExpanded = new Set(expandedNodes);
     if (newExpanded.has(nodeId)) {
@@ -213,7 +223,7 @@ export function Sidebar({ selectedCategories, onCategoryChange, isOpen, showPric
     setExpandedNodes(newExpanded);
   };
 
-  const handlePlatformClick = (platform: string, platformName: string, categoryId?: string) => {
+  const handlePlatformClick = (platform: string, platformName: string, categoryId?: string, parentCategoryId?: string) => {
     // When changing platform, reset level, year, and author filters
     // to avoid showing invalid filter combinations
     if (selectedCategories.platform === platform) {
@@ -226,6 +236,7 @@ export function Sidebar({ selectedCategories, onCategoryChange, isOpen, showPric
       const newCategories: any = {
         platform: platform,
         minRating: selectedCategories.minRating,
+        levels: [parentCategoryId]
       };
       // Keep price filters if they exist (for shop page)
       if (selectedCategories.minPrice !== undefined) {
@@ -254,6 +265,15 @@ export function Sidebar({ selectedCategories, onCategoryChange, isOpen, showPric
 
   const handlePriceChange = (values: number[]) => {
     setLocalPriceRange([values[0], values[1]]); // только обновляем локальное состояние
+  };
+
+  const handlePriceCommit = (values: number[]) => {
+    // При отпускании слайдера — отправляем запрос на сервер
+    handleCategoryChange({
+      ...selectedCategories,
+      minPrice: values[0],
+      maxPrice: values[1],
+    });
   };
 
   const handleRatingChange = (value: string) => {
@@ -375,23 +395,56 @@ export function Sidebar({ selectedCategories, onCategoryChange, isOpen, showPric
   }, [selectedCategories.platform, platformsHierarchy]);
 
   useEffect(() => {
-    const timer = setTimeout(() => {
-      handleCategoryChange({
-        ...selectedCategories,
-        minPrice: localPriceRange[0] === 0 ? undefined : localPriceRange[0],
-        maxPrice: localPriceRange[1] === maxPrice ? undefined : localPriceRange[1],
-      });
-    }, 400);
+    const params = new URLSearchParams(window.location.search);
+    const platformId = params.get('platform'); // ID основной категории (опционально)
+    const levelParam = params.get('level') || ''
+    const levelIds = levelParam.split(',').map(id => id.trim()).filter(Boolean);
 
-    return () => clearTimeout(timer);
-  }, [localPriceRange, maxPrice]); // зависим от localPriceRange и maxPrice
+    if (!platformId && !levelParam) return;
+
+    setExpandedNodes((prev) => {
+      const newSet = new Set(prev);
+
+      // Очищаем старые platform-*
+      for (const node of newSet) {
+        if (node.startsWith("platform-")) newSet.delete(node);
+      }
+
+      // Очищаем старые subcategories-*
+      for (const node of newSet) {
+        if (node.startsWith("subcategories-")) newSet.delete(node);
+      }
+
+      let levelIdToUse = '';
+      // 1. Если есть явный platform в URL — открываем его
+      if (levelParam) {
+        levelIdToUse = levelIds.length > 1 ? levelIds[levelIds.length - 1] : levelParam
+        const platform = categories?.find(cat => cat.id === levelIdToUse);
+
+        if (platform) {
+          const name = platform.nameEn || platform.name || platformId;
+          newSet.add(`platform-${name}`);
+
+          onCategoryChange((prev: any) => ({
+            ...prev,
+            platform: platformId
+          }))
+        }
+      }
+
+      const subcategory = categories?.find(cat => cat.id === platformId)
+
+      if (subcategory) {
+        const subName = subcategory.nameEn || subcategory.name || levelIdToUse;
+        newSet.add(`subcategories-${subName}`);
+      }
+
+      return newSet;
+    });
+  }, [location, categories, subcategories]);
 
   useEffect(() => {
-    setLocalPriceRange([
-      selectedCategories.minPrice ?? 0,
-      selectedCategories.maxPrice ?? maxPrice,
-    ]);
-  }, [selectedCategories.minPrice, selectedCategories.maxPrice, maxPrice]);
+  }, [expandedNodes])
 
   return (
     <aside
@@ -409,7 +462,8 @@ export function Sidebar({ selectedCategories, onCategoryChange, isOpen, showPric
         <div className="space-y-1">
           {/* Main Navigation - visible on mobile */}
           <div className="lg:hidden space-y-1 pb-2 mb-2 border-b border-border">
-            <Link href="/shop">
+
+            <Link href="/shop" onClick={handleShopLinkClick}>
               <div className="flex items-center gap-2 px-2 py-1.5 text-sm font-semibold cursor-pointer hover-elevate rounded-md transition-all" data-testid="link-sidebar-shop">
                 <ShoppingBag className="h-4 w-4 text-primary" />
                 <span>Магазин</span>
@@ -438,19 +492,23 @@ export function Sidebar({ selectedCategories, onCategoryChange, isOpen, showPric
             </Link>
           </div>
 
-          <Link href="/vip">
-            <div className="flex items-center gap-2 px-2 py-1.5 text-sm font-semibold cursor-pointer hover-elevate rounded-md transition-all vip-shimmer" data-testid="link-vip">
-              <Crown className="h-4 w-4 text-yellow-500" />
-              <span className="text-yellow-500">{vipPageContent?.pageTitle || 'VIP Подписка'}</span>
-            </div>
-          </Link>
+          {!hideVipAndFavorites && (
+            <Link href="/vip">
+              <div className="flex items-center gap-2 px-2 py-1.5 text-sm font-semibold cursor-pointer hover-elevate rounded-md transition-all vip-shimmer" data-testid="link-vip">
+                <Crown className="h-4 w-4 text-yellow-500" />
+                <span className="text-yellow-500">{vipPageContent?.pageTitle || 'VIP Подписка'}</span>
+              </div>
+            </Link>
+          )}
 
-          <Link href="/favorites">
-            <div className="flex items-center gap-2 px-2 py-1.5 text-sm font-semibold cursor-pointer hover-elevate rounded-md transition-all" data-testid="link-favorites">
-              <Heart className="h-4 w-4 text-red-500" />
-              <span className="text-red-500">Избранное</span>
-            </div>
-          </Link>
+          {!hideVipAndFavorites && (
+            <Link href="/favorites">
+              <div className="flex items-center gap-2 px-2 py-1.5 text-sm font-semibold cursor-pointer hover-elevate rounded-md transition-all" data-testid="link-favorites">
+                <Heart className="h-4 w-4 text-red-500" />
+                <span className="text-red-500">Избранное</span>
+              </div>
+            </Link>
+          )}
 
           <Link href={catalogPath} onClick={() => handleCategoryChange({})}>
             <div className="flex items-center gap-2 px-2 py-1.5 text-sm font-semibold cursor-pointer hover-elevate rounded-md transition-all" data-testid="link-catalog">
@@ -478,16 +536,67 @@ export function Sidebar({ selectedCategories, onCategoryChange, isOpen, showPric
                 {platformsHierarchy.map((mainPlatform) => {
                   const childSlugs = mainPlatform.children.map(c => c.id).join(',');
                   const isMainSelected = selectedCategories.platform === childSlugs;
-                  console.log("mainPlatform", mainPlatform)
-                  console.log("subcategories", subcategories)
+
+                  const newLevels = selectedCategories.levels?.includes(mainPlatform.categoryId)
+                    ? selectedCategories.levels.filter(id => id !== mainPlatform.categoryId)
+                    : [mainPlatform.categoryId];
 
                   return (
                     <div key={mainPlatform.id} className="space-y-1">
                       {/* Main category - whole button toggles expand/collapse */}
                       <button
-                        onClick={() => toggleNode(`platform-${mainPlatform.id}`)}
+                        onClick={() => {
+                          const currentCategoryId = mainPlatform.categoryId;
+
+                          // 1. Обновляем selectedCategories.levels
+                          // Если эта категория уже выбрана → удаляем её
+                          // Иначе → оставляем только её (или добавляем, в зависимости от твоей текущей логики)
+                          let newLevels: string[] | undefined;
+
+                          if (selectedCategories.levels?.includes(currentCategoryId)) {
+                            // Уже выбрана → деселектим (удаляем)
+                            newLevels = selectedCategories.levels.filter(id => id !== currentCategoryId);
+                          } else {
+                            // Не выбрана → выбираем только эту (или добавляем — зависит от твоего поведения)
+                            // Здесь я предполагаю "только эта", как в подкатегориях
+                            newLevels = [currentCategoryId];
+                            // Если нужно добавлять, а не заменять — используй:
+                            // newLevels = [...(selectedCategories.levels || []), currentCategoryId];
+                          }
+
+                          handleCategoryChange({
+                            ...selectedCategories,
+                            platform: '',
+                            levels: newLevels.length > 0 ? newLevels : undefined,
+                          });
+
+                          // 2. Управление раскрытием (expandedNodes)
+                          setExpandedNodes((prev) => {
+                            const newSet = new Set(prev);
+
+                            // Всегда очищаем ВСЕ platform-XXX перед дальнейшими действиями
+                            [...newSet].forEach((node) => {
+                              if (node.startsWith("platform-")) {
+                                newSet.delete(node);
+                              }
+                            });
+
+                            const currentNode = `platform-${mainPlatform.id}`;
+
+                            // Если мы деселектим платформу (удаляем из levels) → НЕ открываем её
+                            if (newLevels?.includes(currentCategoryId)) {
+                              // Платформа остаётся/становится выбранной → открываем (или оставляем открытой)
+                              newSet.add(currentNode);
+                            }
+                            // else — если удалили → она уже очищена выше, ничего не добавляем
+
+                            return newSet;
+                          });
+                        }}
                         className={cn(
-                          "flex items-center gap-2 px-2 py-1.5 rounded-md w-full text-left text-sm hover-elevate transition-all"
+                          "flex items-center gap-2 px-2 py-1.5 rounded-md w-full text-left text-sm hover-elevate transition-all",
+                          selectedCategories.levels?.includes(mainPlatform.categoryId) &&
+                          "bg-sidebar-accent text-sidebar-accent-foreground toggle-elevate toggle-elevated"
                         )}
                         data-testid={`button-main-platform-${mainPlatform.id}`}
                       >
@@ -517,14 +626,59 @@ export function Sidebar({ selectedCategories, onCategoryChange, isOpen, showPric
                                 {/* Сама платформа (child) — кликабельная, с возможностью раскрытия подкатегорий */}
                                 <button
                                   onClick={() => {
-                                    // Всегда применяем фильтр по платформе (child)
-                                    if (selectedCategories.platform !== child.id) {
+                                    const currentPlatformId = child.id;
+                                    const currentCategoryId = child.categoryId;
 
-                                      handlePlatformClick(child.categoryId, child.name, child.categoryId);
+                                    // 1. Логика выбора / снятия выбора платформы
+                                    const isCurrentlySelected = selectedCategories.platform === currentCategoryId
+
+                                    if (isCurrentlySelected) {
+                                      // уже выбрана → снимаем выбор
+
+                                      onCategoryChange((prev) => ({ ...prev, platform: '' }))
+                                      handlePlatformClick(null, null, null, mainPlatform.categoryId); // ← подставь правильный вызов для deselect
+                                      // если handlePlatformClick не поддерживает null — можно:
+                                      // handlePlatformClick(undefined, undefined, undefined);
+                                    } else {
+                                      // не выбрана → выбираем эту платформу
+
+                                      handlePlatformClick(currentCategoryId, child.name, currentCategoryId, mainPlatform.categoryId);
+
+                                      const categoryId = mainPlatform.categoryId;
+
+                                      // Добавляем только если ещё нет
+                                      if (!selectedCategories.levels?.includes(categoryId)) {
+
+                                        onCategoryChange((prev) => ({
+                                          ...prev,
+                                          levels: [...(prev.levels ?? []), categoryId],
+                                        }));
+                                      }
                                     }
-                                    // Если есть подкатегории — дополнительно раскрываем/сворачиваем их
+
+                                    // 2. Управление раскрытием подкатегорий (только если они есть)
                                     if (childSubcategories.length > 0) {
-                                      toggleNode(`subcategories-${child.id}`);
+                                      setExpandedNodes((prev) => {
+                                        const newSet = new Set(prev);
+
+                                        // Закрываем ВСЕ subcategories-XXX от других child-платформ
+                                        [...newSet].forEach((node) => {
+                                          if (node.startsWith("subcategories-")) {
+                                            newSet.delete(node);
+                                          }
+                                        });
+
+                                        const nodeId = `subcategories-${child.id}`;
+
+                                        // Открываем подкатегории ТОЛЬКО если платформа теперь выбрана
+                                        if (!isCurrentlySelected) {
+                                          // была не выбрана → теперь выбрана → открываем
+                                          newSet.add(nodeId);
+                                        }
+                                        // если была выбрана → теперь снята → остаётся закрытой (уже удалили выше)
+
+                                        return newSet;
+                                      });
                                     }
                                   }}
                                   className={cn(
@@ -546,11 +700,7 @@ export function Sidebar({ selectedCategories, onCategoryChange, isOpen, showPric
                                     )}
                                     <span>{child.name}</span>
                                   </div>
-                                  {childSubcategories.length > 0 && (
-                                    <span className="text-xs text-muted-foreground">
-                                      {childSubcategories.length}
-                                    </span>
-                                  )}
+
                                 </button>
 
                                 {/* Подкатегории — третий уровень */}
@@ -560,13 +710,28 @@ export function Sidebar({ selectedCategories, onCategoryChange, isOpen, showPric
                                       <button
                                         key={subcat.id}
                                         onClick={() => {
-                                          const newLevels = selectedCategories.levels?.includes(subcat.id)
-                                            ? selectedCategories.levels.filter(id => id !== subcat.id)
-                                            : [subcat.id];
+                                          const subcatId = subcat.id;
+                                          const platformCategoryId = mainPlatform.categoryId;
+
+                                          // 1. Текущие levels (или пустой массив, если undefined)
+                                          const currentLevels = selectedCategories.levels ?? [];
+
+                                          // 2. Toggle подкатегории
+                                          let newLevels = currentLevels.includes(subcatId)
+                                            ? currentLevels.filter(id => id !== subcatId) // убираем, если уже есть
+                                            : [subcatId];               // добавляем, если нет
+
+                                          // 3. Добавляем mainPlatform.categoryId ТОЛЬКО если его ещё нет
+                                          if (!newLevels.includes(platformCategoryId)) {
+                                            newLevels = [...newLevels, platformCategoryId];
+                                          }
+
+                                          // 4. Если после всех операций levels пустой → можно установить undefined (по твоей логике)
+                                          const finalLevels = newLevels.length > 0 ? newLevels : undefined;
 
                                           handleCategoryChange({
                                             ...selectedCategories,
-                                            levels: newLevels.length > 0 ? newLevels : undefined,
+                                            levels: finalLevels,
                                           });
 
                                           trackFilterClick('subcategory', subcat.id, subcat.name);
@@ -709,6 +874,7 @@ export function Sidebar({ selectedCategories, onCategoryChange, isOpen, showPric
                     step={1000}
                     value={localPriceRange}
                     onValueChange={handlePriceChange}
+                    onValueCommit={handlePriceCommit}
                     className="w-full"
                     data-testid="slider-price-range"
                   />

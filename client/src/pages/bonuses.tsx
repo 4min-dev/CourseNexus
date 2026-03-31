@@ -57,7 +57,7 @@ export default function Bonuses() {
   });
 
   const completedTaskIds = new Set(userTasks?.map((ut) => ut.taskId) || []);
-  
+
   const getTaskIcon = (iconName: string) => {
     const icons: Record<string, any> = {
       'user-plus': UserPlus,
@@ -107,7 +107,7 @@ export default function Bonuses() {
     };
     return icons[iconName] || Trophy;
   };
-  
+
   const getDifficultyColor = (difficulty: string) => {
     const colors: Record<string, string> = {
       'easy': 'text-chart-2',
@@ -117,7 +117,7 @@ export default function Bonuses() {
     };
     return colors[difficulty] || 'text-muted-foreground';
   };
-  
+
   const getTypeInfo = (type: string) => {
     const typeInfo: Record<string, { label: string; color: string; icon: any }> = {
       'onboarding': { label: 'Вводные', color: 'bg-chart-2/10 border-chart-2/30 text-chart-2', icon: Star },
@@ -127,9 +127,9 @@ export default function Bonuses() {
     };
     return typeInfo[type] || { label: type, color: 'bg-muted', icon: Trophy };
   };
-  
+
   const filteredTasks = tasks?.filter(task => selectedType === 'all' || task.type === selectedType) || [];
-  
+
   const tasksByCategory = filteredTasks.reduce((acc, task) => {
     const category = task.category || 'general';
     if (!acc[category]) acc[category] = [];
@@ -460,8 +460,8 @@ export default function Bonuses() {
                     </div>
 
                     <Link href="/referral-info">
-                      <Button 
-                        variant="outline" 
+                      <Button
+                        variant="outline"
                         className="w-full gap-2"
                         data-testid="button-referral-info"
                       >
@@ -494,7 +494,7 @@ export default function Bonuses() {
 
                 <div className="p-4 bg-chart-3/5 rounded-lg border border-chart-3/20">
                   <p className="text-sm text-muted-foreground mb-2">
-                    Фантики — это бонусная валюта, которую можно потратить на прошлогодние курсы
+                    Фантики — это бонусная валюта, которую можно потратить на прошлогодние курсы или получить скидку на новые
                   </p>
                   <p className="text-lg font-semibold">
                     1 фантик = 1 рублю
@@ -601,7 +601,7 @@ export default function Bonuses() {
                   const IconComponent = getTaskIcon(task.icon || 'trophy');
                   const typeInfo = getTypeInfo(task.type);
                   const difficultyColor = getDifficultyColor(task.difficulty || 'easy');
-                  
+
                   return (
                     <Card key={task.id} className="hover-elevate transition-all" data-testid={`card-task-${task.id}`}>
                       <CardHeader>
@@ -642,7 +642,7 @@ export default function Bonuses() {
                                 <span className="font-medium">{progress}/{target}</span>
                               </div>
                               <div className="h-2 bg-muted rounded-full overflow-hidden">
-                                <div 
+                                <div
                                   className="h-full bg-chart-3 transition-all"
                                   style={{ width: `${Math.min((progress / target) * 100, 100)}%` }}
                                 />

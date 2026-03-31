@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { debugLog } from '@/lib/debug';
 
 interface ReferralData {
   code: string;
@@ -42,7 +43,7 @@ export function useReferralTracking() {
 
       if (urlRef) {
         const normalizedCode = urlRef.toUpperCase();
-        
+
         if (validateReferralCode(normalizedCode)) {
           // Valid URL ref - save to storage and use it
           const referralData: ReferralData = {
@@ -53,8 +54,8 @@ export function useReferralTracking() {
           localStorage.setItem(REFERRAL_STORAGE_KEY, JSON.stringify(referralData));
           setReferralCode(normalizedCode);
           setReferralSource('url');
-          
-          console.log('[Referral] Captured from URL:', normalizedCode);
+
+          debugLog('[Referral] Captured from URL:', normalizedCode);
           return;
         } else {
           console.warn('[Referral] Invalid ref code format from URL:', urlRef);
@@ -65,18 +66,18 @@ export function useReferralTracking() {
       const storedData = localStorage.getItem(REFERRAL_STORAGE_KEY);
       if (storedData) {
         const parsed: ReferralData = JSON.parse(storedData);
-        
+
         // Check if expired
         if (isReferralExpired(parsed.capturedAt)) {
-          console.log('[Referral] Stored code expired, clearing...');
+          debugLog('[Referral] Stored code expired, clearing...');
           localStorage.removeItem(REFERRAL_STORAGE_KEY);
           return;
         }
-        
+
         // Valid stored ref
         setReferralCode(parsed.code);
         setReferralSource('storage');
-        console.log('[Referral] Restored from storage:', parsed.code, `(${parsed.source})`);
+        debugLog('[Referral] Restored from storage:', parsed.code, `(${parsed.source})`);
       }
     } catch (error) {
       console.error('[Referral] Error loading referral code:', error);
@@ -91,13 +92,21 @@ export function useReferralTracking() {
     return '/register';
   };
 
+  // Helper to build login URL with ref parameter (for when user logs in they may later register)
+  const getLoginUrl = () => {
+    if (referralCode) {
+      return `/login?ref=${referralCode}`;
+    }
+    return '/login';
+  };
+
   // Clear referral code from storage (call after successful registration)
   const clearReferral = () => {
     try {
       localStorage.removeItem(REFERRAL_STORAGE_KEY);
       setReferralCode(null);
       setReferralSource(null);
-      console.log('[Referral] Cleared referral code');
+      debugLog('[Referral] Cleared referral code');
     } catch (error) {
       console.error('[Referral] Error clearing referral:', error);
     }
@@ -107,6 +116,7 @@ export function useReferralTracking() {
     referralCode,
     referralSource,
     getRegisterUrl,
+    getLoginUrl,
     clearReferral,
     hasReferral: !!referralCode,
   };

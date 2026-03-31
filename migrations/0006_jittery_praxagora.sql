@@ -1,0 +1,1 @@
+ALTER TABLE "users" ADD COLUMN "last_viewed_lesson_id" varchar(36);

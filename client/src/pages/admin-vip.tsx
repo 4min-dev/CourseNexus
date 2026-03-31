@@ -34,7 +34,7 @@ interface DraftContent {
 // Helper to build field descriptors based on field path
 function buildFieldDescriptor(fieldPath: string[], draftContent: DraftContent): EditFieldDescriptor | null {
   const field = fieldPath[0];
-  
+
   // Page content fields
   if (field === 'pageTitle') {
     return {
@@ -45,7 +45,7 @@ function buildFieldDescriptor(fieldPath: string[], draftContent: DraftContent): 
       placeholder: 'VIP Пакеты',
     };
   }
-  
+
   if (field === 'pageSubtitle') {
     return {
       fieldPath,
@@ -55,16 +55,16 @@ function buildFieldDescriptor(fieldPath: string[], draftContent: DraftContent): 
       placeholder: 'Выберите подходящий тариф...',
     };
   }
-  
+
   // Tier fields
   if (field === 'tiers' && fieldPath.length >= 2) {
     const tierName = fieldPath[1]; // bronze, silver, gold, diamond
     const tier = draftContent.tiers[tierName];
-    
+
     if (!tier) return null;
-    
+
     const tierField = fieldPath[2];
-    
+
     if (tierField === 'displayName') {
       return {
         fieldPath,
@@ -74,7 +74,7 @@ function buildFieldDescriptor(fieldPath: string[], draftContent: DraftContent): 
         placeholder: 'Название тарифа',
       };
     }
-    
+
     if (tierField === 'description') {
       return {
         fieldPath,
@@ -84,7 +84,7 @@ function buildFieldDescriptor(fieldPath: string[], draftContent: DraftContent): 
         placeholder: 'Описание тарифа',
       };
     }
-    
+
     if (tierField === 'price') {
       return {
         fieldPath,
@@ -94,7 +94,7 @@ function buildFieldDescriptor(fieldPath: string[], draftContent: DraftContent): 
         placeholder: '0',
       };
     }
-    
+
     if (tierField === 'features') {
       return {
         fieldPath,
@@ -104,7 +104,7 @@ function buildFieldDescriptor(fieldPath: string[], draftContent: DraftContent): 
       };
     }
   }
-  
+
   return null;
 }
 
@@ -136,7 +136,7 @@ export default function AdminVipPage() {
       vipTiers.forEach(tier => {
         tiersMap[tier.tier] = tier;
       });
-      
+
       setDraftContent({
         pageContent: { ...pageContent },
         tiers: tiersMap,
@@ -147,26 +147,26 @@ export default function AdminVipPage() {
   // Check if content has changed
   const hasChanges = useMemo(() => {
     if (!draftContent || !pageContent || !vipTiers) return false;
-    
+
     // Check page content changes
     if (draftContent.pageContent.pageTitle !== pageContent.pageTitle ||
-        draftContent.pageContent.pageSubtitle !== pageContent.pageSubtitle) {
+      draftContent.pageContent.pageSubtitle !== pageContent.pageSubtitle) {
       return true;
     }
-    
+
     // Check tier changes
     for (const tier of vipTiers) {
       const draftTier = draftContent.tiers[tier.tier];
       if (!draftTier) continue;
-      
+
       if (draftTier.displayName !== tier.displayName ||
-          draftTier.description !== tier.description ||
-          draftTier.price !== tier.price ||
-          JSON.stringify(draftTier.features) !== JSON.stringify(tier.features)) {
+        draftTier.description !== tier.description ||
+        draftTier.price !== tier.price ||
+        JSON.stringify(draftTier.features) !== JSON.stringify(tier.features)) {
         return true;
       }
     }
-    
+
     return false;
   }, [draftContent, pageContent, vipTiers]);
 
@@ -196,7 +196,7 @@ export default function AdminVipPage() {
 
     try {
       // Check what changed and save accordingly
-      const pageContentChanged = 
+      const pageContentChanged =
         draftContent.pageContent.pageTitle !== pageContent.pageTitle ||
         draftContent.pageContent.pageSubtitle !== pageContent.pageSubtitle;
 
@@ -209,7 +209,7 @@ export default function AdminVipPage() {
         const draftTier = draftContent.tiers[tier.tier];
         if (!draftTier) continue;
 
-        const tierChanged = 
+        const tierChanged =
           draftTier.displayName !== tier.displayName ||
           draftTier.description !== tier.description ||
           draftTier.price !== tier.price ||
@@ -250,7 +250,7 @@ export default function AdminVipPage() {
       vipTiers.forEach(tier => {
         tiersMap[tier.tier] = tier;
       });
-      
+
       setDraftContent({
         pageContent: { ...pageContent },
         tiers: tiersMap,
@@ -262,7 +262,7 @@ export default function AdminVipPage() {
   // Handle field edit
   const handleFieldEdit = (fieldPath: string[], label: string) => {
     if (!draftContent) return;
-    
+
     const descriptor = buildFieldDescriptor(fieldPath, draftContent);
     if (descriptor) {
       setEditingField(descriptor);
@@ -275,7 +275,7 @@ export default function AdminVipPage() {
     if (!draftContent) return;
 
     const field = fieldPath[0];
-    
+
     if (field === 'pageTitle' || field === 'pageSubtitle') {
       setDraftContent({
         ...draftContent,
@@ -287,7 +287,7 @@ export default function AdminVipPage() {
     } else if (field === 'tiers' && fieldPath.length >= 3) {
       const tierName = fieldPath[1];
       const tierField = fieldPath[2];
-      
+
       setDraftContent({
         ...draftContent,
         tiers: {
@@ -342,7 +342,7 @@ export default function AdminVipPage() {
                 Есть несохраненные изменения
               </Badge>
             )}
-            
+
             <div className="flex items-center gap-2">
               <Switch
                 id="edit-mode"

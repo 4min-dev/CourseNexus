@@ -2,10 +2,18 @@ import express, { type Request, Response, NextFunction } from "express";
 import { registerRoutes } from "./routes";
 import { setupVite, serveStatic, log } from "./vite";
 import { seedInitialData } from "./seed-categories";
+import cron from 'node-cron';
+import { sendInactivityReminders } from './telegram-bot'; 
+import { sendNewCoursesNotification } from "./newCoursesNotification";
 
 const app = express();
 app.use(express.json());
-app.use(express.urlencoded({ extended: false }));
+app.use(express.urlencoded({ extended: true }));
+
+// Lightweight probe endpoint for load balancer/readiness checks.
+app.get("/healthz", (_req, res) => {
+  res.status(200).json({ status: "ok", uptime: Math.round(process.uptime()) });
+});
 
 app.use((req, res, next) => {
   const start = Date.now();
@@ -51,7 +59,7 @@ app.use((req, res, next) => {
   const { videoQueue } = await import('./videoQueue');
   console.log('[Server] Video queue initialized');
 
-  // Initialize Telegram bot for polling
+  // Initialize Telegram bot
   const { startTelegramBot, stopTelegramBot } = await import('./telegram-bot');
   await startTelegramBot();
 
@@ -63,6 +71,29 @@ app.use((req, res, next) => {
   const { engagementScheduler } = await import('./engagementScheduler');
   engagementScheduler.start();
 
+  cron.schedule('0 12 * * *', async () => {
+    console.log('[Inactivity] Запуск ежедневных напоминаний в 12:00 МСК')
+    try {
+      await sendInactivityReminders()
+    } catch (err) {
+      console.error('[Inactivity] Ошибка при отправке напоминаний:', err)
+    }
+  }, {
+    timezone: "Europe/Moscow"
+  })
+
+  cron.schedule('10 12 * * *', async () => {
+    console.log('[NewCourses] Запуск уведомления о новых курсах в 12:10 МСК');
+
+    try {
+      await sendNewCoursesNotification();
+    } catch (err) {
+      console.error('[NewCourses] Ошибка при отправке уведомления:', err);
+    }
+  }, {
+    timezone: "Europe/Moscow"
+  });
+
   const server = await registerRoutes(app);
 
   app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
@@ -73,19 +104,12 @@ app.use((req, res, next) => {
     throw err;
   });
 
-  // importantly only setup vite in development and after
-  // setting up all the other routes so the catch-all route
-  // doesn't interfere with the other routes
   if (app.get("env") === "development") {
     await setupVite(app, server);
   } else {
     serveStatic(app);
   }
 
-  // ALWAYS serve the app on the port specified in the environment variable PORT
-  // Other ports are firewalled. Default to 5000 if not specified.
-  // this serves both the API and the client.
-  // It is the only port that is not firewalled.
   const port = parseInt(process.env.PORT || '5000', 10);
   server.listen({
     port,
@@ -97,29 +121,21 @@ app.use((req, res, next) => {
 
   setTimeout(() => videoQueue.restoreQueueFromDatabase(), 5000);
 
-  // Graceful shutdown - корректное завершение при получении сигналов
+  // Graceful shutdown
   const gracefulShutdown = async (signal: string) => {
     console.log(`\n[Server] ${signal} received, starting graceful shutdown...`);
 
-    // Stop Telegram bot
     stopTelegramBot();
-
-    // Stop lesson notification scheduler
     lessonNotificationScheduler.stop();
-
-    // Stop engagement notification scheduler
     engagementScheduler.stop();
 
-    // Закрыть HTTP сервер (больше не принимать новые запросы)
-    // Дождаться завершения всех активных соединений
     await new Promise<void>((resolve) => {
       server.close(() => {
-        console.log('[Server] HTTP server closed - all connections finished');
+        console.log('[Server] HTTP server closed');
         resolve();
       });
     });
 
-    // Закрыть подключения к БД
     try {
       const { closeDatabase } = await import('./db');
       await closeDatabase();
@@ -131,19 +147,15 @@ app.use((req, res, next) => {
     process.exit(0);
   };
 
-  // Обработка сигналов завершения
   process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
   process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 
-  // Обработка необработанных ошибок - логировать, но не падать сразу
   process.on('unhandledRejection', (reason, promise) => {
     console.error('[Server] Unhandled Rejection at:', promise, 'reason:', reason);
-    // Не падать сразу, дать время для обработки текущих запросов
   });
 
   process.on('uncaughtException', (error) => {
     console.error('[Server] Uncaught Exception:', error);
-    // Критическая ошибка - нужно перезапускаться
     gracefulShutdown('UNCAUGHT_EXCEPTION');
   });
 })();

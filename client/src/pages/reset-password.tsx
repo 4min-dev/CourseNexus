@@ -40,18 +40,18 @@ export default function ResetPassword() {
       setStep("reset");
       toast({
         title: "Код отправлен!",
-        description: "Проверьте Telegram — мы отправили вам 6-значный код для восстановления пароля",
+        description: "Проверьте Telegram — мы отправили вам 4-значный код для восстановления пароля",
       });
     },
     onError: (error: any) => {
       let description = error.message || "Не удалось отправить код";
-      
+
       if (description.includes("не найден")) {
         description = "Пользователь с таким email не найден";
       } else if (description.includes("не привязан Telegram")) {
         description = "К вашему аккаунту не привязан Telegram. Пожалуйста, привяжите Telegram в профиле или обратитесь в поддержку";
       }
-      
+
       toast({
         title: "Ошибка",
         description,
@@ -71,18 +71,18 @@ export default function ResetPassword() {
         title: "Пароль изменён!",
         description: "Ваш пароль успешно изменён. Теперь вы можете войти с новым паролем",
       });
-      
+
       setTimeout(() => {
         setLocation("/login");
       }, 3000);
     },
     onError: (error: any) => {
       let description = error.message || "Не удалось сбросить пароль";
-      
+
       if (description.includes("Неверный или истекший код")) {
         description = "Неверный или истекший код подтверждения. Проверьте код и попробуйте снова";
       }
-      
+
       toast({
         title: "Ошибка",
         description,
@@ -93,7 +93,7 @@ export default function ResetPassword() {
 
   const handleEmailSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    
+
     if (!email || !email.includes("@")) {
       toast({
         title: "Ошибка",
@@ -290,15 +290,15 @@ export default function ResetPassword() {
                   <Input
                     id="code"
                     type="text"
-                    placeholder="123456"
+                    placeholder="1234"
                     value={code}
                     onChange={(e) => setCode(e.target.value)}
-                    maxLength={6}
+                    maxLength={4}
                     required
                     data-testid="input-reset-code"
                   />
                   <p className="text-xs text-muted-foreground">
-                    Введите 6-значный код, отправленный в ваш Telegram
+                    Введите 4-значный код, отправленный в ваш Telegram
                   </p>
                 </div>
 

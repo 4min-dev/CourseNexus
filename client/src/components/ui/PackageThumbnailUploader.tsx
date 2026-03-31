@@ -2,6 +2,7 @@ import { Upload } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { useState } from "react";
+import { debugLog } from "@/lib/debug";
 
 interface ThumbnailUploaderProps {
     onComplete: (files: { fileName: string; fileUrl: string }[]) => void;
@@ -39,7 +40,7 @@ export function PackageThumbnailUploader({
     const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
         const files = e.target.files;
         if (!files?.length) return;
-        console.log('files', files)
+        debugLog('files', files)
         const file = files[0];
 
         // Проверка размера

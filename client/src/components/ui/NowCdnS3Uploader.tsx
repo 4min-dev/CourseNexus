@@ -4,7 +4,7 @@ import { Progress } from "@/components/ui/progress";
 import { useState } from "react";
 
 interface NowCdnUploaderProps {
-    onUploadSuccess: (data: { fileName: string; fileUrl: string }[]) => void;
+    onUploadSuccess: (data: { fileName: string; fileUrl: string, fileSize: string | null }[]) => void;
     buttonText?: string;
     inputId: string;
     acceptedTypes?: string;
@@ -48,7 +48,7 @@ export function NowCdnUploader({
         setUploading(true);
         setProgress(0);
 
-        const uploadedFiles: { fileName: string; fileUrl: string }[] = [];
+        const uploadedFiles: { fileName: string; fileUrl: string, fileSize: string | null }[] = [];
         let uploadedBytes = 0;
         const totalBytes = fileArray.reduce((sum, f) => sum + f.size, 0);
 
@@ -92,8 +92,8 @@ export function NowCdnUploader({
                     xhr.setRequestHeader("Content-Type", file.type || "application/octet-stream");
                     xhr.send(file);
                 });
-
-                uploadedFiles.push({ fileName: file.name, fileUrl });
+                console.log('file', file)
+                uploadedFiles.push({ fileName: file.name, fileUrl, fileSize: file.size });
             }
 
             onUploadSuccess(uploadedFiles);

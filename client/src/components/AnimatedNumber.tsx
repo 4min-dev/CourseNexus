@@ -20,33 +20,51 @@ export function AnimatedNumber({
   const [count, setCount] = useState(0);
   const [hasAnimated, setHasAnimated] = useState(false);
   const elementRef = useRef<HTMLSpanElement>(null);
+  const rafRef = useRef<number | null>(null);
+  const lastFrameTsRef = useRef<number>(0);
+  const lastValueRef = useRef<number>(0);
+  const hasAnimatedRef = useRef(false);
 
   useEffect(() => {
     // Intersection Observer to trigger animation when element is visible
     const observer = new IntersectionObserver(
       (entries) => {
-        if (entries[0].isIntersecting && !hasAnimated) {
+        if (entries[0].isIntersecting && !hasAnimatedRef.current) {
+          hasAnimatedRef.current = true;
           setHasAnimated(true);
-          
-          const startTime = Date.now();
-          const animate = () => {
-            const elapsed = Date.now() - startTime;
+
+          const startTime = performance.now();
+          lastFrameTsRef.current = 0;
+          lastValueRef.current = 0;
+
+          const animate = (ts: number) => {
+            // Throttle to ~30fps: same feel, less React churn.
+            if (lastFrameTsRef.current && ts - lastFrameTsRef.current < 33) {
+              rafRef.current = requestAnimationFrame(animate);
+              return;
+            }
+            lastFrameTsRef.current = ts;
+
+            const elapsed = ts - startTime;
             const progress = Math.min(elapsed / duration, 1);
             
             // Easing function for smooth animation
             const easeOutQuart = 1 - Math.pow(1 - progress, 4);
             const current = Math.floor(value * easeOutQuart);
-            
-            setCount(current);
+
+            if (current !== lastValueRef.current) {
+              lastValueRef.current = current;
+              setCount(current);
+            }
             
             if (progress < 1) {
-              requestAnimationFrame(animate);
+              rafRef.current = requestAnimationFrame(animate);
             } else {
               setCount(value);
             }
           };
-          
-          requestAnimationFrame(animate);
+
+          rafRef.current = requestAnimationFrame(animate);
         }
       },
       { threshold: 0.1 }
@@ -56,8 +74,14 @@ export function AnimatedNumber({
       observer.observe(elementRef.current);
     }
 
-    return () => observer.disconnect();
-  }, [value, duration, hasAnimated]);
+    return () => {
+      observer.disconnect();
+      if (rafRef.current !== null) {
+        cancelAnimationFrame(rafRef.current);
+        rafRef.current = null;
+      }
+    };
+  }, [value, duration]);
 
   // Format number with separators
   const formatNumber = (num: number) => {

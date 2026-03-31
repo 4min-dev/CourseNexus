@@ -1,115 +1,108 @@
-import { useState, useEffect, useRef } from "react";
-import { useQuery, useMutation } from "@tanstack/react-query";
-import { useParams, useLocation, useSearchParams } from "wouter";
-import AdminLayout from "@/components/AdminLayout";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import RichTextEditor from "@/components/RichTextEditor";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Checkbox } from "@/components/ui/checkbox";
-import { Switch } from "@/components/ui/switch";
-import { useToast } from "@/hooks/use-toast";
-import { Plus, Trash2, ArrowLeft, Save, Play, FileText, ChevronDown, ChevronRight, Upload, X, Edit, RefreshCw, Check, ChevronsUpDown, AlertCircle } from "lucide-react";
-import { queryClient, apiRequest } from "@/lib/queryClient";
-import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { cn } from "@/lib/utils";
-import { NowCdnVideoUploader } from "@/components/ui/NowCdnS3VideoUploader";
-import { uploadQueue } from "@/lib/upload-queue";
-import { NowCdnUploader } from "@/components/ui/NowCdnS3Uploader";
+import { useState, useEffect, useRef } from "react"
+import { useQuery, useMutation } from "@tanstack/react-query"
+import { useParams, useLocation, useSearchParams } from "wouter"
+import AdminLayout from "@/components/AdminLayout"
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { Button } from "@/components/ui/button"
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
+import RichTextEditor from "@/components/RichTextEditor"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { Checkbox } from "@/components/ui/checkbox"
+import { Switch } from "@/components/ui/switch"
+import { useToast } from "@/hooks/use-toast"
+import { Plus, Trash2, ArrowLeft, Save, Play, FileText, ChevronDown, ChevronRight, X, Edit, RefreshCw, Check, ChevronsUpDown, AlertCircle } from "lucide-react"
+import { queryClient, apiRequest } from "@/lib/queryClient"
+import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command"
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import { cn } from "@/lib/utils"
+import { NowCdnVideoUploader } from "@/components/ui/NowCdnS3VideoUploader"
+import { uploadQueue } from "@/lib/upload-queue"
+import { NowCdnUploader } from "@/components/ui/NowCdnS3Uploader"
 
 interface Course {
-  id: string;
-  title: string;
-  description: string | null;
-  price: number;
-  fantikPrice: number | null;
-  paymentType: string;
-  authorName: string;
-  thumbnailImage: string | null;
-  level: string[] | null;
-  platform: string;
-  year: number;
-  isFree: boolean;
-  hiddenInShop: boolean;
-  hiddenInLibrary: boolean;
+  id: string
+  title: string
+  description: string | null
+  price: number
+  fantikPrice: number | null
+  paymentType: string
+  authorName: string
+  thumbnailImage: string | null
+  level: string[] | null
+  platform: string
+  year: number
+  isFree: boolean
+  hiddenInShop: boolean
+  hiddenInLibrary: boolean
 }
 
 interface Lesson {
-  id: string;
-  sectionId: string;
-  title: string;
-  description: string | null;
-  videoUrl: string | null;
-  duration: number | null;
-  order: number;
-  processingStatus?: string;
-  conversionProgress?: number,
-  uploadProgress?: number;
-  errorMessage?: string | null;
+  id: string
+  sectionId: string
+  title: string
+  description: string | null
+  videoUrl: string | null
+  duration: number | null
+  order: number
+  processingStatus?: string
+  conversionProgress?: number
+  uploadProgress?: number
+  errorMessage?: string | null
 }
 
 export interface Section {
-  id: string;
-  courseId: string;
-  title: string;
-  description: string | null;
-  order: number;
-  lessons?: Lesson[];
+  id: string
+  courseId: string
+  title: string
+  description: string | null
+  order: number
+  lessons?: Lesson[]
 }
 
 interface CourseFile {
-  id: string;
-  courseId: string;
-  lessonId: string | null;
-  fileName: string;
-  fileUrl: string;
-  fileType: string;
-  fileSize?: number | null;
-  displayOrder: number;
+  id: string
+  courseId: string
+  lessonId: string | null
+  fileName: string
+  fileUrl: string
+  fileType: string
+  fileSize?: number | null
+  displayOrder: number
 }
 
 interface Category {
-  id: string;
-  name: string;
-  slug: string;
-  parentId?: string | null;
+  id: string
+  name: string
+  slug: string
+  parentId?: string | null
 }
 
 interface Subcategory {
-  id: string;
-  categoryId: string;
-  name: string;
-  slug: string;
-}
-
-interface SubcategoryWithCategory extends Subcategory {
-  category: Category;
+  id: string
+  categoryId: string
+  name: string
+  slug: string
 }
 
 const BUCKET_NAME = "vkurse"
 
 export default function AdminCourseEdit() {
-  const { courseId } = useParams<{ courseId: string }>();
-  const [, setLocation] = useLocation();
-  const { toast } = useToast();
-
-  const [videoFile, setVideoFile] = useState<File | null>(null);
-  const [isAddSectionDialogOpen, setIsAddSectionDialogOpen] = useState(false);
-  const [isAddLessonDialogOpen, setIsAddLessonDialogOpen] = useState(false);
-  const [isEditLessonDialogOpen, setIsEditLessonDialogOpen] = useState(false);
-  const [editingLesson, setEditingLesson] = useState<Lesson | null>(null);
-  const [selectedSectionId, setSelectedSectionId] = useState<string | null>(null);
-  const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set());
-  const didAutoExpandRef = useRef(false);
-
-  const [authorComboboxOpen, setAuthorComboboxOpen] = useState(false);
-  const [authorSearch, setAuthorSearch] = useState("");
-
+  const { courseId } = useParams<{ courseId: string }>()
+  const [, setLocation] = useLocation()
+  const { toast } = useToast()
+  const [videoFile, setVideoFile] = useState<File | null>(null)
+  const [isAddSectionDialogOpen, setIsAddSectionDialogOpen] = useState(false)
+  const [isAddLessonDialogOpen, setIsAddLessonDialogOpen] = useState(false)
+  const [isEditLessonDialogOpen, setIsEditLessonDialogOpen] = useState(false)
+  const [editingLesson, setEditingLesson] = useState<Lesson | null>(null)
+  const [selectedSectionId, setSelectedSectionId] = useState<string | null>(null)
+  const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set())
+  const didAutoExpandRef = useRef(false)
+  const [authorComboboxOpen, setAuthorComboboxOpen] = useState(false)
+  const [authorSearch, setAuthorSearch] = useState("")
   const [courseFormData, setCourseFormData] = useState({
     title: "",
     description: "",
@@ -123,186 +116,146 @@ export default function AdminCourseEdit() {
     isFree: false,
     hiddenInShop: false,
     hiddenInLibrary: false,
-  });
-
+  })
   const [sectionFormData, setSectionFormData] = useState({
     title: "",
     description: "",
-  });
-
+  })
   const [lessonFormData, setLessonFormData] = useState({
     title: "",
     description: "",
     videoUrl: "",
     duration: 0,
-  });
-
+  })
   const [uploadedVideo, setUploadedVideo] = useState<{
-    fileName: string;
-    fileUrl: string;
-    duration: number;
-  } | null>(null);
-
-  // Track video upload promises and progress
+    fileName: string
+    fileUrl: string
+    duration: number
+  } | null>(null)
   const [videoUploadPromise, setVideoUploadPromise] = useState<{
-    promise: Promise<{ fileUrl: string; fileName: string }>;
-    lessonSessionId: number;
-  } | null>(null);
-  const [uploadProgress, setUploadProgress] = useState<number>(0);
-  const [uploadingLessonId, setUploadingLessonId] = useState<string | null>(null);
-
-  // Track current lesson session to prevent stale uploads from overwriting new forms
-  const [currentLessonSessionId, setCurrentLessonSessionId] = useState<number | null>(null);
-  const lessonSessionCounterRef = useRef(0);
-
+    promise: Promise<{ fileUrl: string; fileName: string }>
+    lessonSessionId: number
+  } | null>(null)
+  const [uploadProgress, setUploadProgress] = useState<number>(0)
+  const [uploadingLessonId, setUploadingLessonId] = useState<string | null>(null)
+  const [currentLessonSessionId, setCurrentLessonSessionId] = useState<number | null>(null)
+  const lessonSessionCounterRef = useRef(0)
   const [uploadedFiles, setUploadedFiles] = useState<Array<{
-    fileName: string;
-    fileUrl: string;
-    fileType: string;
-  }>>([]);
-
+    fileName: string
+    fileUrl: string
+    fileType: string
+    fileSize: string
+  }>>([])
   const [uploadedThumbnail, setUploadedThumbnail] = useState<{
-    fileName: string;
-    fileUrl: string;
-  } | null>(null);
-
-  const [selectedLevels, setSelectedLevels] = useState<any[]>([]);
-  const [selectionOrder, setSelectionOrder] = useState<string[]>([]);
-  const [selectedSubcategories, setSelectedSubcategories] = useState<string[]>([]);
+    fileName: string
+    fileUrl: string
+  } | null>(null)
+  const [selectedLevels, setSelectedLevels] = useState<string[]>([])
+  const [selectionOrder, setSelectionOrder] = useState<string[]>([])
+  const [selectedSubcategories, setSelectedSubcategories] = useState<string[]>([])
   const [searchParams] = useSearchParams()
   const subcategoryId = searchParams.get('subcategoryId')
   const categoryId = searchParams.get('categoryId')
   const parentId = searchParams.get('parentId')
 
-  // Fetch course
   const { data: course, isLoading: courseLoading } = useQuery<Course>({
     queryKey: ["/api/admin/courses", courseId],
     queryFn: async () => {
-      const response = await fetch(`/api/admin/courses/${courseId}`, {
-        credentials: "include",
-      });
-      if (!response.ok) throw new Error("Failed to fetch");
-      return response.json();
+      const response = await fetch(`/api/admin/courses/${courseId}`, { credentials: "include" })
+      if (!response.ok) throw new Error("Failed to fetch")
+      return response.json()
     },
     enabled: !!courseId,
-  });
+  })
 
-  // Fetch sections with lessons
   const { data: sections, refetch: refetchSections } = useQuery<Section[]>({
     queryKey: ["/api/admin/courses", courseId, "sections"],
     queryFn: async () => {
-      const response = await fetch(`/api/admin/courses/${courseId}/sections`, {
-        credentials: "include",
-      });
-      if (!response.ok) throw new Error("Failed to fetch");
-      return response.json();
+      const response = await fetch(`/api/admin/courses/${courseId}/sections`, { credentials: "include" })
+      if (!response.ok) throw new Error("Failed to fetch")
+      return response.json()
     },
     enabled: !!courseId,
-  });
+  })
 
-  // Auto-expand all sections to show lessons and their status (only on first load)
   useEffect(() => {
     if (sections && sections.length > 0 && !didAutoExpandRef.current) {
-      const allSectionIds = sections.map(s => s.id);
-      setExpandedSections(new Set(allSectionIds));
-      didAutoExpandRef.current = true;
+      const allSectionIds = sections.map(s => s.id)
+      setExpandedSections(new Set(allSectionIds))
+      didAutoExpandRef.current = true
     }
-  }, [sections]);
+  }, [sections])
 
-  // Fetch files for editing lesson
   const { data: lessonFiles, refetch: refetchLessonFiles } = useQuery<CourseFile[]>({
     queryKey: ["/api/admin/courses", courseId, "lesson-files", editingLesson?.id],
     queryFn: async () => {
-      if (!editingLesson) return [];
-      const response = await fetch(`/api/admin/course-files?courseId=${courseId}&lessonId=${editingLesson.id}`, {
-        credentials: "include",
-      });
-      if (!response.ok) throw new Error("Failed to fetch");
-      return response.json();
+      if (!editingLesson) return []
+      const response = await fetch(`/api/admin/course-files?courseId=${courseId}&lessonId=${editingLesson.id}`, { credentials: "include" })
+      if (!response.ok) throw new Error("Failed to fetch")
+      return response.json()
     },
     enabled: !!courseId && !!editingLesson,
-  });
+  })
 
-  // Fetch authors for autocomplete
   const { data: authors = [] } = useQuery<string[]>({
     queryKey: ["/api/courses-metadata/authors", authorSearch],
     queryFn: async () => {
-      const params = new URLSearchParams();
-      if (authorSearch) params.set('search', authorSearch);
-      const response = await fetch(`/api/courses-metadata/authors?${params}`, {
-        credentials: "include",
-      });
-      if (!response.ok) throw new Error("Failed to fetch");
-      return response.json();
+      const params = new URLSearchParams()
+      if (authorSearch) params.set('search', authorSearch)
+      const response = await fetch(`/api/courses-metadata/authors?${params}`, { credentials: "include" })
+      if (!response.ok) throw new Error("Failed to fetch")
+      return response.json()
     },
-  });
+  })
 
-  // Fetch available levels dynamically
   const { data: availableLevels = [] } = useQuery<string[]>({
     queryKey: ["/api/courses-metadata/levels"],
     queryFn: async () => {
-      const response = await fetch(`/api/courses-metadata/levels`, {
-        credentials: "include",
-      });
-      if (!response.ok) throw new Error("Failed to fetch");
-      return response.json();
+      const response = await fetch(`/api/courses-metadata/levels`, { credentials: "include" })
+      if (!response.ok) throw new Error("Failed to fetch")
+      return response.json()
     },
-  });
+  })
 
-  // Fetch categories
   const { data: categories = [] } = useQuery<Category[]>({
     queryKey: ["/api/categories"],
     queryFn: async () => {
-      const response = await fetch(`/api/categories`, {
-        credentials: "include",
-      });
-      if (!response.ok) throw new Error("Failed to fetch");
-      return response.json();
+      const response = await fetch(`/api/categories`, { credentials: "include" })
+      if (!response.ok) throw new Error("Failed to fetch")
+      return response.json()
     },
-  });
+  })
 
   const { data: subcategories = [] } = useQuery<Subcategory[]>({
     queryKey: ["/api/subcategories", categoryId],
     queryFn: async () => {
-      if (!categoryId) return [];
-      const res = await fetch(`/api/subcategories?categoryId=${categoryId}`, {
-        credentials: "include",
-      });
-
-      if (!res.ok) throw new Error("Failed to fetch subcategories");
-      return res.json();
+      if (!categoryId) return []
+      const res = await fetch(`/api/subcategories?categoryId=${categoryId}`, { credentials: "include" })
+      if (!res.ok) throw new Error("Failed to fetch subcategories")
+      return res.json()
     },
     enabled: !!categoryId,
-  });
+  })
 
-  console.log('subcategories', subcategories)
-
-  // Fetch all subcategories
   const { data: allSubcategories = [] } = useQuery<Subcategory[]>({
     queryKey: ["/api/subcategories"],
     queryFn: async () => {
-      const response = await fetch(`/api/subcategories`, {
-        credentials: "include",
-      });
-      if (!response.ok) throw new Error("Failed to fetch");
-      return response.json();
+      const response = await fetch(`/api/subcategories`, { credentials: "include" })
+      if (!response.ok) throw new Error("Failed to fetch")
+      return response.json()
     },
-  });
+  })
 
-  // Fetch course subcategories
   const { data: courseSubcategoryIds = [] } = useQuery<string[]>({
     queryKey: ["/api/admin/courses", courseId, "subcategories"],
     queryFn: async () => {
-      const response = await fetch(`/api/admin/courses/${courseId}/subcategories`, {
-        credentials: "include",
-      });
-      if (!response.ok) throw new Error("Failed to fetch");
-      return response.json();
+      const response = await fetch(`/api/admin/courses/${courseId}/subcategories`, { credentials: "include" })
+      if (!response.ok) throw new Error("Failed to fetch")
+      return response.json()
     },
     enabled: !!courseId,
-  });
+  })
 
-  // Load course data when fetched
   useEffect(() => {
     if (course) {
       setCourseFormData({
@@ -318,337 +271,180 @@ export default function AdminCourseEdit() {
         isFree: course.isFree || false,
         hiddenInShop: course.hiddenInShop || false,
         hiddenInLibrary: course.hiddenInLibrary || false,
-      });
-
-      // Set uploaded thumbnail if course already has an image
+      })
       if (course.thumbnailImage) {
         setUploadedThumbnail({
           fileName: course.thumbnailImage.split('/').pop() || "thumbnail",
           fileUrl: course.thumbnailImage,
-        });
+        })
       }
     }
-  }, [course]);
+  }, [course])
 
-  // Автоматически выбираем все подкатегории с именем уровня из URL — НО НЕ СБРАСЫВАЕМ уже выбранные!
   useEffect(() => {
-    // if (selectedLevels && !selectedLevels.some(lvl => lvl === parentId)) {
-
-    //   setSelectedLevels((prev) => ([
-    //     ...prev,
-    //     parentId
-    //   ]))
-    // }
-
     if (selectedLevels && !selectedLevels.some(lvl => lvl === categoryId)) {
-      setSelectedLevels((prev) => ([
-        ...prev,
-        categoryId
-      ]))
+      setSelectedLevels(prev => [...prev, categoryId])
     }
-
-    if (!allSubcategories.length) return;
-
+    if (!allSubcategories.length) return
     if (course?.level?.length > 0) {
-      setSelectedLevels(course.level);
-
-      // ← Устанавливаем начальный порядок из course.level (если ещё не установлен)
+      setSelectedLevels(course.level)
       setSelectionOrder(prev => prev.length === 0 ? course.level.filter(id =>
         categories.some(cat => cat.id === id && !cat.parentId)
-      ) : prev);
+      ) : prev)
     }
-
     const idsToAdd: string[] = []
-
     if (subcategoryId && subcategoryId !== 'null') {
-      const currentSubcat = allSubcategories.find(s => s.id === subcategoryId);
-      if (!currentSubcat) return;
-
-      const levelName = currentSubcat.name;
-
-      // Находим все подкатегории с таким же именем (levelName)
-      const matchingSubcats = allSubcategories.filter(sub => sub.name === levelName);
-
-      // Добавляем их ID в массив
+      const currentSubcat = allSubcategories.find(s => s.id === subcategoryId)
+      if (!currentSubcat) return
+      const levelName = currentSubcat.name
+      const matchingSubcats = allSubcategories.filter(sub => sub.name === levelName)
       matchingSubcats.forEach(sub => {
-        if (!idsToAdd.includes(sub.id)) {
-          idsToAdd.push(sub.id);
-        }
-      });
+        if (!idsToAdd.includes(sub.id)) idsToAdd.push(sub.id)
+      })
     }
-
     if (categories && categories.length > 0 && course && course.level) {
-
       categories
         .filter(cat => cat.parentId)
         .forEach(cat => {
-          const isChildInCourseLevel = course?.level?.includes(cat.id);
-          const isParentSelected = selectedLevels.includes(cat.parentId!);
-          console.log('selectedLevels', selectedLevels)
-          console.log('cat parent id', cat.parentId)
+          const isChildInCourseLevel = course?.level?.includes(cat.id)
+          const isParentSelected = selectedLevels.includes(cat.parentId!)
           if (isChildInCourseLevel && !isParentSelected) {
-            idsToAdd.push(cat.parentId!);
-            console.log(`Добавляем родителя ${cat.parentId} (дочерняя ${cat.id} есть в level курса)`);
+            idsToAdd.push(cat.parentId!)
           }
         })
     }
-
-
-
-    // ВАЖНО: НЕ ПЕРЕЗАПИСЫВАЕМ, а только ДОБАВЛЯЕМ недостающие
     setSelectedLevels(prev => {
-      const newSet = new Set(prev);
-      idsToAdd.forEach(id => newSet.add(id));
-      const newLevels = Array.from(newSet);
-
-      // Синхронизируем selectionOrder: добавляем новые корневые в конец
+      const newSet = new Set(prev)
+      idsToAdd.forEach(id => newSet.add(id))
+      const newLevels = Array.from(newSet)
       setSelectionOrder(currentOrder => {
-        const updatedOrder = [...currentOrder];
+        const updatedOrder = [...currentOrder]
         idsToAdd.forEach(id => {
           if (!updatedOrder.includes(id) && categories.some(cat => cat.id === id && !cat.parentId)) {
-            updatedOrder.push(id); // только корневые категории
+            updatedOrder.push(id)
           }
-        });
-        return updatedOrder;
-      });
+        })
+        return updatedOrder
+      })
+      return newLevels
+    })
+  }, [subcategoryId, allSubcategories, categories, course?.level, parentId, categoryId])
 
-      return newLevels;
-    });
-  }, [
-    subcategoryId,
-    allSubcategories,
-    categories,
-    course?.level,
-    parentId,
-    categoryId
-  ])
-
-  useEffect(() => {
-    console.log('selectedLevels', selectedLevels)
-  }, [selectedLevels])
-
-  // Load selected subcategories when fetched
   useEffect(() => {
     if (courseSubcategoryIds && courseSubcategoryIds.length > 0) {
-      setSelectedSubcategories(courseSubcategoryIds);
+      setSelectedSubcategories(courseSubcategoryIds)
     }
-  }, [courseSubcategoryIds]);
+  }, [courseSubcategoryIds])
 
-
-
-  // Poll for lesson status updates
   useEffect(() => {
-    if (!sections || !courseId) return;
-
-    // Find lessons that are being processed
+    if (!sections || !courseId) return
     const processingLessons = sections.flatMap(s => s.lessons || [])
-      .filter(l => l.processingStatus && ['uploading', 'queued', 'processing'].includes(l.processingStatus));
-
-    if (processingLessons.length === 0) return;
-
+      .filter(l => l.processingStatus && ['uploading', 'queued', 'processing'].includes(l.processingStatus))
+    if (processingLessons.length === 0) return
     const interval = setInterval(() => {
-      // Refetch sections to get updated status
-      queryClient.invalidateQueries({ queryKey: ["/api/admin/courses", courseId, "sections"] });
-    }, 3000); // Poll every 3 seconds
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/courses", courseId, "sections"] })
+    }, 3000)
+    return () => clearInterval(interval)
+  }, [sections, courseId])
 
-    return () => clearInterval(interval);
-  }, [sections, courseId]);
-
-  // Update editingLesson when sections change (to show latest processing status)
   useEffect(() => {
-    if (!editingLesson || !sections) return;
-
+    if (!editingLesson || !sections) return
     const updatedLesson = sections
       .flatMap(s => s.lessons || [])
-      .find(l => l.id === editingLesson.id);
-
+      .find(l => l.id === editingLesson.id)
     if (updatedLesson && updatedLesson.processingStatus !== editingLesson.processingStatus) {
-      setEditingLesson(updatedLesson);
+      setEditingLesson(updatedLesson)
     }
-  }, [sections, editingLesson]);
+  }, [sections, editingLesson])
 
-  // Update course mutation
   const updateCourseMutation = useMutation({
     mutationFn: async (data: any) => {
-      const response = await apiRequest("PUT", `/api/admin/courses/${courseId}`, data);
-      return await response.json();
+      const response = await apiRequest("PUT", `/api/admin/courses/${courseId}`, data)
+      return await response.json()
     },
     onSuccess: () => {
-      toast({ title: "Курс обновлен" });
-      queryClient.invalidateQueries({ queryKey: ["/api/admin/courses", courseId] });
+      toast({ title: "Курс обновлен" })
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/courses", courseId] })
     },
     onError: () => {
-      toast({ title: "Ошибка при обновлении курса", variant: "destructive" });
+      toast({ title: "Ошибка при обновлении курса", variant: "destructive" })
     },
-  });
+  })
 
-  // Update course subcategories mutation
   const updateSubcategoriesMutation = useMutation({
     mutationFn: async (subcategoryIds: string[]) => {
-      const response = await apiRequest("PUT", `/api/admin/courses/${courseId}/subcategories`, {
-        subcategoryIds,
-      });
-      return await response.json();
+      const response = await apiRequest("PUT", `/api/admin/courses/${courseId}/subcategories`, { subcategoryIds })
+      return await response.json()
     },
     onSuccess: () => {
-      toast({ title: "Подкатегории обновлены" });
-      queryClient.invalidateQueries({ queryKey: ["/api/admin/courses", courseId, "subcategories"] });
+      toast({ title: "Подкатегории обновлены" })
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/courses", courseId, "subcategories"] })
     },
     onError: () => {
-      toast({ title: "Ошибка при обновлении подкатегорий", variant: "destructive" });
+      toast({ title: "Ошибка при обновлении подкатегорий", variant: "destructive" })
     },
-  });
+  })
 
-  // Create section mutation
   const createSectionMutation = useMutation({
     mutationFn: async (data: { title: string; description?: string; order: number }) => {
-      const response = await apiRequest("POST", `/api/admin/courses/${courseId}/sections`, data);
-      return await response.json();
+      const response = await apiRequest("POST", `/api/admin/courses/${courseId}/sections`, data)
+      return await response.json()
     },
     onSuccess: () => {
-      toast({ title: "Модуль создан" });
-      queryClient.invalidateQueries({ queryKey: ["/api/admin/courses", courseId, "sections"] });
-      setIsAddSectionDialogOpen(false);
-      setSectionFormData({ title: "", description: "" });
+      toast({ title: "Модуль создан" })
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/courses", courseId, "sections"] })
+      setIsAddSectionDialogOpen(false)
+      setSectionFormData({ title: "", description: "" })
     },
     onError: () => {
-      toast({ title: "Ошибка при создании модуля", variant: "destructive" });
+      toast({ title: "Ошибка при создании модуля", variant: "destructive" })
     },
-  });
+  })
 
-  // Delete section mutation
   const deleteSectionMutation = useMutation({
     mutationFn: async (sectionId: string) => {
-      return await apiRequest("DELETE", `/api/admin/sections/${sectionId}`);
+      return await apiRequest("DELETE", `/api/admin/sections/${sectionId}`)
     },
     onSuccess: () => {
-      toast({ title: "Модуль удален" });
-      queryClient.invalidateQueries({ queryKey: ["/api/admin/courses", courseId, "sections"] });
+      toast({ title: "Модуль удален" })
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/courses", courseId, "sections"] })
     },
     onError: () => {
-      toast({ title: "Ошибка при удалении модуля", variant: "destructive" });
+      toast({ title: "Ошибка при удалении модуля", variant: "destructive" })
     },
-  });
+  })
 
   const createLessonMutation = useMutation({
     mutationFn: async (data: { sectionId: string; title: string; description?: string; order: number }) => {
-      const { sectionId, ...lessonData } = data;
-      const response = await apiRequest("POST", `/api/admin/sections/${sectionId}/lessons`, lessonData);
-      return await response.json();
+      const { sectionId, ...lessonData } = data
+      const response = await apiRequest("POST", `/api/admin/sections/${sectionId}/lessons`, lessonData)
+      return await response.json()
     },
     onSuccess: async (newLesson: any) => {
-      const lessonId = newLesson?.id;
+      const lessonId = newLesson?.id
       if (!lessonId) {
-        toast({ title: "Урок создан, но ID не получен", variant: "destructive" });
-        return;
+        toast({ title: "Урок создан, но ID не получен", variant: "destructive" })
+        return
       }
-
-      toast({ title: "Урок создан" });
-
-      // 1. Добавляем видео в очередь (если есть)
+      toast({ title: "Урок создан" })
       if (videoFile) {
-        try {
-          await apiRequest("PUT", `/api/admin/lessons/${lessonId}`, {
-            processingStatus: "uploading",
-            uploadProgress: 0,
-          });
-        } catch (e) { /* игнорируем, но логируем */ }
-
-        console.log('videoFile', videoFile)
-
+        await apiRequest("PUT", `/api/admin/lessons/${lessonId}`, {
+          processingStatus: "uploading",
+          uploadProgress: 0,
+        }).catch(() => { })
         uploadQueue.add({
           lessonId,
           file: videoFile,
           fileName: videoFile.name,
           onProgress: (percent) => {
-            apiRequest("PUT", `/api/admin/lessons/${lessonId}`, { uploadProgress: percent }).catch(() => { });
+            apiRequest("PUT", `/api/admin/lessons/${lessonId}`, { uploadProgress: percent }).catch(() => { })
           },
-        });
-
+        })
         toast({
           title: "Видео в очереди на загрузку",
           description: `Позиция в очереди: ${uploadQueue.getQueueLength()}`,
-        });
+        })
       }
-
-      // 2. Сохраняем прикреплённые файлы (PDF, ZIP и т.д.)
-      if (uploadedFiles.length > 0) {
-        for (const file of uploadedFiles) {
-          createFileMutation.mutate({
-            courseId: courseId!,
-            lessonId: lessonId, // теперь у нас есть ID урока!
-            fileName: file.fileName,
-            fileUrl: file.fileUrl,
-            fileType: file.fileType,
-            displayOrder: 0,
-          });
-        }
-        toast({ title: `Добавлено файлов: ${uploadedFiles.length}` });
-      }
-
-      // Обновляем UI
-      queryClient.invalidateQueries({ queryKey: ["/api/admin/courses", courseId, "sections"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/admin/courses", courseId, "files"] });
-
-      // Закрываем диалог и чистим форму
-      setIsAddLessonDialogOpen(false);
-      setLessonFormData({ title: "", description: "", videoUrl: "", duration: 0 });
-      setVideoFile(null);
-      setUploadedFiles([]);
-      setUploadedVideo(null);
-    },
-    onError: (error) => {
-      console.error("Ошибка создания урока:", error);
-      toast({ title: "Ошибка при создании урока", variant: "destructive" });
-    },
-  });
-
-  // Update lesson mutation
-  const updateLessonMutation = useMutation({
-    mutationFn: async (data: {
-      lessonId: string;
-      title: string;
-      description?: string;
-    }) => {
-      const { lessonId, ...lessonData } = data;
-      const response = await apiRequest("PUT", `/api/admin/lessons/${lessonId}`, lessonData);
-      return await response.json();
-    },
-
-    onSuccess: async (updatedLesson: any) => {
-      const lessonId = updatedLesson?.id;
-      if (!lessonId) {
-        toast({ title: "Урок обновлён, но ID не получен", variant: "destructive" });
-        return;
-      }
-
-      toast({ title: "Урок обновлен" });
-
-      // === 1. Если есть новое видео — добавляем его в очередь ===
-      if (videoFile) {
-        try {
-          await apiRequest("PUT", `/api/admin/lessons/${lessonId}`, {
-            processingStatus: "uploading",
-            uploadProgress: 0,
-          });
-        } catch (e) { }
-
-        uploadQueue.add({
-          lessonId,
-          file: videoFile,
-          fileName: videoFile.name,
-          onProgress: (percent) => {
-            apiRequest("PUT", `/api/admin/lessons/${lessonId}`, { uploadProgress: percent }).catch(() => { });
-          },
-        });
-
-        toast({
-          title: "Видео в очереди на загрузку",
-          description: `Позиция в очереди: ${uploadQueue.getQueueLength()}`,
-        });
-      }
-
-      // === 2. Сохраняем прикрепленные файлы (PDF, ZIP и т.д.) ===
       if (uploadedFiles.length > 0) {
         for (const file of uploadedFiles) {
           createFileMutation.mutate({
@@ -658,109 +454,154 @@ export default function AdminCourseEdit() {
             fileUrl: file.fileUrl,
             fileType: file.fileType,
             displayOrder: 0,
-          });
+            fileSize: file.fileSize || null
+          })
         }
-
-        toast({ title: `Добавлено файлов: ${uploadedFiles.length}` });
+        toast({ title: `Добавлено файлов: ${uploadedFiles.length}` })
       }
-
-      // === 3. Обновляем UI ===
-      queryClient.invalidateQueries({ queryKey: ["/api/admin/courses", courseId, "sections"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/admin/courses", courseId, "files"] });
-
-      // === 4. Закрываем диалог и чистим форму ===
-      setIsEditLessonDialogOpen(false);
-      setEditingLesson(null);
-      setUploadedVideo(null);
-      setUploadedFiles([]);
-      setVideoFile(null);
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/courses", courseId, "sections"] })
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/courses", courseId, "files"] })
+      setIsAddLessonDialogOpen(false)
+      setLessonFormData({ title: "", description: "", videoUrl: "", duration: 0 })
+      setVideoFile(null)
+      setUploadedFiles([])
+      setUploadedVideo(null)
     },
+    onError: (error) => {
+      console.error("Ошибка создания урока:", error)
+      toast({ title: "Ошибка при создании урока", variant: "destructive" })
+    },
+  })
 
+  const updateLessonMutation = useMutation({
+    mutationFn: async (data: { lessonId: string; title: string; description?: string }) => {
+      const { lessonId, ...lessonData } = data
+      const response = await apiRequest("PUT", `/api/admin/lessons/${lessonId}`, lessonData)
+      return await response.json()
+    },
+    onSuccess: async (updatedLesson: any) => {
+      const lessonId = updatedLesson?.id
+      if (!lessonId) {
+        toast({ title: "Урок обновлён, но ID не получен", variant: "destructive" })
+        return
+      }
+      toast({ title: "Урок обновлен" })
+      if (videoFile) {
+        await apiRequest("PUT", `/api/admin/lessons/${lessonId}`, {
+          processingStatus: "uploading",
+          uploadProgress: 0,
+        }).catch(() => { })
+        uploadQueue.add({
+          lessonId,
+          file: videoFile,
+          fileName: videoFile.name,
+          onProgress: (percent) => {
+            apiRequest("PUT", `/api/admin/lessons/${lessonId}`, { uploadProgress: percent }).catch(() => { })
+          },
+        })
+        toast({
+          title: "Видео в очереди на загрузку",
+          description: `Позиция в очереди: ${uploadQueue.getQueueLength()}`,
+        })
+      }
+      if (uploadedFiles.length > 0) {
+        for (const file of uploadedFiles) {
+          console.log('fileSize', file.fileSize)
+          createFileMutation.mutate({
+            courseId: courseId!,
+            lessonId: lessonId,
+            fileName: file.fileName,
+            fileUrl: file.fileUrl,
+            fileType: file.fileType,
+            displayOrder: 0,
+            fileSize: file.fileSize
+          })
+        }
+        toast({ title: `Добавлено файлов: ${uploadedFiles.length}` })
+      }
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/courses", courseId, "sections"] })
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/courses", courseId, "files"] })
+      setIsEditLessonDialogOpen(false)
+      setEditingLesson(null)
+      setUploadedVideo(null)
+      setUploadedFiles([])
+      setVideoFile(null)
+    },
     onError: () => {
-      toast({ title: "Ошибка при обновлении урока", variant: "destructive" });
+      toast({ title: "Ошибка при обновлении урока", variant: "destructive" })
     },
-  });
+  })
 
-  // Delete lesson mutation
   const deleteLessonMutation = useMutation({
     mutationFn: async (lessonId: string) => {
-      return await apiRequest("DELETE", `/api/admin/lessons/${lessonId}`);
+      return await apiRequest("DELETE", `/api/admin/lessons/${lessonId}`)
     },
     onSuccess: () => {
-      toast({ title: "Урок удален" });
-      queryClient.invalidateQueries({ queryKey: ["/api/admin/courses", courseId, "sections"] });
+      toast({ title: "Урок удален" })
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/courses", courseId, "sections"] })
     },
     onError: () => {
-      toast({ title: "Ошибка при удалении урока", variant: "destructive" });
+      toast({ title: "Ошибка при удалении урока", variant: "destructive" })
     },
-  });
+  })
 
-  // Delete video from lesson mutation
   const deleteVideoMutation = useMutation({
     mutationFn: async (lessonId: string) => {
-      return await apiRequest("DELETE", `/api/admin/lessons/${lessonId}/video`);
+      return await apiRequest("DELETE", `/api/admin/lessons/${lessonId}/video`)
     },
     onSuccess: () => {
-      toast({ title: "Видео удалено из урока" });
-      queryClient.invalidateQueries({ queryKey: ["/api/admin/courses", courseId, "sections"] });
-      // Reset local state
-      setUploadedVideo(null);
+      toast({ title: "Видео удалено из урока" })
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/courses", courseId, "sections"] })
+      setUploadedVideo(null)
       if (editingLesson) {
-        setLessonFormData({ ...lessonFormData, videoUrl: '', duration: 0 });
-        // Update editingLesson to reflect deletion
-        setEditingLesson({ ...editingLesson, videoUrl: null, duration: 0, processingStatus: undefined });
+        setLessonFormData({ ...lessonFormData, videoUrl: '', duration: 0 })
+        setEditingLesson({ ...editingLesson, videoUrl: null, duration: 0, processingStatus: undefined })
       }
     },
     onError: () => {
-      toast({ title: "Ошибка при удалении видео", variant: "destructive" });
+      toast({ title: "Ошибка при удалении видео", variant: "destructive" })
     },
-  });
+  })
 
-  // Create file mutation
   const createFileMutation = useMutation({
-    mutationFn: async (data: { courseId: string; fileName: string; fileUrl: string; fileType: string; displayOrder: number; lessonId: string | null }) => {
-      const response = await apiRequest("POST", "/api/admin/course-files", data);
-      return await response.json();
-    },
-    onSuccess: () => {
-      // File added successfully (used when creating/editing lessons)
+    mutationFn: async (data: { courseId: string; fileName: string; fileUrl: string; fileType: string; displayOrder: number; lessonId: string | null, fileSize: any }) => {
+      const response = await apiRequest("POST", "/api/admin/course-files", data)
+      return await response.json()
     },
     onError: () => {
-      toast({ title: "Ошибка при добавлении файла", variant: "destructive" });
+      toast({ title: "Ошибка при добавлении файла", variant: "destructive" })
     },
-  });
+  })
 
-  // Delete file mutation
   const deleteFileMutation = useMutation({
     mutationFn: async (fileId: string) => {
-      return await apiRequest("DELETE", `/api/admin/course-files/${fileId}`);
+      return await apiRequest("DELETE", `/api/admin/course-files/${fileId}`)
     },
     onSuccess: () => {
-      toast({ title: "Файл удален" });
-      queryClient.invalidateQueries({ queryKey: ["/api/admin/courses", courseId, "files"] });
+      toast({ title: "Файл удален" })
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/courses", courseId, "files"] })
     },
     onError: () => {
-      toast({ title: "Ошибка при удалении файла", variant: "destructive" });
+      toast({ title: "Ошибка при удалении файла", variant: "destructive" })
     },
-  });
+  })
 
-  // Mass convert all videos with faststart optimization
   const reprocessAllMutation = useMutation({
     mutationFn: async () => {
-      const response = await apiRequest("POST", "/api/objects/convert-all-videos");
-      return await response.json();
+      const response = await apiRequest("POST", "/api/objects/convert-all-videos")
+      return await response.json()
     },
     onSuccess: (data) => {
       toast({
         title: "Конвертация запущена",
         description: `Начата конвертация ${data.total} видео с faststart оптимизацией. Процесс выполняется в фоновом режиме.`
-      });
-      queryClient.invalidateQueries({ queryKey: ["/api/admin/courses", courseId, "sections"] });
+      })
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/courses", courseId, "sections"] })
     },
     onError: () => {
-      toast({ title: "Ошибка при запуске конвертации", variant: "destructive" });
+      toast({ title: "Ошибка при запуске конвертации", variant: "destructive" })
     },
-  });
+  })
 
   const handleSaveBasicInfo = () => {
     updateCourseMutation.mutate({
@@ -769,113 +610,89 @@ export default function AdminCourseEdit() {
       fantikPrice: courseFormData.fantikPrice ? parseInt(courseFormData.fantikPrice) : null,
       year: parseInt(courseFormData.year) || new Date().getFullYear(),
       level: selectedLevels.length > 0 ? selectedLevels : [],
-    });
-  };
+    })
+  }
 
   const handleAddSection = () => {
-    const nextOrder = (sections?.length || 0) + 1;
+    const nextOrder = (sections?.length || 0) + 1
     createSectionMutation.mutate({
       title: sectionFormData.title,
       description: sectionFormData.description || undefined,
       order: nextOrder,
-    });
-  };
+    })
+  }
 
   const handleOpenEditLesson = (lesson: Lesson) => {
-    // Get the most up-to-date lesson data from sections (includes latest processingStatus)
     const currentLesson = sections
       ?.flatMap(s => s.lessons || [])
-      .find(l => l.id === lesson.id) || lesson;
-
-    setEditingLesson(currentLesson);
+      .find(l => l.id === lesson.id) || lesson
+    setEditingLesson(currentLesson)
     setLessonFormData({
       title: currentLesson.title,
       description: currentLesson.description || "",
       videoUrl: currentLesson.videoUrl || "",
       duration: currentLesson.duration || 0,
-    });
-    // Don't copy existing video to uploadedVideo - it should only be for NEW uploads
-    setUploadedVideo(null);
-    setUploadedFiles([]);
-    // Generate new session ID for edit dialog
-    lessonSessionCounterRef.current += 1;
-    setCurrentLessonSessionId(lessonSessionCounterRef.current);
-    setIsEditLessonDialogOpen(true);
-  };
+    })
+    setUploadedVideo(null)
+    setUploadedFiles([])
+    lessonSessionCounterRef.current += 1
+    setCurrentLessonSessionId(lessonSessionCounterRef.current)
+    setIsEditLessonDialogOpen(true)
+  }
 
   const handleEditLesson = async () => {
-    if (!editingLesson) return;
-
+    if (!editingLesson) return
     try {
-      // Build update payload - only include video fields if a new video was uploaded
       const updateData: any = {
         lessonId: editingLesson.id,
         title: lessonFormData.title,
         description: lessonFormData.description || undefined,
-      };
-
-      // Only update video if a new one was uploaded (replacement)
-      if (uploadedVideo) {
-        updateData.videoUrl = uploadedVideo.fileUrl;
-        updateData.duration = uploadedVideo.duration;
       }
-
-      await updateLessonMutation.mutateAsync(updateData);
-
-      // Create new files if any were uploaded
+      if (uploadedVideo) {
+        updateData.videoUrl = uploadedVideo.fileUrl
+        updateData.duration = uploadedVideo.duration
+      }
+      await updateLessonMutation.mutateAsync(updateData)
       if (uploadedFiles.length > 0) {
-        // for (const file of uploadedFiles) {
-        //   await apiRequest("POST", "/api/admin/course-files", {
-        //     courseId: courseId!,
-        //     lessonId: editingLesson.id,
-        //     fileName: file.fileName,
-        //     fileUrl: file.fileUrl,
-        //     fileType: file.fileType,
-        //     displayOrder: 0,
-        //   });
-        // }
-        queryClient.invalidateQueries({ queryKey: ["/api/admin/courses", courseId, "files"] });
-        queryClient.invalidateQueries({ queryKey: ["/api/admin/courses", courseId, "lesson-files", editingLesson.id] });
+        queryClient.invalidateQueries({ queryKey: ["/api/admin/courses", courseId, "files"] })
+        queryClient.invalidateQueries({ queryKey: ["/api/admin/courses", courseId, "lesson-files", editingLesson.id] })
       }
     } catch (error) {
-      console.error("Error updating lesson:", error);
+      console.error("Error updating lesson:", error)
     }
-  };
+  }
 
   const getFileType = (mimeType: string, fileName: string): string => {
-    console.log(fileName)
-    if (mimeType.includes('video')) return 'video';
-    if (mimeType.includes('pdf') || mimeType.includes('document') || mimeType.includes('text')) return 'document';
-    if (mimeType.includes('zip') || mimeType.includes('rar') || mimeType.includes('7z') || mimeType.includes('tar')) return 'archive';
-
-    const ext = fileName.split('.').pop()?.toLowerCase();
-    if (ext && ['zip', 'rar', '7z', 'tar', 'gz'].includes(ext)) return 'archive';
-    if (ext && ['mp4', 'avi', 'mov', 'wmv', 'flv', 'mkv'].includes(ext)) return 'video';
-    if (ext && ['pdf', 'doc', 'docx', 'txt', 'rtf'].includes(ext)) return 'document';
-
-    return 'other';
-  };
+    if (mimeType.includes('video')) return 'video'
+    if (mimeType.includes('pdf') || mimeType.includes('document') || mimeType.includes('text')) return 'document'
+    if (mimeType.includes('zip') || mimeType.includes('rar') || mimeType.includes('7z') || mimeType.includes('tar')) return 'archive'
+    const ext = fileName.split('.').pop()?.toLowerCase()
+    if (ext && ['zip', 'rar', '7z', 'tar', 'gz'].includes(ext)) return 'archive'
+    if (ext && ['mp4', 'avi', 'mov', 'wmv', 'flv', 'mkv'].includes(ext)) return 'video'
+    if (ext && ['pdf', 'doc', 'docx', 'txt', 'rtf'].includes(ext)) return 'document'
+    return 'other'
+  }
 
   const removeUploadedFile = (index: number) => {
-    setUploadedFiles(prev => prev.filter((_, i) => i !== index));
-  };
+    setUploadedFiles(prev => prev.filter((_, i) => i !== index))
+  }
 
   const toggleSection = (sectionId: string) => {
-    const newExpanded = new Set(expandedSections);
+    const newExpanded = new Set(expandedSections)
     if (newExpanded.has(sectionId)) {
-      newExpanded.delete(sectionId);
+      newExpanded.delete(sectionId)
     } else {
-      newExpanded.add(sectionId);
+      newExpanded.add(sectionId)
     }
-    setExpandedSections(newExpanded);
-  };
+    setExpandedSections(newExpanded)
+  }
 
   if (courseLoading) {
     return (
       <AdminLayout>
         <div className="p-6">Загрузка...</div>
       </AdminLayout>
-    );
+    )
   }
 
   return (
@@ -889,9 +706,8 @@ export default function AdminCourseEdit() {
                 window.location.href = window.location.origin + '/shop'
                 return
               }
-
-              window.history.go(-1);
-              setTimeout(() => window.location.reload(), 0);
+              window.history.go(-1)
+              setTimeout(() => window.location.reload(), 0)
             }}
             data-testid="button-back"
           >
@@ -900,13 +716,11 @@ export default function AdminCourseEdit() {
           </Button>
           <h1 className="text-2xl font-bold">Редактирование курса</h1>
         </div>
-
         <Tabs defaultValue="basic" className="w-full">
           <TabsList>
             <TabsTrigger value="basic" data-testid="tab-basic">Основная информация</TabsTrigger>
             <TabsTrigger value="content" data-testid="tab-content">Содержание курса</TabsTrigger>
           </TabsList>
-
           <TabsContent value="basic">
             <Card>
               <CardHeader>
@@ -921,7 +735,6 @@ export default function AdminCourseEdit() {
                     data-testid="input-title"
                   />
                 </div>
-
                 <div>
                   <Label>Описание</Label>
                   <RichTextEditor
@@ -929,7 +742,6 @@ export default function AdminCourseEdit() {
                     onChange={(content) => setCourseFormData((prev) => ({ ...prev, description: content }))}
                   />
                 </div>
-
                 <div className="grid grid-cols-2 gap-4">
                   <div>
                     <Label>Автор</Label>
@@ -964,9 +776,9 @@ export default function AdminCourseEdit() {
                                     size="sm"
                                     className="w-full"
                                     onClick={() => {
-                                      setCourseFormData((prev) => ({ ...prev, authorName: authorSearch }));
-                                      setAuthorComboboxOpen(false);
-                                      setAuthorSearch("");
+                                      setCourseFormData((prev) => ({ ...prev, authorName: authorSearch }))
+                                      setAuthorComboboxOpen(false)
+                                      setAuthorSearch("")
                                     }}
                                     data-testid="button-add-new-author"
                                   >
@@ -984,9 +796,9 @@ export default function AdminCourseEdit() {
                                   key={author}
                                   value={author}
                                   onSelect={(currentValue) => {
-                                    setCourseFormData((prev) => ({ ...prev, authorName: currentValue }));
-                                    setAuthorComboboxOpen(false);
-                                    setAuthorSearch("");
+                                    setCourseFormData((prev) => ({ ...prev, authorName: currentValue }))
+                                    setAuthorComboboxOpen(false)
+                                    setAuthorSearch("")
                                   }}
                                   data-testid={`option-author-${author}`}
                                 >
@@ -1005,7 +817,6 @@ export default function AdminCourseEdit() {
                       </PopoverContent>
                     </Popover>
                   </div>
-
                   <div className="border rounded-md p-4 space-y-3">
                     <div className="flex items-center justify-between">
                       <div>
@@ -1018,12 +829,11 @@ export default function AdminCourseEdit() {
                         inputId="thumbnailUploader"
                         acceptedTypes="image/*"
                         onUploadSuccess={([{ fileUrl, fileName }]) => {
-                          setUploadedThumbnail({ fileName, fileUrl });
-                          setCourseFormData(prev => ({ ...prev, thumbnailImage: fileUrl }));
+                          setUploadedThumbnail({ fileName, fileUrl })
+                          setCourseFormData(prev => ({ ...prev, thumbnailImage: fileUrl }))
                         }}
                       />
                     </div>
-
                     {(uploadedThumbnail || courseFormData.thumbnailImage) && (
                       <div className="p-3 bg-muted rounded-md space-y-2">
                         <div className="relative aspect-video w-full bg-background rounded overflow-hidden">
@@ -1041,8 +851,8 @@ export default function AdminCourseEdit() {
                           variant="outline"
                           size="sm"
                           onClick={() => {
-                            setUploadedThumbnail(null);
-                            setCourseFormData((prev) => ({ ...prev, thumbnailImage: "" }));
+                            setUploadedThumbnail(null)
+                            setCourseFormData((prev) => ({ ...prev, thumbnailImage: "" }))
                           }}
                           className="w-full"
                           data-testid="button-remove-thumbnail"
@@ -1054,7 +864,6 @@ export default function AdminCourseEdit() {
                     )}
                   </div>
                 </div>
-
                 <div className="grid grid-cols-2 gap-4">
                   <div>
                     <Label>Тип оплаты</Label>
@@ -1072,7 +881,6 @@ export default function AdminCourseEdit() {
                       </SelectContent>
                     </Select>
                   </div>
-
                   <div className="flex items-center gap-2 pt-8">
                     <Checkbox
                       id="isFree"
@@ -1083,7 +891,6 @@ export default function AdminCourseEdit() {
                     <Label htmlFor="isFree">Бесплатный курс</Label>
                   </div>
                 </div>
-
                 <div className="grid grid-cols-3 gap-4">
                   {(courseFormData.paymentType === 'money_only' || courseFormData.paymentType === 'both') && (
                     <div>
@@ -1096,7 +903,6 @@ export default function AdminCourseEdit() {
                       />
                     </div>
                   )}
-
                   {(courseFormData.paymentType === 'fantiks_only' || courseFormData.paymentType === 'both') && (
                     <div>
                       <Label>Цена (фантики)</Label>
@@ -1108,7 +914,6 @@ export default function AdminCourseEdit() {
                       />
                     </div>
                   )}
-
                   <div>
                     <Label>Год</Label>
                     <Input
@@ -1119,7 +924,6 @@ export default function AdminCourseEdit() {
                     />
                   </div>
                 </div>
-
                 {(parseFloat(courseFormData.price) === 0 || courseFormData.price === "") && !courseFormData.isFree && courseFormData.paymentType !== 'fantiks_only' && (
                   <div className="bg-destructive/10 border border-destructive/20 rounded-md p-3 flex items-start gap-2">
                     <AlertCircle className="h-4 w-4 text-destructive mt-0.5 flex-shrink-0" />
@@ -1128,7 +932,6 @@ export default function AdminCourseEdit() {
                     </p>
                   </div>
                 )}
-
                 <div>
                   <Label className="mb-2 block">Настройки видимости</Label>
                   <div className="space-y-3">
@@ -1152,12 +955,11 @@ export default function AdminCourseEdit() {
                     </div>
                   </div>
                 </div>
-
                 <div>
                   <Label className="mb-2 block">Категории</Label>
                   <div className="space-y-2">
                     {categories
-                      ?.filter(cat => !cat.parentId) // Только корневые категории
+                      ?.filter(cat => !cat.parentId)
                       .map((category) => (
                         <div key={category.id} className="flex items-center gap-2">
                           <Checkbox
@@ -1165,38 +967,29 @@ export default function AdminCourseEdit() {
                             checked={selectedLevels.includes(category.id)}
                             onCheckedChange={(checked) => {
                               if (checked) {
-                                // Добавляем ID в selectedLevels (с дедупликацией)
-                                setSelectedLevels(prev => [...new Set([...prev, category.id])]);
-
-                                // Добавляем в порядок ТОЛЬКО ЕСЛИ ЕЩЁ НЕТ (чтобы не дублировать при повторном выборе)
-                                setSelectionOrder(prev => prev.includes(category.id) ? prev : [...prev, category.id]);
+                                setSelectedLevels(prev => [...new Set([...prev, category.id])])
+                                setSelectionOrder(prev => prev.includes(category.id) ? prev : [...prev, category.id])
                               } else {
-                                // При снятии выбора — удаляем из обоих
-                                const childCategories = categories.filter(cat => cat.parentId === category.id);
-                                const childIds = childCategories.map(cat => cat.id);
-
-                                const subcategoriesToRemove: string[] = [];
+                                const childCategories = categories.filter(cat => cat.parentId === category.id)
+                                const childIds = childCategories.map(cat => cat.id)
+                                const subcategoriesToRemove: string[] = []
                                 childIds.forEach(childId => {
-                                  const related = allSubcategories.filter(sub => sub.categoryId === childId);
+                                  const related = allSubcategories.filter(sub => sub.categoryId === childId)
                                   related.forEach(sub => {
                                     if (!subcategoriesToRemove.includes(sub.id)) {
-                                      subcategoriesToRemove.push(sub.id);
+                                      subcategoriesToRemove.push(sub.id)
                                     }
-                                  });
-                                });
-
+                                  })
+                                })
                                 setSelectedLevels(prev => {
-                                  const idsToRemove = new Set([category.id, ...childIds]);
-                                  return prev.filter(id => !idsToRemove.has(id));
-                                });
-
+                                  const idsToRemove = new Set([category.id, ...childIds])
+                                  return prev.filter(id => !idsToRemove.has(id))
+                                })
                                 setSelectedSubcategories(prev => {
-                                  const setToRemove = new Set(subcategoriesToRemove);
-                                  return prev.filter(id => !setToRemove.has(id));
-                                });
-
-                                // Удаляем из порядка выбора
-                                setSelectionOrder(prev => prev.filter(id => id !== category.id));
+                                  const setToRemove = new Set(subcategoriesToRemove)
+                                  return prev.filter(id => !setToRemove.has(id))
+                                })
+                                setSelectionOrder(prev => prev.filter(id => id !== category.id))
                               }
                             }}
                           />
@@ -1207,7 +1000,6 @@ export default function AdminCourseEdit() {
                       ))}
                   </div>
                 </div>
-
                 <div className="border rounded-md max-h-[400px] overflow-y-auto mt-4">
                   <div className="p-4 space-y-6">
                     {selectedLevels.length === 0 ? (
@@ -1218,51 +1010,41 @@ export default function AdminCourseEdit() {
                     ) : (
                       <div className="space-y-6">
                         {(() => {
-                          // Определяем порядок отображения: сначала по selectionOrder, fallback — по selectedLevels
                           const orderedParentIds = selectionOrder.length > 0
                             ? selectionOrder.filter(id => selectedLevels.includes(id))
                             : selectedLevels.filter(id =>
-                              categories.some(cat => cat.id === id && !cat.parentId) // только корневые
-                            );
-
+                              categories.some(cat => cat.id === id && !cat.parentId)
+                            )
                           return orderedParentIds.flatMap(parentId =>
                             categories
                               .filter(childCat => childCat.parentId === parentId)
                               .map((childCat) => {
                                 const relevantSubcategories = allSubcategories.filter(
                                   sub => sub.categoryId === childCat.id
-                                );
-
-                                if (relevantSubcategories.length === 0 && !childCat.id) return null;
-
-                                // Группировка подкатегорий по имени уровня
+                                )
+                                if (relevantSubcategories.length === 0 && !childCat.id) return null
                                 const groupedByName = relevantSubcategories.reduce((acc, sub) => {
-                                  if (!acc[sub.name]) acc[sub.name] = [];
-                                  acc[sub.name].push(sub);
-                                  return acc;
-                                }, {} as Record<string, typeof relevantSubcategories>);
-
-                                const isChildCatSelected = selectedLevels.includes(childCat.id);
-
+                                  if (!acc[sub.name]) acc[sub.name] = []
+                                  acc[sub.name].push(sub)
+                                  return acc
+                                }, {} as Record<string, typeof relevantSubcategories>)
+                                const isChildCatSelected = selectedLevels.includes(childCat.id)
                                 const handleChildCatToggle = (checked: boolean) => {
                                   if (relevantSubcategories.some(relSub => selectedSubcategories.includes(relSub.id)) && !checked) {
                                     setSelectedSubcategories((prev) =>
                                       prev.filter(prevSub => !relevantSubcategories.some(relSub => relSub.id === prevSub))
-                                    );
+                                    )
                                   }
-
                                   setSelectedLevels(prev => {
                                     if (checked) {
-                                      return [...new Set([...prev, childCat.id])];
+                                      return [...new Set([...prev, childCat.id])]
                                     } else {
-                                      return prev.filter(id => id !== childCat.id);
+                                      return prev.filter(id => id !== childCat.id)
                                     }
-                                  });
-                                };
-
+                                  })
+                                }
                                 return (
                                   <div key={childCat.id} className="border-b last:border-b-0 pb-6 last:pb-0">
-                                    {/* Заголовок: чекбокс выбирает только саму childCat */}
                                     <div className="flex items-center gap-3 mb-4">
                                       <Checkbox
                                         checked={isChildCatSelected}
@@ -1272,31 +1054,25 @@ export default function AdminCourseEdit() {
                                         {childCat.name}
                                       </div>
                                     </div>
-
-                                    {/* Подуровни (Для новичков, Премиум и т.д.) — независимый выбор */}
                                     {relevantSubcategories.length > 0 && (
                                       <div className="space-y-3 pl-8">
                                         {Object.entries(groupedByName).map(([levelName, subs]) => {
-                                          const subIds = subs.map(s => s.id);
-                                          const selectedCount = subs.filter(s => selectedSubcategories.includes(s.id)).length;
-
-                                          const allSelected = selectedCount === subs.length;
-                                          const someSelected = selectedCount > 0 && selectedCount < subs.length;
-
+                                          const subIds = subs.map(s => s.id)
+                                          const selectedCount = subs.filter(s => selectedSubcategories.includes(s.id)).length
+                                          const allSelected = selectedCount === subs.length
+                                          const someSelected = selectedCount > 0 && selectedCount < subs.length
                                           const handleLevelToggle = (checked: boolean) => {
                                             if (!selectedLevels.includes(childCat.id) && checked) {
                                               setSelectedLevels((prev) => ([...prev, childCat.id]))
                                             }
-
                                             setSelectedSubcategories(prev => {
                                               if (checked) {
-                                                return [...new Set([...prev, ...subIds])];
+                                                return [...new Set([...prev, ...subIds])]
                                               } else {
-                                                return prev.filter(id => !subIds.includes(id));
+                                                return prev.filter(id => !subIds.includes(id))
                                               }
-                                            });
-                                          };
-
+                                            })
+                                          }
                                           return (
                                             <div key={levelName} className="flex items-center gap-2">
                                               <Checkbox
@@ -1311,21 +1087,19 @@ export default function AdminCourseEdit() {
                                                 </span>
                                               </Label>
                                             </div>
-                                          );
+                                          )
                                         })}
                                       </div>
                                     )}
                                   </div>
-                                );
+                                )
                               })
-                          );
+                          )
                         })()}
                       </div>
                     )}
                   </div>
                 </div>
-
-
                 <Button
                   onClick={handleSaveBasicInfo}
                   disabled={
@@ -1337,7 +1111,6 @@ export default function AdminCourseEdit() {
                   <Save className="mr-2 h-4 w-4" />
                   Сохранить
                 </Button>
-
                 <Button
                   className="mt-4 ml-4"
                   variant="outline"
@@ -1351,7 +1124,6 @@ export default function AdminCourseEdit() {
               </CardContent>
             </Card>
           </TabsContent>
-
           <TabsContent value="content">
             <Card>
               <CardHeader>
@@ -1410,14 +1182,13 @@ export default function AdminCourseEdit() {
                               variant="outline"
                               size="sm"
                               onClick={() => {
-                                setSelectedSectionId(section.id);
-                                setLessonFormData({ title: "", description: "", videoUrl: "", duration: 0 });
-                                setUploadedVideo(null);
-                                setUploadedFiles([]);
-                                // Generate new session ID for this lesson dialog
-                                lessonSessionCounterRef.current += 1;
-                                setCurrentLessonSessionId(lessonSessionCounterRef.current);
-                                setIsAddLessonDialogOpen(true);
+                                setSelectedSectionId(section.id)
+                                setLessonFormData({ title: "", description: "", videoUrl: "", duration: 0 })
+                                setUploadedVideo(null)
+                                setUploadedFiles([])
+                                lessonSessionCounterRef.current += 1
+                                setCurrentLessonSessionId(lessonSessionCounterRef.current)
+                                setIsAddLessonDialogOpen(true)
                               }}
                               data-testid={`button-add-lesson-${section.id}`}
                             >
@@ -1434,7 +1205,6 @@ export default function AdminCourseEdit() {
                             </Button>
                           </div>
                         </div>
-
                         {expandedSections.has(section.id) && (
                           <div className="p-4 space-y-2">
                             {!section.lessons || section.lessons.length === 0 ? (
@@ -1456,8 +1226,6 @@ export default function AdminCourseEdit() {
                                       {lesson.duration && (
                                         <p className="text-xs text-muted-foreground">{lesson.duration} мин</p>
                                       )}
-
-                                      {/* Processing status indicator */}
                                       {lesson.processingStatus && lesson.processingStatus !== 'ready' && lesson.processingStatus !== 'draft' && (
                                         <div className="mt-2 space-y-1">
                                           {lesson.processingStatus === 'uploading' && (
@@ -1512,7 +1280,6 @@ export default function AdminCourseEdit() {
         </Tabs>
       </div>
 
-      {/* Add Section Dialog */}
       <Dialog open={isAddSectionDialogOpen} onOpenChange={setIsAddSectionDialogOpen}>
         <DialogContent data-testid="dialog-add-section">
           <DialogHeader>
@@ -1546,15 +1313,13 @@ export default function AdminCourseEdit() {
         </DialogContent>
       </Dialog>
 
-      {/* Add Lesson Dialog */}
       <Dialog open={isAddLessonDialogOpen} onOpenChange={(open) => {
-        setIsAddLessonDialogOpen(open);
+        setIsAddLessonDialogOpen(open)
         if (!open) {
-          // Clear all form data when dialog closes
-          setLessonFormData({ title: "", description: "", videoUrl: "", duration: 0 });
-          setUploadedVideo(null);
-          setUploadedFiles([]);
-          setCurrentLessonSessionId(null);
+          setLessonFormData({ title: "", description: "", videoUrl: "", duration: 0 })
+          setUploadedVideo(null)
+          setUploadedFiles([])
+          setCurrentLessonSessionId(null)
         }
       }}>
         <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto" data-testid="dialog-add-lesson">
@@ -1586,28 +1351,26 @@ export default function AdminCourseEdit() {
                   buttonText="Выбрать видео"
                   inputId="video-upload"
                   onFileSelect={(file) => {
-                    setVideoFile(file);
-                    toast({ title: "Видео добавлено в очередь" });
+                    setVideoFile(file)
+                    toast({ title: "Видео добавлено в очередь" })
                   }}
                 />
               </div>
-
               {uploadedVideo && (
                 <div className="p-3 bg-muted rounded-md space-y-2">
                   <div className="flex items-center gap-2">
                     <Play className="h-4 w-4 text-primary flex-shrink-0" />
                     <p className="text-sm font-medium truncate">{uploadedVideo.fileName}</p>
                   </div>
-
                   <div className="flex items-center gap-2">
                     <Label className="text-xs">Длительность (мин):</Label>
                     <Input
                       type="number"
                       value={uploadedVideo.duration || ''}
                       onChange={(e) => {
-                        const newDuration = parseInt(e.target.value) || 0;
-                        setUploadedVideo({ ...uploadedVideo, duration: newDuration });
-                        setLessonFormData({ ...lessonFormData, duration: newDuration });
+                        const newDuration = parseInt(e.target.value) || 0
+                        setUploadedVideo({ ...uploadedVideo, duration: newDuration })
+                        setLessonFormData({ ...lessonFormData, duration: newDuration })
                       }}
                       className="h-8 w-24"
                       placeholder="0"
@@ -1619,7 +1382,6 @@ export default function AdminCourseEdit() {
                       </span>
                     )}
                   </div>
-
                   <Button
                     variant="ghost"
                     size="sm"
@@ -1633,7 +1395,6 @@ export default function AdminCourseEdit() {
                 </div>
               )}
             </div>
-
             <div className="border-t pt-4">
               <div className="flex items-center justify-between mb-3">
                 <Label>Файлы урока</Label>
@@ -1641,13 +1402,12 @@ export default function AdminCourseEdit() {
                   acceptedTypes="all"
                   buttonText="Загрузить файлы"
                   inputId="files-upload-input"
-                  onUploadSuccess={([{ fileName, fileUrl }]) => {
-                    const fileType = getFileType("", fileName);
-                    setUploadedFiles(prev => [...prev, { fileName, fileUrl, fileType }]);
+                  onUploadSuccess={([{ fileName, fileUrl, fileSize }]) => {
+                    const fileType = getFileType("", fileName)
+                    setUploadedFiles(prev => [...prev, { fileName, fileUrl, fileType, fileSize: fileSize }])
                   }}
                 />
               </div>
-
               {uploadedFiles.length > 0 && (
                 <div className="space-y-2">
                   {uploadedFiles.map((file, index) => (
@@ -1677,31 +1437,24 @@ export default function AdminCourseEdit() {
                   ))}
                 </div>
               )}
-
               {uploadedFiles.length === 0 && (
                 <p className="text-sm text-muted-foreground">Файлы не загружены</p>
               )}
             </div>
-
             <Button
               onClick={() => {
                 if (!lessonFormData.title) {
-                  toast({ title: "Введите название урока", variant: "destructive" });
-                  return;
+                  toast({ title: "Введите название урока", variant: "destructive" })
+                  return
                 }
-                const section = sections?.find(s => s.id === selectedSectionId);
-                const nextOrder = (section?.lessons?.length || 0) + 1;
-
-                console.log('ploadedVideo?.fileUrl ', lessonFormData)
-
+                const section = sections?.find(s => s.id === selectedSectionId)
+                const nextOrder = (section?.lessons?.length || 0) + 1
                 createLessonMutation.mutate({
                   sectionId: selectedSectionId!,
                   title: lessonFormData.title,
                   description: lessonFormData.description || undefined,
                   order: nextOrder
-                });
-
-
+                })
               }}
               disabled={createLessonMutation.isPending}
             >
@@ -1711,16 +1464,14 @@ export default function AdminCourseEdit() {
         </DialogContent>
       </Dialog>
 
-      {/* Edit Lesson Dialog */}
       <Dialog open={isEditLessonDialogOpen} onOpenChange={(open) => {
-        setIsEditLessonDialogOpen(open);
+        setIsEditLessonDialogOpen(open)
         if (!open) {
-          // Clear all form data when dialog closes
-          setEditingLesson(null);
-          setLessonFormData({ title: "", description: "", videoUrl: "", duration: 0 });
-          setUploadedVideo(null);
-          setUploadedFiles([]);
-          setCurrentLessonSessionId(null);
+          setEditingLesson(null)
+          setLessonFormData({ title: "", description: "", videoUrl: "", duration: 0 })
+          setUploadedVideo(null)
+          setUploadedFiles([])
+          setCurrentLessonSessionId(null)
         }
       }}>
         <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto" data-testid="dialog-edit-lesson">
@@ -1752,13 +1503,11 @@ export default function AdminCourseEdit() {
                   buttonText="Выбрать видео"
                   inputId="video-upload"
                   onFileSelect={(file) => {
-                    setVideoFile(file);
-                    toast({ title: "Видео добавлено в очередь" });
+                    setVideoFile(file)
+                    toast({ title: "Видео добавлено в очередь" })
                   }}
                 />
               </div>
-
-              {/* Show processing status for video */}
               {editingLesson?.processingStatus && editingLesson.processingStatus !== 'ready' && editingLesson.processingStatus !== 'draft' && (
                 <div className="p-3 bg-muted/50 rounded-md" data-testid="edit-lesson-video-status">
                   {editingLesson.processingStatus === 'uploading' && (
@@ -1786,8 +1535,6 @@ export default function AdminCourseEdit() {
                   )}
                 </div>
               )}
-
-              {/* Show uploaded video OR existing video */}
               {(uploadedVideo || (editingLesson?.videoUrl && editingLesson.processingStatus === 'ready')) && (
                 <div className="p-3 bg-muted rounded-md space-y-2">
                   <div className="flex items-center gap-2">
@@ -1798,23 +1545,22 @@ export default function AdminCourseEdit() {
                         : editingLesson?.videoUrl?.split('/').pop() || 'video'}
                     </p>
                   </div>
-
                   <div className="flex items-center gap-2">
                     <Label className="text-xs">Длительность (мин):</Label>
                     <Input
                       type="number"
                       value={uploadedVideo ? uploadedVideo.duration : (editingLesson?.duration || 0)}
                       onChange={(e) => {
-                        const newDuration = parseInt(e.target.value) || 0;
+                        const newDuration = parseInt(e.target.value) || 0
                         if (uploadedVideo) {
-                          setUploadedVideo({ ...uploadedVideo, duration: newDuration });
+                          setUploadedVideo({ ...uploadedVideo, duration: newDuration })
                         }
-                        setLessonFormData({ ...lessonFormData, duration: newDuration });
+                        setLessonFormData({ ...lessonFormData, duration: newDuration })
                       }}
                       className="h-8 w-24"
                       placeholder="0"
                       data-testid="input-edit-video-duration"
-                      disabled={!uploadedVideo} // Only editable for new uploads
+                      disabled={!uploadedVideo}
                     />
                     {(uploadedVideo?.duration || editingLesson?.duration) ? (
                       <span className="text-xs text-muted-foreground">
@@ -1822,7 +1568,6 @@ export default function AdminCourseEdit() {
                       </span>
                     ) : null}
                   </div>
-
                   {uploadedVideo ? (
                     <Button
                       variant="ghost"
@@ -1850,7 +1595,6 @@ export default function AdminCourseEdit() {
                 </div>
               )}
             </div>
-
             <div className="border-t pt-4">
               <div className="flex items-center justify-between mb-3">
                 <Label>Файлы урока</Label>
@@ -1858,13 +1602,12 @@ export default function AdminCourseEdit() {
                   acceptedTypes="all"
                   buttonText="Загрузить файлы"
                   inputId="files-upload-input"
-                  onUploadSuccess={([{ fileName, fileUrl }]) => {
-                    const fileType = getFileType("", fileName);
-                    setUploadedFiles(prev => [...prev, { fileName, fileUrl, fileType }]);
+                  onUploadSuccess={([{ fileName, fileUrl, fileSize }]) => {
+                    const fileType = getFileType("", fileName)
+                    setUploadedFiles(prev => [...prev, { fileName, fileUrl, fileType, fileSize: fileSize }])
                   }}
                 />
               </div>
-
               {lessonFiles && lessonFiles.length > 0 && (
                 <div className="space-y-2 mb-3">
                   <p className="text-sm font-medium">Прикрепленные файлы:</p>
@@ -1882,8 +1625,8 @@ export default function AdminCourseEdit() {
                         variant="ghost"
                         size="sm"
                         onClick={async () => {
-                          await deleteFileMutation.mutateAsync(file.id);
-                          refetchLessonFiles();
+                          await deleteFileMutation.mutateAsync(file.id)
+                          refetchLessonFiles()
                         }}
                         data-testid={`button-delete-lesson-file-${file.id}`}
                       >
@@ -1893,7 +1636,6 @@ export default function AdminCourseEdit() {
                   ))}
                 </div>
               )}
-
               {uploadedFiles.length > 0 && (
                 <div className="space-y-2">
                   <p className="text-sm font-medium">Новые файлы (будут добавлены при сохранении):</p>
@@ -1924,12 +1666,10 @@ export default function AdminCourseEdit() {
                   ))}
                 </div>
               )}
-
               {(!lessonFiles || lessonFiles.length === 0) && uploadedFiles.length === 0 && (
                 <p className="text-sm text-muted-foreground">Файлы не загружены</p>
               )}
             </div>
-
             <Button
               onClick={handleEditLesson}
               disabled={!lessonFormData.title || updateLessonMutation.isPending}
@@ -1941,5 +1681,5 @@ export default function AdminCourseEdit() {
         </DialogContent>
       </Dialog>
     </AdminLayout>
-  );
+  )
 }

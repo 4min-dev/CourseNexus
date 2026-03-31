@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Footer } from "@/components/footer";
 import type { LandingContent } from "@shared/schema";
 import { useReferralTracking } from "@/hooks/useReferralTracking";
+import { usePageIdleClass } from "@/hooks/usePageIdleClass";
 import {
   LandingHeader,
   HeroSection,
@@ -19,8 +20,12 @@ export default function Landing() {
   const { data: content, isLoading, isError, refetch } = useQuery<LandingContent>({
     queryKey: ['/api/landing-content'],
   });
-  
-  const { getRegisterUrl } = useReferralTracking();
+
+  const { getRegisterUrl, getLoginUrl } = useReferralTracking();
+  const isMobileLike =
+    typeof window !== "undefined" &&
+    (window.innerWidth < 768 || "ontouchstart" in window || navigator.maxTouchPoints > 0);
+  usePageIdleClass({ enabled: isMobileLike, initialActiveMs: 5000, idleAfterMs: 2500 });
 
   if (isLoading) {
     return (
@@ -54,13 +59,13 @@ export default function Landing() {
 
   return (
     <div className="min-h-screen bg-background">
-      <LandingHeader registerUrl={getRegisterUrl()} />
-      <main>
+      <LandingHeader registerUrl={getRegisterUrl()} loginUrl={getLoginUrl()} />
+      <main data-landing-main="1">
         <HeroSection content={content} registerUrl={getRegisterUrl()} />
         <PriceSection content={content} registerUrl={getRegisterUrl()} />
         <FreeFeaturesSection content={content} registerUrl={getRegisterUrl()} />
         <PlatformFeaturesSection content={content} registerUrl={getRegisterUrl()} />
-        <EarningSection />
+        <EarningSection registerUrl={getRegisterUrl()} />
         <StatsSection />
         <CTASection registerUrl={getRegisterUrl()} />
       </main>

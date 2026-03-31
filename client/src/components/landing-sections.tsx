@@ -23,9 +23,10 @@ import * as Icons from "lucide-react";
 import { NeonLogo } from "@/components/NeonLogo";
 import { AnimatedNumber } from "@/components/AnimatedNumber";
 import { ParallaxBackground } from "@/components/parallax-background";
-import { Link } from "wouter";
+import { Link, useLocation } from "wouter";
 import { useState, ReactNode } from "react";
 import type { LandingContent } from "@shared/schema";
+import { debugLog } from "@/lib/debug";
 
 // Helper function to detect video type and convert to embed URL
 export function getVideoEmbedInfo(url: string | null | undefined): { type: 'direct' | 'youtube' | 'vk' | 'none', embedUrl: string } {
@@ -106,15 +107,17 @@ interface LandingSectionProps {
   onEdit?: (fieldPath: string[], label: string) => void;
 }
 
-export function LandingHeader({ registerUrl = '/register', editMode = false, onEdit }: { registerUrl?: string; editMode?: boolean; onEdit?: (fieldPath: string[], label: string) => void }) {
+export function LandingHeader({ registerUrl = '/register', loginUrl = '/login', editMode = false, onEdit }: { registerUrl?: string; loginUrl?: string; editMode?: boolean; onEdit?: (fieldPath: string[], label: string) => void }) {
   return (
-    <header className="border-b border-border/40 sticky top-0 z-[100] bg-background/95 backdrop-blur-sm">
-      <div className="absolute inset-0 bg-gradient-to-r from-primary/5 via-transparent to-primary/5 pointer-events-none" />
+    <header className="sticky top-0 z-[100] border-b border-border/40 overflow-hidden w-full bg-background/80 backdrop-blur-xl supports-[backdrop-filter]:bg-background/60">
+      <div className="absolute inset-0 bg-gradient-to-r from-background/70 via-background/50 to-background/70 pointer-events-none" />
       <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-primary/30 to-transparent" />
-      <div className="relative container mx-auto px-3 sm:px-4 py-3 md:py-4 flex items-center justify-between gap-2">
-        <NeonLogo variant="gradient" />
-        
-        <div className="flex items-center gap-2 sm:gap-4">
+      <div className="relative container mx-auto px-2.5 max-[480px]:px-2 sm:px-4 py-3 md:py-4 flex min-w-0 items-center justify-between gap-2 max-[480px]:gap-1">
+        <div className="shrink-0 origin-left max-[480px]:scale-[0.84] max-[380px]:scale-[0.78]">
+          <NeonLogo variant="gradient" />
+        </div>
+
+        <div className="flex min-w-0 items-center gap-2 max-[480px]:gap-1 sm:gap-4">
           {/* Контакты - скрыты на мобильных */}
           <div className="hidden md:flex items-center gap-2 border-r border-border/40 pr-4">
             <Button
@@ -124,7 +127,7 @@ export function LandingHeader({ registerUrl = '/register', editMode = false, onE
               className="gap-2 text-muted-foreground hover:text-foreground"
               data-testid="button-sales-telegram"
             >
-              <a href="https://t.me/vkurse_sales" target="_blank" rel="noopener noreferrer">
+              <a href="https://t.me/kurs_helper" target="_blank" rel="noopener noreferrer">
                 <MessageCircle className="h-4 w-4" />
                 <span className="hidden lg:inline">Отдел продаж</span>
               </a>
@@ -136,7 +139,7 @@ export function LandingHeader({ registerUrl = '/register', editMode = false, onE
               className="gap-2 text-muted-foreground hover:text-foreground"
               data-testid="button-support-telegram"
             >
-              <a href="https://t.me/vkurse_support" target="_blank" rel="noopener noreferrer">
+              <a href="https://t.me/kurs_helper" target="_blank" rel="noopener noreferrer">
                 <Headphones className="h-4 w-4" />
                 <span className="hidden lg:inline">Техподдержка</span>
               </a>
@@ -144,11 +147,22 @@ export function LandingHeader({ registerUrl = '/register', editMode = false, onE
           </div>
 
           {/* Кнопки входа/регистрации */}
-          <div className="flex items-center gap-2 sm:gap-3">
-            <Button size="lg" variant="outline" asChild className="text-sm sm:text-base" data-testid="button-login">
-              <Link href="/login">Войти</Link>
+          <div className="flex min-w-0 flex-nowrap items-center justify-end gap-2 max-[480px]:gap-1 max-[380px]:gap-0.5 sm:gap-3">
+            <Button
+              size="sm"
+              variant="outline"
+              asChild
+              className="h-8 whitespace-nowrap px-2 text-[11px] max-[380px]:h-7 max-[380px]:px-1.5 max-[380px]:text-[10px] sm:h-10 sm:px-4 sm:text-sm md:text-base"
+              data-testid="button-login"
+            >
+              <Link href={loginUrl}>Войти</Link>
             </Button>
-            <Button size="lg" asChild className="text-sm sm:text-base" data-testid="button-register">
+            <Button
+              size="sm"
+              asChild
+              className="h-8 whitespace-nowrap px-2 text-[11px] max-[380px]:h-7 max-[380px]:px-1.5 max-[380px]:text-[10px] sm:h-10 sm:px-4 sm:text-sm md:text-base"
+              data-testid="button-register"
+            >
               <Link href={registerUrl}>Регистрация</Link>
             </Button>
           </div>
@@ -175,7 +189,7 @@ export function HeroSection({ content, registerUrl = '/register', editMode = fal
       if (playPromise !== undefined) {
         playPromise
           .then(() => setIsPlaying(true))
-          .catch((error) => console.log('Video playback prevented:', error));
+          .catch((error) => debugLog('Video playback prevented:', error));
       }
     }
   };
@@ -279,7 +293,7 @@ export function HeroSection({ content, registerUrl = '/register', editMode = fal
                         className="absolute inset-0 flex items-center justify-center bg-gradient-to-br from-black/60 to-black/40 cursor-pointer group"
                         onClick={handlePlayVideo}
                       >
-                        <div className="h-20 w-20 rounded-full bg-primary/90 backdrop-blur-sm flex items-center justify-center group-hover:scale-110 group-hover:bg-primary transition-all duration-300 shadow-2xl">
+                        <div className="h-20 w-20 rounded-full bg-primary/95 flex items-center justify-center group-hover:scale-110 group-hover:bg-primary transition-all duration-300 shadow-2xl">
                           <Play className="h-10 w-10 text-primary-foreground ml-1" />
                         </div>
                       </div>
@@ -290,7 +304,7 @@ export function HeroSection({ content, registerUrl = '/register', editMode = fal
             </EditableWrapper>
 
             {/* Video Description */}
-            <div className="mt-4 md:mt-6 p-3 md:p-4 bg-card/50 backdrop-blur rounded-lg border border-border">
+            <div className="mt-4 md:mt-6 p-3 md:p-4 bg-card/70 rounded-lg border border-border">
               <div className="flex items-start gap-2 md:gap-3">
                 <Video className="h-4 w-4 md:h-5 md:w-5 text-primary mt-0.5 flex-shrink-0" />
                 <div className="flex-1">
@@ -513,7 +527,13 @@ export function FreeFeaturesSection({ content, registerUrl = '/register', editMo
   );
 }
 
-export function PlatformFeaturesSection({ content, editMode = false, onEdit }: LandingSectionProps) {
+export function PlatformFeaturesSection({ content, registerUrl = '/register', editMode = false, onEdit }: LandingSectionProps) {
+  const [, setLocation] = useLocation();
+
+  const handleCardClick = () => {
+    setLocation(registerUrl);
+  };
+
   return (
     <section className="py-12 md:py-20 px-4">
       <div className="container mx-auto max-w-7xl">
@@ -544,7 +564,11 @@ export function PlatformFeaturesSection({ content, editMode = false, onEdit }: L
             const IconComponent = (Icons as any)[feature.icon] || ShoppingBag;
 
             return (
-              <Card key={index} className={`hover-elevate transition-all ${delayClass}`}>
+              <Card
+                key={index}
+                className={`hover-elevate transition-all ${delayClass} cursor-pointer`}
+                onClick={handleCardClick}
+              >
                 <CardContent className="p-4 md:p-6 space-y-3 md:space-y-4">
                   <EditableWrapper
                     fieldPath={['platformFeatures', String(index), 'icon']}
@@ -584,7 +608,13 @@ export function PlatformFeaturesSection({ content, editMode = false, onEdit }: L
   );
 }
 
-export function EarningSection() {
+export function EarningSection({ registerUrl = '/register' }: { registerUrl?: string }) {
+  const [, setLocation] = useLocation();
+
+  const handleCardClick = () => {
+    setLocation(registerUrl);
+  };
+
   return (
     <section className="py-12 md:py-20 px-4 bg-gradient-to-b from-primary/5 to-transparent">
       <div className="container mx-auto max-w-7xl">
@@ -602,7 +632,7 @@ export function EarningSection() {
         </div>
 
         <div className="grid lg:grid-cols-2 gap-6 md:gap-8 max-w-6xl mx-auto">
-          <Card className="border border-primary/20 md:border-2">
+          <Card className="border border-primary/20 md:border-2 cursor-pointer" onClick={handleCardClick}>
             <CardHeader className="p-4 md:p-6">
               <div className="flex items-center gap-2 md:gap-3 mb-3 md:mb-4">
                 <div className="h-12 w-12 md:h-14 md:w-14 rounded-lg md:rounded-xl bg-primary/10 flex items-center justify-center flex-shrink-0">
@@ -653,7 +683,7 @@ export function EarningSection() {
             </CardContent>
           </Card>
 
-          <Card className="border border-chart-2/20 md:border-2">
+          <Card className="border border-chart-2/20 md:border-2 cursor-pointer" onClick={handleCardClick}>
             <CardHeader className="p-4 md:p-6">
               <div className="flex items-center gap-2 md:gap-3 mb-3 md:mb-4">
                 <div className="h-12 w-12 md:h-14 md:w-14 rounded-lg md:rounded-xl bg-chart-2/10 flex items-center justify-center flex-shrink-0">

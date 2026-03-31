@@ -1,11 +1,13 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
 import { Input } from "@/components/ui/input";
 import { X, Star, BookOpen, Layers, TrendingUp, Calendar, User, Award, Search } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
-import type { Category as DbCategory, Subcategory } from "@shared/schema";
+import { categories, type Category as DbCategory, type Subcategory } from "@shared/schema";
+import { useLocation } from "wouter";
+import { debugLog } from "@/lib/debug";
 
 interface MobileFiltersProps {
   selectedCategories: {
@@ -28,6 +30,7 @@ interface MobileFiltersProps {
     minRating?: number;
     author?: string;
   }) => void;
+  forceVisible?: boolean;
 }
 
 // Helper function to track filter clicks for analytics
@@ -48,7 +51,7 @@ const trackFilterClick = async (filterType: 'category' | 'subcategory' | 'author
   }
 };
 
-export function MobileFilters({ selectedCategories, onCategoryChange }: MobileFiltersProps) {
+export function MobileFilters({ selectedCategories, onCategoryChange, forceVisible = false }: MobileFiltersProps) {
   // Локальное состояние для выбранной главной категории
   const [selectedMainCategory, setSelectedMainCategory] = useState<string | null>(null);
   // Локальное состояние для поиска автора
@@ -71,6 +74,8 @@ export function MobileFilters({ selectedCategories, onCategoryChange }: MobileFi
     : [];
 
   const platformToSearch = allCategories && selectedCategories.platform ? allCategories.find(cat => cat.id === selectedCategories.platform)?.id : ''
+
+  const location = useLocation()
 
   const { data: years = [] } = useQuery<number[]>({
     queryKey: ["/api/courses-metadata/years", platformToSearch, selectedCategories.level, selectedCategories.author, selectedCategories.minRating],
@@ -155,14 +160,31 @@ export function MobileFilters({ selectedCategories, onCategoryChange }: MobileFi
       const platformsInCategory = allCategories.filter(cat => cat.parentId === categoryId);
       const allPlatformSlugs = platformsInCategory.map(p => p.slug).join(',');
 
-      onCategoryChange({
-        platform: categoryId,
+      onCategoryChange((prev) => ({
+        ...prev,
+        levels: [categoryId],
         minRating: selectedCategories.minRating,
         minPrice: selectedCategories.minPrice,
         maxPrice: selectedCategories.maxPrice,
-      });
+      }));
     }
   };
+
+  const [hasInitialPlatform, setInitialPlatform] = useState<boolean>(false)
+
+  useEffect(() => {
+    if (hasInitialPlatform) return
+
+    const params = new URLSearchParams(window.location.search);
+    const levelParam = params.get('level') || ''
+    const levelIds = levelParam.split(',').map(id => id.trim()).filter(Boolean);
+
+    if (selectedMainCategory !== levelIds[0]) {
+      setSelectedMainCategory(levelIds[0])
+      setInitialPlatform(true)
+    }
+
+  }, [location])
 
   const handleSubcategoryClick = (subcategorySlug: string, subcategoryName: string, subcategoryId?: string) => {
     if (selectedCategories.platform === subcategoryId) {
@@ -190,26 +212,30 @@ export function MobileFilters({ selectedCategories, onCategoryChange }: MobileFi
       if (selectedCategories.maxPrice !== undefined) {
         newCategories.maxPrice = selectedCategories.maxPrice;
       }
-      onCategoryChange(newCategories);
+      onCategoryChange((prev) => ({
+        ...prev,
+        levels: [],
+        ...newCategories
+      }));
     }
   };
 
-  const handleLevelClick = (levelName: string, subcategoryId?: string) => {
-    if (!subcategoryId) return;
+  // const handleLevelClick = (levelName: string, subcategoryId?: string) => {
+  //   if (!subcategoryId) return;
 
-    const currentLevels = selectedCategories.levels || [];
+  //   const currentLevels = selectedCategories.levels || [];
 
-    const newLevels = currentLevels.includes(subcategoryId)
-      ? currentLevels.filter(id => id !== subcategoryId) // убираем
-      : [subcategoryId];              // добавляем
+  //   const newLevels = currentLevels.includes(subcategoryId)
+  //     ? currentLevels.filter(id => id !== subcategoryId) // убираем
+  //     : [subcategoryId];              // добавляем
 
-    onCategoryChange({
-      ...selectedCategories,
-      levels: newLevels.length > 0 ? newLevels : undefined,
-    });
+  //   onCategoryChange({
+  //     ...selectedCategories,
+  //     levels: newLevels.length > 0 ? newLevels : undefined,
+  //   });
 
-    trackFilterClick('subcategory', subcategoryId, levelName);
-  };
+
+  // };
 
   const handleYearClick = (year: number) => {
     if (selectedCategories.year === year) {
@@ -266,13 +292,17 @@ export function MobileFilters({ selectedCategories, onCategoryChange }: MobileFi
   const childSubcategories = subcategories.filter(sub => sub.categoryId === selectedCategories.platform)
 
   return (
-    <div className="md:hidden space-y-5 mb-6" data-testid="mobile-filters">
+    <div className={`${forceVisible ? "block" : "md:hidden"} space-y-5 mb-6`} data-testid="mobile-filters">
       {/* Главные категории - всегда видны */}
       <div className="space-y-3 animate-in fade-in-50 duration-500">
         <div className="flex items-center gap-2 px-1">
           <BookOpen className="h-4 w-4 text-primary" />
           <h3 className="text-base font-semibold tracking-tight">Категория</h3>
         </div>
+
+        <p className="text-[12px] md:text-lg text-muted-foreground !mt-[8px]">
+          Выберите фильтры:
+        </p>
         <ScrollArea className="w-full whitespace-nowrap ">
           <div className="flex gap-2.5 pb-2 !overflow-auto">
             {mainCategories.map((category, index) => (
@@ -367,7 +397,51 @@ export function MobileFilters({ selectedCategories, onCategoryChange }: MobileFi
         animate-in fade-in-50 slide-in-from-left-5
       `}
                     style={{ animationDelay: `${index * 50}ms`, animationFillMode: 'backwards' }}
-                    onClick={() => handleLevelClick(childSubcategory.name, subcategory?.id)}
+                    onClick={() => {
+                      const subcatId = childSubcategory.id;
+                      const platformCategoryId = allCategories.find(cat => cat.id == childSubcategory.categoryId)?.parentId
+
+                      debugLog('allCategories')
+                      debugLog("childSubcategory", childSubcategory)
+
+                      // 1. Текущие levels (или пустой массив)
+                      const currentLevels = selectedCategories.levels ?? [];
+
+                      // 2. Получаем все ID подкатегорий из текущей группы (childSubcategories)
+                      const groupSubcategoryIds = childSubcategories.map(sub => sub.id);
+
+                      // 3. Toggle логика для всей группы
+                      const isCurrentlySelected = groupSubcategoryIds.some(id => currentLevels.includes(id));
+
+                      let newLevels: string[];
+
+                      if (isCurrentlySelected) {
+                        // Если хотя бы одна из группы выбрана → снимаем ВСЕ из этой группы
+                        newLevels = [subcatId, ...currentLevels.filter(id => !groupSubcategoryIds.includes(id))];
+                      } else {
+                        debugLog([subcatId, ...currentLevels])
+                        // Если ничего из группы не выбрано → добавляем только кликнутую
+                        newLevels = [subcatId, ...currentLevels];
+                      }
+
+                      if (!newLevels.includes(platformCategoryId)) {
+                        newLevels = [...newLevels, platformCategoryId];
+                      }
+
+
+                      debugLog('newLevels', newLevels)
+
+                      // 5. Если после операций levels пустой — undefined
+                      const finalLevels = newLevels.length > 0 ? newLevels : undefined;
+
+                      // 6. Обновляем состояние
+                      onCategoryChange({
+                        ...selectedCategories,
+                        levels: finalLevels,
+                      });
+
+                      trackFilterClick('subcategory', childSubcategory.id, childSubcategory.name);
+                    }}
                     data-testid={`badge-level-${childSubcategory.id}`}
                   >
                     {childSubcategory.name}

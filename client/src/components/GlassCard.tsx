@@ -1,5 +1,6 @@
 import { ReactNode } from "react";
 import { cn } from "@/lib/utils";
+import { useIsMobile } from "@/hooks/useIsMobile";
 
 interface GlassCardProps {
   children: ReactNode;
@@ -7,7 +8,9 @@ interface GlassCardProps {
   variant?: "default" | "premium" | "accent" | "subtle";
   glowColor?: "purple" | "blue" | "pink" | "gold" | "cyan" | "silver" | "bronze";
   hover?: boolean;
+  expandOnHover?: boolean;
   isActive?: boolean;
+  style?: React.CSSProperties;
 }
 
 const glowColors = {
@@ -26,8 +29,12 @@ export function GlassCard({
   variant = "default",
   glowColor = "purple",
   hover = true,
+  expandOnHover = false,
   isActive = false,
+  style,
 }: GlassCardProps) {
+  const isMobile = useIsMobile();
+
   const variantStyles = {
     default: "bg-gradient-to-br from-background/80 via-background/60 to-background/80",
     premium: "bg-gradient-to-br from-background/70 via-background/50 to-background/70",
@@ -36,12 +43,17 @@ export function GlassCard({
   };
 
   return (
-    <div className={cn("relative rounded-xl overflow-visible !h-full transform-gpu scale-100", className)}>
+    <div
+      className={cn("relative rounded-xl overflow-visible !h-full transform-gpu scale-100", className)}
+      style={{ ...style }}
+    >
       {/* CSS hover-driven glow - GPU accelerated */}
       <div className="absolute -inset-2 pointer-events-none" style={{ zIndex: 0 }}>
         <div
           className={cn(
-            "absolute inset-0 bg-gradient-to-br rounded-xl blur-xl transition-opacity duration-300",
+            "absolute inset-0 bg-gradient-to-br rounded-xl transition-opacity duration-300",
+            // Disable blur-xl on mobile for performance
+            !isMobile && "blur-xl",
             isActive ? "opacity-100" : "opacity-0",
             hover && !isActive && "group-hover:opacity-100",
             glowColors[glowColor]
@@ -49,25 +61,30 @@ export function GlassCard({
         />
       </div>
 
-      {/* Glass layer with backdrop-blur (GPU optimized via CSS) */}
+      {/* Glass layer with backdrop-blur (disabled on mobile for performance) */}
       <div
         className={cn(
-          "relative backdrop-blur-md border rounded-xl h-full",
+          "relative border rounded-xl h-full",
+          // Only apply backdrop-blur on desktop
+          !isMobile && "backdrop-blur-md",
           isActive ? "border-border/60" : "border-border/40",
           variantStyles[variant],
-
-          hover && !isActive && "group-hover:border-border/60 group-hover:h-auto"
+          hover && !isActive && "group-hover:border-border/60",
+          expandOnHover && !isActive && "group-hover:h-auto"
         )}
         style={{
-          backdropFilter: 'blur(8px) saturate(140%)',
-          WebkitBackdropFilter: 'blur(8px) saturate(140%)',
+          // Disable backdrop-blur on mobile for performance, use solid background instead
+          backdropFilter: isMobile ? 'none' : 'blur(8px) saturate(140%)',
+          WebkitBackdropFilter: isMobile ? 'none' : 'blur(8px) saturate(140%)',
+          // Solid background fallback for mobile
+          ...(isMobile && { background: 'rgba(0, 0, 0, 0.25)' }),
         }}
       >
         {/* Subtle shine effect on top */}
         <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-white/20 to-transparent" />
 
         {/* Content */}
-        <div className="relative flex flex-col h-full">
+        <div className={cn("relative flex flex-col h-full", expandOnHover && !isActive && "group-hover:h-auto")}>
           {children}
         </div>
       </div>

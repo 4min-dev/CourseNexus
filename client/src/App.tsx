@@ -7,6 +7,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { useAuth } from "@/hooks/useAuth";
 import { AuthGuard } from "@/components/auth-guard";
 import { useSEO } from "@/hooks/useSEO";
+import ChatWidget from "@/components/ChatWidget";
 
 // Критичные страницы - загружаются сразу
 import NotFound from "@/pages/not-found";
@@ -16,6 +17,7 @@ import Register from "@/pages/register";
 import ResetPassword from "@/pages/reset-password";
 import Shop from "@/pages/shop";
 import Library from "@/pages/library";
+import PaymentPage from "@/pages/payment-page";
 
 // Lazy-loaded страницы - загружаются по требованию
 const CourseDetail = lazy(() => import("@/pages/course-detail"));
@@ -36,6 +38,7 @@ const Programs = lazy(() => import("@/pages/programs"));
 const ProgramDetail = lazy(() => import("@/pages/program-detail"));
 const Help = lazy(() => import("@/pages/help"));
 const LogoDemo = lazy(() => import("@/pages/logo-demo"));
+const Payment = lazy(() => import("@/pages/payment-page"));
 
 // Admin страницы - lazy loaded
 const AdminCategories = lazy(() => import("@/pages/admin-categories"));
@@ -56,6 +59,7 @@ const AdminNotifications = lazy(() => import("@/pages/admin-notifications"));
 const AdminModeration = lazy(() => import("@/pages/admin-moderation"));
 const AdminPartners = lazy(() => import("@/pages/admin-partners"));
 const AdminPrograms = lazy(() => import("@/pages/admin-programs"));
+const AdminChat = lazy(() => import("@/pages/admin-chat"));
 
 // Loading fallback компонент
 const PageLoader = () => (
@@ -162,7 +166,7 @@ function Router() {
       <Route path="/admin/categories/:categoryId/subcategories/:subcategoryId/courses">
         {() => (
           <Suspense fallback={<PageLoader />}>
-            <AuthGuard adminOnly>
+            <AuthGuard>
               <AdminCourses />
             </AuthGuard>
           </Suspense>
@@ -182,7 +186,13 @@ function Router() {
         {() => <Suspense fallback={<PageLoader />}><AuthGuard><AdminAllCourses /></AuthGuard></Suspense>}
       </Route>
       <Route path="/admin/courses/:courseId/edit">
-        {() => <Suspense fallback={<PageLoader />}><AuthGuard><AdminCourseEdit /></AuthGuard></Suspense>}
+        {() => (
+          <Suspense fallback={<PageLoader />}>
+            <AuthGuard>
+              <AdminCourseEdit />
+            </AuthGuard>
+          </Suspense>
+        )}
       </Route>
       <Route path="/admin/users">
         {() => <Suspense fallback={<PageLoader />}><AuthGuard><AdminUsers /></AuthGuard></Suspense>}
@@ -223,6 +233,13 @@ function Router() {
       <Route path="/admin/programs">
         {() => <Suspense fallback={<PageLoader />}><AuthGuard><AdminPrograms /></AuthGuard></Suspense>}
       </Route>
+      <Route path="/admin/chat">
+        {() => <Suspense fallback={<PageLoader />}><AuthGuard><AdminChat /></AuthGuard></Suspense>}
+      </Route>
+
+      <Route path="/payment">
+        {() => <AuthGuard><PaymentPage /></AuthGuard>}
+      </Route>
 
       <Route component={NotFound} />
     </Switch>
@@ -242,6 +259,7 @@ function App() {
       <TooltipProvider>
         <Toaster />
         <Router />
+        <ChatWidget />
       </TooltipProvider>
     </QueryClientProvider>
   );

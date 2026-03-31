@@ -1,15 +1,12 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { createPortal } from "react-dom";
 import { useIsMobile } from "@/hooks/useIsMobile";;
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { BookOpen, Sparkles, Gem, ArrowRight } from "lucide-react";
+import { CoursePreviewDialog } from "@/components/ui/course-preview-dialog";
+import { BookOpen, Sparkles, Gem, ArrowRight, X } from "lucide-react";
 import type { Course } from "@shared/schema";
 import { formatPrice } from "@/lib/formatPrice";
-import { StarRating } from "@/components/star-rating";
-import { ViewingCounter } from "@/components/viewing-counter";
 import starterPackageImg from "@assets/generated_images/Starter_package_illustration_bundle_1c8f4d88.png";
 import professionalPackageImg from "@assets/generated_images/Professional_package_illustration_levels_de5bc7a2.png";
 import premiumPackageImg from "@assets/generated_images/Premium_package_illustration_orbit_4879daf5.png";
@@ -28,7 +25,14 @@ interface CoursePackage {
     discountedPrice: number;
 }
 
-function PackageCard({ pkg, idx }: { pkg: CoursePackage; idx: number }) {
+import React from "react";
+
+// ... existing code ...
+
+const PackageCard = React.memo(PackageCardInternal);
+export default PackageCard;
+
+function PackageCardInternal({ pkg, idx, priority }: { pkg: CoursePackage; idx: number; priority?: boolean }) {
     const [isExpanded, setIsExpanded] = useState(false);
     const [hoveredCourse, setHoveredCourse] = useState<string | null>(null);
     const [previewCourse, setPreviewCourse] = useState<Course | null>(null);
@@ -38,35 +42,21 @@ function PackageCard({ pkg, idx }: { pkg: CoursePackage; idx: number }) {
     // Use shared mobile detection hook - prevents memory leaks from multiple resize listeners
     const isMobile = useIsMobile();
 
-    // Toggle expansion on mobile (touch devices)
-    const handleMobileToggle = (e: React.MouseEvent) => {
-        // Only toggle if clicking on the card itself, not interactive elements
-        const target = e.target as HTMLElement;
-        if (target.closest('button') || target.closest('a')) {
+
+
+    const handleCardClick = (e: React.MouseEvent) => {
+        if (isMobile) {
             return;
         }
 
-        if (isMobile) {
-            e.stopPropagation();
-            setIsExpanded(!isExpanded);
-        }
-    };
-
-    const handleCardClick = (e: React.MouseEvent) => {
         const target = e.target as HTMLElement;
 
-        // Не реагируем, если клик по кнопке, ссылке или интерактивному элементу
         if (target.closest('button') || target.closest('a') || target.closest('[role="dialog"]')) {
             return;
         }
 
         e.stopPropagation();
-        setIsExpanded(prev => !prev); // toggle
-    };
-
-    // Закрытие при клике на бэкдроп (только на мобильных)
-    const handleBackdropClick = () => {
-        setIsExpanded(false);
+        setIsExpanded(prev => !prev);
     };
 
     return (
@@ -123,6 +113,8 @@ function PackageCard({ pkg, idx }: { pkg: CoursePackage; idx: number }) {
                     <img
                         src={packageImage}
                         alt={pkg.name}
+                        loading={priority ? "eager" : "lazy"}
+                        {...({ fetchpriority: priority ? "high" : "auto" } as any)}
                         className={`
               absolute inset-0 w-full h-full object-cover transition-transform duration-150 ease-out
               transform-gpu scale-100
@@ -214,12 +206,15 @@ function PackageCard({ pkg, idx }: { pkg: CoursePackage; idx: number }) {
             {/* Mobile backdrop - rendered via Portal to escape carousel */}
             {isExpanded && isMobile && createPortal(
                 <div
-                    className="fixed inset-0 bg-background/80 backdrop-blur-sm animate-in fade-in duration-200"
-                    style={{ zIndex: 9998 }}
-                    onClick={() => {
-                        console.log('[PackageCard] Backdrop clicked, closing overlay');
+                    className="fixed inset-0 bg-background/80 backdrop-blur-sm cursor-pointer"
+                    style={{ zIndex: 9998, touchAction: 'manipulation' }}
+                    onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
                         setIsExpanded(false);
                     }}
+                    role="button"
+                    aria-label="Закрыть"
                 />,
                 document.body
             )}
@@ -228,7 +223,7 @@ function PackageCard({ pkg, idx }: { pkg: CoursePackage; idx: number }) {
             {isExpanded && pkg.courses && pkg.courses.length > 0 && (
                 isMobile ? createPortal(
                     <div
-                        className="fixed inset-x-4 top-1/2 -translate-y-1/2 max-h-[70vh] overflow-y-auto scrollbar-hide bg-background/95 backdrop-blur-lg rounded-2xl border-2 border-purple-500/20 p-4 shadow-2xl shadow-purple-500/20 animate-in fade-in duration-300"
+                        className="fixed inset-x-4 top-1/2 -translate-y-1/2 max-h-[70vh] overflow-y-auto scrollbar-hide bg-background/95 backdrop-blur-lg rounded-2xl border-2 border-purple-500/20 p-4 pt-12 shadow-2xl shadow-purple-500/20"
                         style={{
                             zIndex: 9999,
                             transform: 'translateY(-50%) translateZ(0)'
@@ -238,12 +233,26 @@ function PackageCard({ pkg, idx }: { pkg: CoursePackage; idx: number }) {
                             e.stopPropagation();
                         }}
                     >
-                        <div className="grid grid-cols-2 gap-3">
+                        <button
+                            className="absolute top-3 right-3 p-2 rounded-full bg-muted/80 hover:bg-muted transition-colors z-10"
+                            onClick={(e) => {
+                                e.stopPropagation();
+                                setIsExpanded(false);
+                            }}
+                            aria-label="Закрыть"
+                        >
+                            <X className="h-5 w-5 text-foreground" />
+                        </button>
+
+                        <div className="grid grid-cols-2 gap-3 mt-2">
                             {pkg.courses.map((course) => (
                                 <div
                                     key={course.id}
                                     className="group/course relative cursor-pointer"
-                                    onClick={() => setPreviewCourse(course)}
+                                    onClick={() => {
+                                        setPreviewCourse(course);
+                                        setIsExpanded(false);
+                                    }}
                                     data-testid={`mini-course-card-${course.id}`}
                                 >
                                     {/* Course Mini Card */}
@@ -283,6 +292,17 @@ function PackageCard({ pkg, idx }: { pkg: CoursePackage; idx: number }) {
                                 </div>
                             ))}
                         </div>
+
+                        <Button
+                            className="w-full mt-4 bg-muted hover:bg-muted/80 text-foreground"
+                            variant="ghost"
+                            onClick={(e) => {
+                                e.stopPropagation();
+                                setIsExpanded(false);
+                            }}
+                        >
+                            Закрыть
+                        </Button>
                     </div>,
                     document.body
                 ) : (
@@ -363,116 +383,13 @@ function PackageCard({ pkg, idx }: { pkg: CoursePackage; idx: number }) {
                 )
             )}
 
-            {/* Course Preview Dialog */}
-            <Dialog open={!!previewCourse} onOpenChange={(open) => !open && setPreviewCourse(null)}>
-                <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto" data-testid="dialog-course-preview">
-                    {previewCourse && (
-                        <>
-                            <DialogHeader>
-                                <DialogTitle className="text-2xl font-bold pr-8">{previewCourse.title}</DialogTitle>
-                            </DialogHeader>
-
-                            <div className="space-y-4 max-md:space-y-2">
-                                {/* Course Thumbnail */}
-                                <div className="relative aspect-video overflow-hidden rounded-lg bg-gradient-to-br from-purple-900/20 to-pink-900/20">
-                                    {previewCourse.thumbnailImage ? (
-                                        <img
-                                            src={previewCourse.thumbnailImage}
-                                            alt={previewCourse.title}
-                                            className="absolute inset-0 w-full h-full object-cover"
-                                        />
-                                    ) : (
-                                        <div className="absolute inset-0 flex items-center justify-center">
-                                            <BookOpen className="h-16 w-16 text-muted-foreground/30" />
-                                        </div>
-                                    )}
-                                </div>
-
-                                {/* Rating and Stats */}
-                                <div className="flex items-center justify-between gap-4 max-md:gap-2">
-                                    <StarRating
-                                        rating={Number(previewCourse.rating || 0)}
-                                        reviewsCount={Number(previewCourse.reviewsCount || 0)}
-                                    />
-                                    <ViewingCounter value={previewCourse.reviewsCount} courseId={previewCourse.id} />
-                                </div>
-
-                                {/* Badges */}
-                                <div className="flex flex-wrap gap-2">
-                                    {previewCourse.platform && (
-                                        <Badge variant="outline" className="text-sm">
-                                            {previewCourse.platform}
-                                        </Badge>
-                                    )}
-                                    {previewCourse.level && (
-                                        <Badge variant="outline" className="text-sm">
-                                            {previewCourse.level}
-                                        </Badge>
-                                    )}
-                                    {previewCourse.year && (
-                                        <Badge variant="outline" className="text-sm">
-                                            {previewCourse.year}
-                                        </Badge>
-                                    )}
-                                </div>
-
-                                {/* Description */}
-                                {previewCourse.description && (
-                                    <div className="space-y-2">
-                                        <h4 className="font-semibold text-sm text-muted-foreground">Описание</h4>
-                                        <div
-                                            className="prose prose-sm dark:prose-invert max-w-none text-foreground leading-relaxed text-sm"
-                                            dangerouslySetInnerHTML={{ __html: previewCourse.description }}
-                                        />
-                                    </div>
-                                )}
-
-                                {/* Author */}
-                                {previewCourse.authorName && (
-                                    <div className="flex items-center gap-3 p-3 rounded-lg bg-muted/50">
-                                        <Avatar className="h-10 w-10 border-2 border-primary/20">
-                                            <AvatarImage src={previewCourse.authorImage || undefined} />
-                                            <AvatarFallback className="bg-primary/10 text-primary font-semibold">
-                                                {previewCourse.authorName[0] || "?"}
-                                            </AvatarFallback>
-                                        </Avatar>
-                                        <div className="flex flex-col">
-                                            <span className="text-xs text-muted-foreground">Автор</span>
-                                            <span className="text-sm font-medium">{previewCourse.authorName}</span>
-                                        </div>
-                                    </div>
-                                )}
-
-                                {/* Price */}
-                                {previewCourse.price && (
-                                    <div className="flex items-center justify-between p-4 rounded-lg bg-gradient-to-r from-purple-500/10 to-pink-500/10 border border-purple-500/20">
-                                        <span className="text-sm text-muted-foreground">Цена курса</span>
-                                        <span className="text-2xl font-bold">
-                                            {formatPrice(parseFloat(previewCourse.price))}
-                                        </span>
-                                    </div>
-                                )}
-
-                                {/* View Course Button */}
-                                <Button
-                                    className="w-full gap-2 bg-gradient-to-r from-purple-600 to-pink-600 text-white shadow-lg"
-                                    size="lg"
-                                    onClick={() => {
-                                        setPreviewCourse(null);
-                                        window.location.href = `/course/${previewCourse.id}`;
-                                    }}
-                                    data-testid="button-view-full-course"
-                                >
-                                    <ArrowRight className="h-5 w-5" />
-                                    Перейти к курсу
-                                </Button>
-                            </div>
-                        </>
-                    )}
-                </DialogContent>
-            </Dialog>
+            <CoursePreviewDialog
+                course={previewCourse}
+                open={!!previewCourse}
+                onOpenChange={(open) => !open && setPreviewCourse(null)}
+            />
         </div>
     );
 }
 
-export default PackageCard
+

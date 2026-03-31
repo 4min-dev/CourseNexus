@@ -1,6 +1,8 @@
 import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { randomUUID, createHash } from "crypto";
+import puppeteer, { Browser } from "puppeteer";
+import { load } from 'cheerio'
 import { storage } from "./storage";
 import { setupAuth, isAuthenticated, updateUserActivityThrottled } from "./authSession";
 import { insertCourseSchema, insertPurchaseSchema, insertTaskSchema, insertBalanceTransactionSchema, insertReviewSchema, insertCategorySchema, insertSubcategorySchema, insertMenuItemSchema, insertInfoBannerSchema, insertPartnerSchema, insertProgramSchema, insertProgramReviewSchema, insertProgramInstructionSchema, lessons, courseSections, purchases, courseFiles, courses, users, balanceTransactions, vipPackages, vipTiers, favorites, reviews, lessonProgress, referrals, awards, userAwards, partners, programs, programPurchases, programReviews, programInstructions, categories, subcategories as subcategoriesTable, type Course } from "@shared/schema";
@@ -10,18 +12,22 @@ import { ObjectPermission, StoredObject, getObjectAclPolicy, setObjectAclPolicy 
 import { db } from "./db";
 import { eq, and, or, isNotNull, sql, inArray, gte } from "drizzle-orm";
 import { extractVisitorMetadata, extractUtmParams } from "./visitor-metadata";
-import { sendTelegramMessage, generateVerificationCode } from "./telegram";
+import { sendTelegramMessage, generateVerificationCode, answerCallbackQuery } from "./telegram";
+import { notifyNewConversation, notifyNewMessage, notifyPurchase, notifyTopup, notifyReview, notifyCourseRequest, testTelegramConnection, clearTelegramConfigCache } from "./telegramNotifier";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import {
   verifyLinkingCode,
   deleteLinkingSession,
   create2FASession,
-  verify2FACode
+  verify2FACode,
+  processStartCommand,
+  processResetPasswordCommand
 } from "./telegram-bot";
 import { devAuthBypass } from "./middlewares/devAuthBypass";
 import { buildStorageUrl } from "./bunnyStorage";
 import { S3Client } from "@aws-sdk/client-s3";
 import { PutObjectCommand } from "@aws-sdk/client-s3";
+import crypto from 'crypto'
 import multer from "multer";
 const upload = multer({ storage: multer.memoryStorage() });
 import {
@@ -48,9 +54,46 @@ const CACHE_TTL = 60000;
 const popularityCache = new Map<string, { data: any; timestamp: number }>();
 const POPULARITY_CACHE_TTL = 300000;
 
-
 const telegram2faTokens = new Map<string, { userId: string; expiresAt: Date }>();
 
+const NIRVANA_GLOBAL_PUBLIC = process.env.NIRVANA_GLOBAL_PUBLIC || ''
+const NIRVANA_GLOBAL_PRIVATE = process.env.NIRVANA_GLOBAL_PRIVATE || ''
+const NIRVANA_KZ_PUBLIC = process.env.NIRVANA_KZ_PUBLIC || ''
+const NIRVANA_KZ_PRIVATE = process.env.NIRVANA_KZ_PRIVATE || ''
+
+function getNirvanaKeys(currency: string = 'RUB') {
+  const isKzt = currency.toUpperCase() === 'KZT'
+  const publicKey = isKzt ? NIRVANA_KZ_PUBLIC : NIRVANA_GLOBAL_PUBLIC
+  const privateKey = isKzt ? NIRVANA_KZ_PRIVATE : NIRVANA_GLOBAL_PRIVATE
+
+  if (!publicKey || !privateKey) {
+    throw new Error(`Отсутствуют ключи NirvanaPay для валюты ${currency}`)
+  }
+
+  return { publicKey, privateKey }
+}
+
+let globalBrowser: Browser | null = null
+
+async function getBrowser() {
+  if (!globalBrowser || !globalBrowser.isConnected()) {
+    globalBrowser = await puppeteer.launch({
+      headless: true,
+      args: [
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        '--disable-dev-shm-usage',
+        '--disable-gpu',
+        '--single-process',
+        '--no-zygote'
+      ],
+      timeout: 90000
+    })
+  }
+  return globalBrowser
+}
+
+const metaCache = new Map<string, any>()
 
 function transliterate(text: string): string {
   console.log(text)
@@ -252,6 +295,31 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  app.post('/api/auth/logout', (req, res) => {
+    req.logout((err) => {
+      if (err) {
+        console.error("Logout error:", err);
+        return res.status(500).json({ message: "Logout failed" });
+      }
+
+      req.session.destroy((err) => {
+        if (err) {
+          console.error("Session destroy error:", err);
+          return res.status(500).json({ message: "Session destroy failed" });
+        }
+
+        res.clearCookie('connect.sid', {
+          path: '/',
+          httpOnly: true,
+          secure: process.env.NODE_ENV === 'production',
+          sameSite: 'lax',
+        });
+
+        res.status(200).json({ message: "Logged out successfully" });
+      });
+    });
+  });
+
   app.put('/api/profile', isAuthenticated, async (req: any, res) => {
     try {
       const userId = req.user.claims.sub;
@@ -298,12 +366,74 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  app.post('/telegram-webhook', async (req, res) => {
+    try {
+      const update = req.body
+      let offset = 0
+
+      // Обновляем offset (на всякий случай, хотя при webhook он не обязателен)
+      if (update.update_id) {
+        offset = Math.max(offset ?? 0, update.update_id + 1)
+      }
+
+      // Обработка callback_query
+      if (update.callback_query) {
+        const cq = update.callback_query
+        const telegramId = cq.from.id
+        const chatId = cq.message?.chat.id
+        const username = cq.from.username
+        const firstName = cq.from.first_name
+        const lastName = cq.from.last_name
+
+        console.log(`[Telegram Bot] Received callback query from ${chatId}: ${cq.data}`)
+
+        if (cq.data === 'get_new_code' && chatId) {
+          await answerCallbackQuery(cq.id, '🔄 Генерирую новый код...')
+          await processStartCommand(telegramId, chatId, username, firstName, lastName)
+        }
+
+        // Подтверждаем обработку callback (иначе кнопка будет "висеть")
+        await answerCallbackQuery(cq.id)
+      }
+
+      // Обработка сообщений
+      if (update.message) {
+        const msg = update.message
+        const telegramId = msg.from.id
+        const chatId = msg.chat.id
+        const username = msg.from.username
+        const firstName = msg.from.first_name
+        const lastName = msg.from.last_name
+
+        if (msg.text) {
+          const text = msg.text
+          console.log(`[Telegram Bot] Received message from ${chatId}: ${text}`)
+
+          if (text.startsWith('/start')) {
+            console.log('[Telegram Bot] Start process command')
+            await processStartCommand(telegramId, chatId, username, firstName, lastName)
+          }
+
+          if (text.startsWith('/reset_password')) {
+            await processResetPasswordCommand(telegramId, chatId, firstName)
+          }
+        }
+      }
+
+      // Обязательно отвечаем 200, иначе Telegram будет повторно слать update
+      res.sendStatus(200)
+    } catch (error) {
+      console.error('[Telegram Webhook] Error:', error)
+      res.sendStatus(500)
+    }
+  })
+
   app.post('/api/telegram/verify-linking-code', isAuthenticated, async (req: any, res) => {
     try {
       const userId = req.user.claims.sub;
 
       const schema = z.object({
-        code: z.string().length(6),
+        code: z.string().length(4),
       });
 
       const { code } = schema.parse(req.body);
@@ -419,7 +549,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const success = await sendTelegramMessage(
         user.telegramChatId,
-        `🔐 <b>Код подтверждения для входа:</b>\n\n<code>${code}</code>\n\nПожалуйста, укажите этот код для авторизации на сайте.\nКод действителен 5 минут.`
+        `🔐 <b>Код подтверждения:</b> <code>${code}</code>\n\nПожалуйста, укажите этот код для авторизации на сайте.\nКод действителен 5 минут.`
       );
 
       if (success) {
@@ -442,7 +572,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const schema = z.object({
         sessionId: z.string(),
-        code: z.string().length(6),
+        code: z.string().length(4),
       });
 
       const { sessionId, code } = schema.parse(req.body);
@@ -486,7 +616,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.get('/api/courses', async (req: any, res) => {
+  app.get('/api/courses', async (req, res) => {
     try {
       const {
         platform,
@@ -500,215 +630,238 @@ export async function registerRoutes(app: Express): Promise<Server> {
         vipOnly,
         excludeVipPackages,
         excludePurchased,
-      } = req.query;
+        excludeCurrentYear,
+        limit,
+        offset,
+      } = req.query
 
-      const userId = req.user?.claims?.sub || null;
+      console.log('GET /api/courses query:', req.query)
+      console.log('raw platform:', platform)
+      console.log('raw level:', level)
 
-      // Собираем все ID, по которым нужно фильтровать массив level[]
-      const levelIdsToInclude: string[] = [];
+      const userId = req.user?.claims?.sub || null
 
-      if (platform && typeof platform === 'string') {
-        levelIdsToInclude.push(platform);
+      let levelIds = []
+      let subcategoryId = undefined
+
+      if (platform && typeof platform === 'string' && platform.trim()) {
+        levelIds.push(platform.trim())
       }
 
-      if (level && typeof level === 'string') {
-        levelIdsToInclude.push(level);
+      if (level && typeof level === 'string' && level.trim()) {
+        const values = level.split(',').map(v => v.trim()).filter(Boolean)
+        console.log('level parsed:', values, `(${values.length} items)`)
+
+        if (values.length === 1) {
+          levelIds.push(values[0])
+        } else if (values.length === 2) {
+          subcategoryId = values[0]
+          levelIds.push(values[1])
+        } else if (values.length > 2) {
+          levelIds.push(...values)
+        }
       }
 
-      // Поддержка множественных значений: ?platform=1&platform=2 или ?level=3,4
-      // Но для простоты пока предполагаем один ID. Если нужно несколько — скажи.
+      console.log('final levelIds:', levelIds.length ? levelIds : 'not set')
+      console.log('final subcategoryId:', subcategoryId || 'not set')
 
-      const courses = await storage.getCourses({
-        // Передаём массив ID, которые должны быть в course.level[]
-        levelIds: levelIdsToInclude.length > 0 ? levelIdsToInclude : undefined,
+      let take = 9999999
+      if (limit) {
+        const parsed = parseInt(limit, 10)
+        if (!isNaN(parsed) && parsed > 0) take = Math.min(parsed, 100)
+      }
 
-        year: year ? parseInt(year as string) : undefined,
-        minPrice: minPrice ? parseFloat(minPrice as string) : undefined,
-        maxPrice: maxPrice ? parseFloat(maxPrice as string) : undefined,
-        minRating: minRating ? parseFloat(minRating as string) : undefined,
-        author: author as string | undefined,
-        search: search as string | undefined,
-        vipOnly: vipOnly === 'true',
-        excludeVipPackages: excludeVipPackages === 'true',
-        excludePurchased: (excludePurchased === 'true' && userId) ? userId : null,
+      let skip = 0
+      if (offset) {
+        const parsed = parseInt(offset, 10)
+        if (!isNaN(parsed) && parsed >= 0) skip = parsed
+      }
+
+      const result = await storage.getCourses({
+        levelIds: levelIds.length > 0 ? levelIds : undefined,
+        subcategoryId,
+        year: year ? parseInt(year) : undefined,
+        excludeCurrentYear: excludeCurrentYear ? parseInt(excludeCurrentYear) : undefined,
+        minPrice: minPrice ? parseFloat(minPrice) : undefined,
+        maxPrice: maxPrice ? parseFloat(maxPrice) : undefined,
+        minRating: minRating ? parseFloat(minRating) : undefined,
+        author: author || undefined,
+        search: search || undefined,
+        vipOnly: vipOnly === 'true' || vipOnly === '1',
+        excludeVipPackages: excludeVipPackages === 'true' || excludeVipPackages === '1',
+        excludePurchased: (excludePurchased === 'true' || excludePurchased === '1') && userId ? userId : null,
         forAdmin: false,
-      });
+        take,
+        skip,
+        countTotal: true
+      })
 
-      res.json(courses);
+      const { courses, total } = result
+
+      res.set('X-Total-Count', total.toString())
+      res.json(courses)
     } catch (error) {
-      console.error("Error fetching courses:", error);
-      res.status(500).json({ message: "Failed to fetch courses" });
+      console.error("Error fetching courses:", error)
+      res.status(500).json({ message: "Failed to fetch courses" })
     }
-  });
+  })
 
 
   app.get('/api/courses-metadata/authors', async (req, res) => {
     try {
-      const { platform, level, year, minRating, search } = req.query;
+      const { platform, level, year, minRating, search } = req.query
 
-      const platformName = await resolvePlatformName(platform as string);
+      const platformId = platform as string | undefined
 
-      const cacheKey = `authors:${platformName || 'all'}:${level || 'all'}:${year || 'all'}:${minRating || 'all'}:${search || ''}`;
+      const cacheKey = `authors:${platformId || 'all'}:${level || 'all'}:${year || 'all'}:${minRating || 'all'}:${search || ''}`
 
       if (!search) {
-        const cached = getCached<string[]>(cacheKey);
-        if (cached) {
-          return res.json(cached);
-        }
+        const cached = getCached<string[]>(cacheKey)
+        if (cached) return res.json(cached)
       }
 
       const authors = await storage.getDistinctAuthors(
-        platformName,
+        platformId,
         level as string | undefined,
         year ? parseInt(year as string) : undefined,
         minRating ? parseFloat(minRating as string) : undefined,
         search as string | undefined
-      );
+      )
 
-      if (!search) {
-        setCache(cacheKey, authors);
-      }
+      if (!search) setCache(cacheKey, authors)
 
-      res.json(authors);
+      res.json(authors)
     } catch (error) {
-      console.error("Error fetching authors:", error);
-      res.status(500).json({ message: "Failed to fetch authors" });
+      console.error("Error fetching authors:", error)
+      res.status(500).json({ message: "Failed to fetch authors" })
     }
-  });
-
+  })
 
   app.get('/api/courses-metadata/years', async (req, res) => {
     try {
-      const { platform, level, author, minRating } = req.query;
+      const { platform, level, author, minRating } = req.query
 
-      const platformName = await resolvePlatformName(platform as string);
+      const platformId = platform as string | undefined
 
-      const cacheKey = `years:${platformName || 'all'}:${level || 'all'}:${author || 'all'}:${minRating || 'all'}`;
+      const cacheKey = `years:${platformId || 'all'}:${level || 'all'}:${author || 'all'}:${minRating || 'all'}`
 
-      const cached = getCached<number[]>(cacheKey);
-      if (cached) {
-        return res.json(cached);
-      }
+      const cached = getCached<number[]>(cacheKey)
+      if (cached) return res.json(cached)
 
       const years = await storage.getDistinctYears(
-        platformName,
+        platformId,
         level as string | undefined,
         author as string | undefined,
         minRating ? parseFloat(minRating as string) : undefined
-      );
+      )
 
-      setCache(cacheKey, years);
-      res.json(years);
+      setCache(cacheKey, years)
+      res.json(years)
     } catch (error) {
-      console.error("Error fetching years:", error);
-      res.status(500).json({ message: "Failed to fetch years" });
+      console.error("Error fetching years:", error)
+      res.status(500).json({ message: "Failed to fetch years" })
     }
-  });
+  })
 
   app.get('/api/courses-metadata/levels', async (req, res) => {
     try {
-      const { platform, year, author, minRating } = req.query;
+      const { platform, year, author, minRating } = req.query
 
-      const platformName = await resolvePlatformName(platform as string);
+      const platformName = await resolvePlatformName(platform as string)
 
-      const cacheKey = `levels:${platformName || 'all'}:${year || 'all'}:${author || 'all'}:${minRating || 'all'}`;
+      const cacheKey = `levels:${platformName || 'all'}:${year || 'all'}:${author || 'all'}:${minRating || 'all'}`
 
-      const cached = getCached<string[]>(cacheKey);
-      if (cached) {
-        return res.json(cached);
-      }
+      const cached = getCached<string[]>(cacheKey)
+      if (cached) return res.json(cached)
 
-      const availableLevels = await storage.getDistinctLevels(
+      const levels = await storage.getDistinctLevels(
         platformName,
         year ? parseInt(year as string) : undefined,
         author as string | undefined,
         minRating ? parseFloat(minRating as string) : undefined
-      );
+      )
 
-      setCache(cacheKey, availableLevels);
-      res.json(availableLevels);
+      setCache(cacheKey, levels)
+      res.json(levels)
     } catch (error) {
-      console.error("Error fetching levels:", error);
-      res.status(500).json({ message: "Failed to fetch levels" });
+      console.error("Error fetching levels:", error)
+      res.status(500).json({ message: "Failed to fetch levels" })
     }
-  });
+  })
 
   app.get('/api/courses-metadata/ratings', async (req, res) => {
     try {
-      const { platform, level, year, author } = req.query;
+      const { platform, level, year, author } = req.query
 
-      const platformName = await resolvePlatformName(platform as string);
+      const platformName = await resolvePlatformName(platform as string)
 
-      const cacheKey = `ratings:${platformName || 'all'}:${level || 'all'}:${year || 'all'}:${author || 'all'}`;
+      const cacheKey = `ratings:${platformName || 'all'}:${level || 'all'}:${year || 'all'}:${author || 'all'}`
 
-      const cached = getCached<number[]>(cacheKey);
-      if (cached) {
-        return res.json(cached);
-      }
+      const cached = getCached<number[]>(cacheKey)
+      if (cached) return res.json(cached)
 
-      const availableRatings = await storage.getAvailableRatings(
+      const ratings = await storage.getAvailableRatings(
         platformName,
         level as string | undefined,
         year ? parseInt(year as string) : undefined,
         author as string | undefined
-      );
+      )
 
-      setCache(cacheKey, availableRatings);
-      res.json(availableRatings);
+      setCache(cacheKey, ratings)
+      res.json(ratings)
     } catch (error) {
-      console.error("Error fetching ratings:", error);
-      res.status(500).json({ message: "Failed to fetch ratings" });
+      console.error("Error fetching ratings:", error)
+      res.status(500).json({ message: "Failed to fetch ratings" })
     }
-  });
-
+  })
 
   app.get('/api/courses-metadata/max-price', async (req, res) => {
     try {
-      const { platform } = req.query;
-
-      const platformName = await resolvePlatformName(platform as string);
-
-      const cacheKey = `max-price:${platformName || 'all'}`;
-
-      const cached = getCached<number>(cacheKey);
-      if (cached !== null) {
-        return res.json(cached);
-      }
-
-      const maxPrice = await storage.getMaxPrice(platformName);
-      setCache(cacheKey, maxPrice);
-      res.json(maxPrice);
-    } catch (error) {
-      console.error("Error fetching max price:", error);
-      res.status(500).json({ message: "Failed to fetch max price" });
-    }
-  });
-
-  app.get('/api/categories/:categoryId/top-courses', async (req, res) => {
-    try {
-      const { categoryId } = req.params;
-      const { platform, limit } = req.query;
-      const cacheKey = `top-courses:${categoryId}:${platform || 'all'}:${limit || 5}`;
+      const { platform } = req.query
 
       const platformName = await resolvePlatformName(platform as string)
 
-      const cached = getCached<any[]>(cacheKey);
+      const cacheKey = `max-price:${platformName || 'all'}`
+
+      const cached = getCached<number>(cacheKey)
+      if (cached !== null) return res.json(cached)
+
+      const maxPrice = await storage.getMaxPrice(platformName)
+      setCache(cacheKey, maxPrice)
+      res.json(maxPrice)
+    } catch (error) {
+      console.error("Error fetching max price:", error)
+      res.status(500).json({ message: "Failed to fetch max price" })
+    }
+  })
+
+  app.get('/api/categories/:categoryId/top-courses', async (req, res) => {
+    try {
+      const { categoryId } = req.params
+      const { platform, limit } = req.query
+
+      const platformId = platform as string | undefined
+
+      const cacheKey = `top-courses:${categoryId}:${platformId || 'all'}:${limit || 5}`
+
+      const cached = getCached<any[]>(cacheKey)
       if (cached !== null) {
-        return res.json(cached);
+        return res.json(cached)
       }
 
       const topCourses = await storage.getTopCoursesByCategory(
         categoryId,
-        platformName,
+        platformId,
         limit ? parseInt(limit as string) : 5
-      );
-      setCache(cacheKey, topCourses);
-      res.json(topCourses);
+      )
+
+      setCache(cacheKey, topCourses)
+      res.json(topCourses)
     } catch (error) {
-      console.error("Error fetching top courses:", error);
-      res.status(500).json({ message: "Failed to fetch top courses" });
+      console.error("Error fetching top courses:", error)
+      res.status(500).json({ message: "Failed to fetch top courses" })
     }
-  });
+  })
 
   app.get('/api/courses/:id', async (req, res) => {
     try {
@@ -821,28 +974,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-
-  app.get('/api/courses/:courseId/files', isAuthenticated, async (req: any, res) => {
-    try {
-      const userId = req.user.claims.sub;
-      const { courseId } = req.params;
-      const { lessonId } = req.query;
-
-
-      const purchase = await storage.getPurchase(userId, courseId);
-      if (!purchase) {
-        return res.status(403).json({ message: "Course not purchased" });
-      }
-
-      const files = await storage.getCourseFiles(courseId, lessonId as string | undefined);
-      res.json(files);
-    } catch (error) {
-      console.error("Error fetching course files:", error);
-      res.status(500).json({ message: "Failed to fetch course files" });
-    }
-  });
-
-
   app.get('/api/courses/:courseId/progress', isAuthenticated, async (req: any, res) => {
     try {
       const userId = req.user.claims.sub;
@@ -865,28 +996,113 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post('/api/courses/:courseId/lessons/:lessonId/progress', isAuthenticated, async (req: any, res) => {
     try {
-      const userId = req.user.claims.sub;
-      const { courseId, lessonId } = req.params;
+      const userId = req.user.claims.sub
+      const { courseId, lessonId } = req.params
 
       const schema = z.object({
-        completed: z.boolean(),
-        watchedSeconds: z.number().int().min(0).optional(),
-      });
-      const { completed, watchedSeconds } = schema.parse(req.body);
+        completed: z.boolean().optional(),
+        watchedSeconds: z.coerce
+          .number()
+          .int()
+          .min(0)
+          .catch(0)
+          .optional(),
 
+        lastWatchedSeconds: z.coerce
+          .number()
+          .int()
+          .min(0)
+          .catch(0)
+          .optional()
+      })
 
-      const purchase = await storage.getPurchase(userId, courseId);
+      const { completed, watchedSeconds, lastWatchedSeconds } = schema.parse(req.body)
+
+      const purchase = await storage.getPurchase(userId, courseId)
       if (!purchase) {
-        return res.status(403).json({ message: "Course not purchased" });
+        return res.status(403).json({ message: "Course not purchased" })
       }
 
-      const progress = await storage.updateLessonProgress(userId, lessonId, completed, watchedSeconds);
-      res.json(progress);
+      const progress = await storage.updateLessonProgress(userId, lessonId, completed, watchedSeconds, lastWatchedSeconds)
+      res.json(progress)
     } catch (error) {
-      console.error("Error updating lesson progress:", error);
-      res.status(500).json({ message: "Failed to update lesson progress" });
+      console.error("Error updating lesson progress:", error)
+      res.status(500).json({ message: "Failed to update lesson progress" })
     }
-  });
+  })
+
+  app.post('/api/courses/:courseId/last-viewed', isAuthenticated, async (req, res) => {
+    try {
+      const userId = req.user?.claims?.sub
+      console.log('[POST last-viewed] userId из токена:', userId)
+
+      if (!userId) return res.status(401).json({ message: "Unauthorized" })
+
+      const { courseId } = req.params
+      const { lessonId } = req.body
+
+      console.log('[POST last-viewed] Получено тело запроса:', req.body)
+      console.log('[POST last-viewed] lessonId:', lessonId)
+      console.log('[POST last-viewed] Тип lessonId:', typeof lessonId)
+
+      if (!lessonId || typeof lessonId !== 'string') {
+        console.warn('[POST last-viewed] lessonId некорректный или отсутствует')
+        return res.status(400).json({ message: "lessonId required and must be string" })
+      }
+
+      console.log('[POST last-viewed] Перед UPDATE — userId:', userId, 'lessonId:', lessonId)
+
+      const result = await db
+        .update(users)
+        .set({
+          lastViewedLessonId: lessonId,
+          updatedAt: new Date()
+        })
+        .where(eq(users.id, userId))
+
+      console.log('[POST last-viewed] UPDATE выполнен, rowCount:', result.rowCount)
+      console.log('[POST last-viewed] Ожидаемое значение в базе:', lessonId)
+
+      if (result.rowCount === 0) {
+        console.warn('[POST last-viewed] rowCount 0 — пользователь не найден')
+        return res.status(404).json({ message: "User not found" })
+      }
+
+      res.json({ success: true, lessonId })
+    } catch (error) {
+      console.error("[POST last-viewed] Критическая ошибка:", error)
+      res.status(500).json({ message: "Server error" })
+    }
+  })
+
+  app.get('/api/courses/:courseId/last-viewed', isAuthenticated, async (req, res) => {
+    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate')
+    res.setHeader('Pragma', 'no-cache')
+    res.setHeader('Expires', '0')
+
+    try {
+      const userId = req.user?.claims?.sub
+      if (!userId) return res.status(401).json({ message: "Unauthorized" })
+
+      const { courseId } = req.params
+
+      const purchase = await storage.getPurchase(userId, courseId)
+      if (!purchase) return res.status(403).json({ message: "Course not purchased" })
+
+      const result = await db
+        .select()
+        .from(users)
+        .where(eq(users.id, userId))
+        .limit(1)
+
+      const lessonId = result[0]?.lastViewedLessonId ?? null
+
+      res.json({ lessonId })
+    } catch (error) {
+      console.error("Error fetching last viewed lesson:", error)
+      res.status(500).json({ message: "Failed to fetch last viewed lesson" })
+    }
+  })
 
   app.get('/api/purchases', isAuthenticated, async (req: any, res) => {
     try {
@@ -1297,8 +1513,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
       } catch (notificationError) {
         console.error("[PURCHASE] Failed to create notification:", notificationError);
-
       }
+
+      const isFantikPurchase = result.type === 'course' && (useFantiks || payWithFantiks);
+      const priceDisplay = isFantikPurchase ? String(course.fantikPrice || '0') : String(course.price || '0');
+      const siteUrl = `${req.protocol}://${req.get("host")}`;
+      notifyPurchase(
+        () => storage.getChatSettings(),
+        {
+          userName: user.displayName || user.username || "Пользователь",
+          userEmail: user.email || "",
+          courseTitle: course.title,
+          price: priceDisplay,
+          paymentType: isFantikPurchase ? "fantiks" : "money",
+          isVip: result.type === "vip",
+          siteUrl,
+        }
+      ).catch(() => { });
 
       res.json(result.data);
     } catch (error: any) {
@@ -1320,22 +1551,36 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const userId = req.user.claims.sub;
 
+      const { platform, level, year, minRating, author, search } = req.query;
+
+      let levelIds: string[] = [];
+
+      if (platform && typeof platform === 'string' && platform.trim()) {
+        levelIds.push(platform.trim());
+      }
+
+      if (level && typeof level === 'string' && level.trim()) {
+        const values = level.split(',').map((v: string) => v.trim()).filter(Boolean);
+        if (values.length === 1) {
+          levelIds.push(values[0]);
+        } else if (values.length >= 2) {
+          levelIds.push(...values);
+        }
+      }
 
       const filters: {
-        platform?: string;
-        level?: string;
+        levelIds?: string[];
         year?: number;
         minRating?: number;
         author?: string;
         search?: string;
       } = {};
 
-      if (req.query.platform) filters.platform = req.query.platform;
-      if (req.query.level) filters.level = req.query.level;
-      if (req.query.year) filters.year = parseInt(req.query.year);
-      if (req.query.minRating !== undefined) filters.minRating = parseFloat(req.query.minRating);
-      if (req.query.author) filters.author = req.query.author;
-      if (req.query.search) filters.search = req.query.search;
+      if (levelIds.length > 0) filters.levelIds = levelIds;
+      if (year) filters.year = parseInt(year);
+      if (minRating !== undefined) filters.minRating = parseFloat(minRating);
+      if (author) filters.author = author;
+      if (search) filters.search = search;
 
       const library = await storage.getLibrary(userId, filters);
 
@@ -2469,6 +2714,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
         userId,
       });
 
+      const reviewUser = await storage.getUser(userId);
+      const siteUrl = `${req.protocol}://${req.get("host")}`;
+      notifyReview(
+        () => storage.getChatSettings(),
+        {
+          userName: reviewUser?.displayName || reviewUser?.username || "Пользователь",
+          courseTitle: course?.title || "Курс",
+          rating: validatedData.rating,
+          text: validatedData.comment || "",
+          siteUrl,
+        }
+      ).catch(() => { });
+
       res.json(review);
     } catch (error: any) {
       console.error("Error creating review:", error);
@@ -3018,7 +3276,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
 
-  app.get('/api/admin/courses/:courseId/subcategories', isAuthenticated, isAdmin, async (req, res) => {
+  app.get('/api/admin/courses/:courseId/subcategories', isAuthenticated, async (req, res) => {
     try {
       const { courseId } = req.params;
       const subcategoryIds = await storage.getCourseSubcategories(courseId);
@@ -3139,13 +3397,34 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
       const lessonData = schema.parse(req.body);
 
-      console.log('post lessong lessondata', lessonData)
-      console.log('post lessong req body', req.body)
+      console.log('post lesson lessondata', lessonData);
+      console.log('post lesson req body', req.body);
+      console.log(`[DEBUG] Создаём урок в sectionId: ${sectionId}`);
 
       const lesson = await storage.createLesson({
         sectionId,
         ...lessonData,
       });
+
+      console.log(`[DEBUG] Урок создан: id=${lesson.id}, sectionId=${lesson.sectionId}`);
+
+      // Получаем courseId
+      const [sectionRow] = await db
+        .select({ courseId: courseSections.courseId })
+        .from(courseSections)
+        .where(eq(courseSections.id, sectionId))
+        .limit(1);
+
+      console.log(`[DEBUG] Найден sectionRow:`, sectionRow);
+
+      if (sectionRow?.courseId) {
+        console.log(`[DEBUG] Вызываем enqueue для courseId=${sectionRow.courseId}, lessonId=${lesson.id}`);
+        await storage.addOrUpdatePendingLessonNotification(sectionRow.courseId, lesson.id);
+        console.log(`[Lesson Enqueue] Успешно добавлено в очередь`);
+      } else {
+        console.warn(`[Lesson Enqueue] Пропуск: courseId не найден для section ${sectionId}`);
+      }
+
       res.json(lesson);
     } catch (error: any) {
       console.error("Error creating lesson:", error);
@@ -3202,8 +3481,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const { videoUrl, originalFileName } = req.body;
 
       const url = videoUrl.replace(
-        'https://p40911.nowcdn.co/',
-        'https://p40911.nowcdn.co/vkurse/'
+        'https://cdn.go.vkurse.io/',
+        'https://cdn.go.vkurse.io/vkurse/'
       );
 
 
@@ -3856,6 +4135,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         telegramBotUsername: settings?.telegramBotUsername || "",
         referralBonusPercent: settings?.referralBonusPercent ?? 30,
         require2FA: settings?.require2FA ?? 'disabled',
+        skip2FAOnLogin: settings?.skip2FAOnLogin ?? false,
       });
     } catch (error) {
       console.error("Error fetching site settings:", error);
@@ -3875,6 +4155,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         telegramBotToken: settings?.telegramBotToken || "",
         referralBonusPercent: settings?.referralBonusPercent ?? 30,
         require2FA: settings?.require2FA ?? 'disabled',
+        skip2FAOnLogin: settings?.skip2FAOnLogin ?? false,
       });
     } catch (error) {
       console.error("Error fetching admin settings:", error);
@@ -3892,6 +4173,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         telegramBotToken: z.string().optional(),
         referralBonusPercent: z.number().int().min(0).max(100).optional(),
         require2FA: z.enum(['disabled', 'optional', 'mandatory']).optional(),
+        skip2FAOnLogin: z.boolean().optional(),
       });
       const data = schema.parse(req.body);
 
@@ -3904,6 +4186,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         telegramBotToken: settings.telegramBotToken,
         referralBonusPercent: settings.referralBonusPercent,
         require2FA: settings.require2FA,
+        skip2FAOnLogin: settings.skip2FAOnLogin,
       });
     } catch (error: any) {
       console.error("Error updating admin settings:", error);
@@ -4080,25 +4363,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
         displayOrder: data.order ?? 0,
       };
       const category = await storage.createCategory(categoryData);
-
-
-      const levels = [
-        { name: 'Для новичков', nameEn: 'Beginner', order: 0 },
-        { name: 'Для опытных', nameEn: 'Intermediate', order: 1 },
-        { name: 'Продвинутый', nameEn: 'Advanced', order: 2 },
-      ];
-
-      for (const level of levels) {
-
-        const subcategorySlug = `${slug}-${level.nameEn.toLowerCase().replace(/\s+/g, '-')}`;
-        await storage.createSubcategory({
-          categoryId: category.id,
-          name: level.name,
-          nameEn: level.nameEn,
-          slug: subcategorySlug,
-          displayOrder: level.order,
-        });
-      }
 
       clearCache()
 
@@ -4556,10 +4820,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
         firstName: z.string().min(1),
         lastName: z.string().min(1),
         referralCode: z.string().optional(),
-        landingVisitId: z.string().uuid().optional(),
+        landingVisitId: z.string().optional(),
         telegramCode: z.string().optional(),
       });
       const data = schema.parse(req.body);
+      const normalizedReferralCode = data.referralCode?.trim().toUpperCase() || undefined;
+      const normalizedLandingVisitId = data.landingVisitId && z.string().uuid().safeParse(data.landingVisitId).success
+        ? data.landingVisitId
+        : undefined;
 
 
       const settings = await storage.getSiteSettings();
@@ -4601,8 +4869,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         password: data.password,
         firstName: data.firstName,
         lastName: data.lastName,
-        referralCodeUsed: data.referralCode,
-        landingVisitId: data.landingVisitId,
+        referralCodeUsed: normalizedReferralCode,
+        landingVisitId: normalizedLandingVisitId,
         registrationIp: metadata.ip || undefined,
         registrationCountry: metadata.country || undefined,
         registrationCity: metadata.city || undefined,
@@ -4692,7 +4960,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const settings = await storage.getSiteSettings();
 
 
-      if (user.telegramChatId) {
+      if (user.telegramChatId && !settings?.skip2FAOnLogin) {
         console.log(`[Auth] User ${user.id} has Telegram linked - sending 2FA code`);
 
 
@@ -4701,7 +4969,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
         const success = await sendTelegramMessage(
           user.telegramChatId,
-          `🔐 <b>Код подтверждения для входа:</b>\n\n<code>${code}</code>\n\nПожалуйста, укажите этот код для авторизации на сайте.\nКод действителен 5 минут.`
+          `🔐 <b>Код подтверждения:</b> <code>${code}</code>\n\nПожалуйста, укажите этот код для авторизации на сайте.\nКод действителен 5 минут.`
         );
 
         if (!success) {
@@ -4717,6 +4985,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
           sessionId,
           email: user.email
         });
+      }
+
+      if (user.telegramChatId && settings?.skip2FAOnLogin) {
+        console.log(`[Auth] User ${user.id} has Telegram linked but skip2FAOnLogin is enabled - skipping 2FA`);
       }
 
 
@@ -4880,7 +5152,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const schema = z.object({
         sessionId: z.string(),
-        code: z.string().length(6),
+        code: z.string().length(4),
         newPassword: z.string().min(6),
       });
       const { sessionId, code, newPassword } = schema.parse(req.body);
@@ -5440,7 +5712,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get('/api/packages', async (req, res) => {
     try {
       const categoryId = req.query.categoryId as string | undefined;
-      const packages = await storage.getCoursePackages(categoryId);
+      const parentId = req.query.parentId as string | undefined;
+      const packages = await storage.getCoursePackages(categoryId, parentId);
       res.json(packages);
     } catch (error) {
       console.error("Error fetching course packages:", error);
@@ -5643,8 +5916,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           try {
             const parsed = new URL(url);
             // Поддержка двух форматов:
-            // https://p40911.nowcdn.co/vkurse/xxx.mp4
-            // https://p40911.nowcdn.co/processed/xxx.mp4
+            // https://cdn.go.vkurse.io/vkurse/xxx.mp4
+            // https://cdn.go.vkurse.io/processed/xxx.mp4
             return { Key: decodeURIComponent(parsed.pathname.slice(1)) };
           } catch {
             return null;
@@ -5984,6 +6257,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
         title,
         description,
       });
+
+      const reqUser = await storage.getUser(userId);
+      const siteUrl = `${req.protocol}://${req.get("host")}`;
+      notifyCourseRequest(
+        () => storage.getChatSettings(),
+        {
+          userName: reqUser?.displayName || reqUser?.username || "Пользователь",
+          title,
+          description,
+          siteUrl,
+        }
+      ).catch(() => { });
 
       res.status(201).json(request);
     } catch (error: any) {
@@ -7200,7 +7485,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const uploadUrl = await getSignedUrl(s3Client, command, { expiresIn: 120 })
 
-      const fileUrl = `https://p40911.nowcdn.co/vkurse/${Key}`
+      const fileUrl = `https://cdn.go.vkurse.io/vkurse/${Key}`
 
       res.json({
         uploadUrl,
@@ -7230,7 +7515,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const response = await s3Client.send(command);
       const uploadId = response.UploadId;
-      const fileUrl = `https://p40911.nowcdn.co/vkurse/${Key}`; // Тот же, как в single
+      const fileUrl = `https://cdn.go.vkurse.io/vkurse/${Key}`; // Тот же, как в single
 
       res.json({ uploadId, fileUrl, key: Key });
     } catch (err: any) {
@@ -7307,7 +7592,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           })
         );
 
-        const url = `https://p40911.nowcdn.co/${key}`;
+        const url = `https://cdn.go.vkurse.io/${key}`;
 
         const originalName = Buffer.from(req.file.originalname, "latin1").toString("utf8");
 
@@ -7319,6 +7604,883 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
     }
   );
+
+  app.post('/api/payment/nirvana/create', isAuthenticated, async (req, res) => {
+    try {
+      const userId = req.user?.claims?.sub
+      if (!userId) {
+        return res.status(401).json({ error: 'Не авторизован' })
+      }
+
+      const { amount, currency = 'RUB', tokenCode } = req.body
+      const parsedAmount = Number(amount)
+
+      if (isNaN(parsedAmount) || parsedAmount <= 0) {
+        return res.status(400).json({ error: 'Укажите корректную сумму' })
+      }
+
+      const { publicKey, privateKey } = getNirvanaKeys(currency)
+      console.log('currency', currency)
+      const externalId = `topup_${userId}_${Date.now()}`
+
+      console.log('publicKey', publicKey)
+      console.log('privateKey', privateKey)
+
+      const payload = {
+        amount: parsedAmount,
+        currency,
+        tokenCode: tokenCode || undefined,
+        externalID: externalId,
+        redirectURL: `${req.headers.origin || 'https://go.vkurse.io'}/shop`,
+        siteName: 'В курсе?',
+        callbackURL: `https://${req.hostname}/api/payment/nirvana/callback?ext=${externalId}`,
+        userInfo: {
+          id: userId,
+          ip: req.ip || 'unknown',
+          userAgent: req.get('user-agent') || 'unknown',
+          email: req.user?.email || ''
+        }
+      }
+
+      console.log('[NIRVANA CREATE] payload:', payload)
+
+      const response = await fetch('https://f.nirvanapay.pro/api/v2/order', {
+        method: 'POST',
+        headers: {
+          ApiPublic: publicKey,
+          ApiPrivate: privateKey,
+          'Content-Type': 'application/json',
+          Accept: 'application/json'
+        },
+        body: JSON.stringify(payload)
+      })
+
+      if (!response.ok) {
+        const errData = await response.json().catch(() => ({}))
+        console.error('[NIRVANA CREATE] ошибка:', errData)
+        return res.status(response.status).json({ error: errData.message || 'Ошибка создания платежа' })
+      }
+
+      const data = await response.json()
+      console.log('[NIRVANA CREATE] ответ:', data)
+
+      const paymentUrl = data?.data?.redirectURL || data?.redirectURL || data?.data?.paymentUrl || data?.paymentUrl
+
+      if (!paymentUrl) {
+        return res.status(500).json({ error: 'Не получена ссылка для оплаты' })
+      }
+
+      await db.insert(balanceTransactions).values({
+        userId,
+        amount: parsedAmount,
+        currency,
+        type: 'deposit',
+        status: 'pending',
+        externalId,
+        description: `Пополнение через NirvanaPay • ${currency} ${parsedAmount}`,
+        createdAt: new Date()
+      })
+
+      res.json({ paymentUrl, externalId, amount: parsedAmount })
+    } catch (err) {
+      console.error('[NIRVANA CREATE] критическая ошибка:', err)
+      res.status(500).json({ error: 'Не удалось создать платёж' })
+    }
+  })
+
+  app.get('/api/payment/nirvana/dummy-callback', async (req, res) => {
+    const { ext } = req.query
+    console.log(`[DUMMY CALLBACK] получен запрос для externalId=${ext}`)
+    res.status(200).send('OK')
+  })
+
+  app.get('/api/payment/nirvana/callback', async (req, res) => {
+    try {
+      const { ext } = req.query
+      const externalId = ext
+
+      if (!externalId || typeof externalId !== 'string') {
+        return res.status(400).send('MISSING_EXTERNAL_ID')
+      }
+
+      const initialCheckUrl = `https://f.nirvanapay.pro/api/v2/order?externalId=${externalId}`
+
+      let response = await fetch(initialCheckUrl, {
+        headers: {
+          ApiPublic: NIRVANA_GLOBAL_PUBLIC,
+          ApiPrivate: NIRVANA_GLOBAL_PRIVATE,
+          Accept: 'application/json'
+        }
+      })
+
+      if (!response.ok) {
+        console.error('[CALLBACK] Начальная проверка не удалась:', await response.text())
+        return res.status(500).send('CHECK_FAILED')
+      }
+
+      let data = await response.json()
+      let order = data?.data
+
+      if (!order || order.externalID !== externalId) {
+        return res.status(404).send('ORDER_NOT_FOUND')
+      }
+
+      const isKzt = order.currency?.toUpperCase() === 'KZT'
+      const publicKey = isKzt ? NIRVANA_KZ_PUBLIC : NIRVANA_GLOBAL_PUBLIC
+      const privateKey = isKzt ? NIRVANA_KZ_PRIVATE : NIRVANA_GLOBAL_PRIVATE
+
+      if (!publicKey || !privateKey) {
+        console.error('[CALLBACK] Отсутствуют ключи для валюты:', order.currency)
+        return res.status(500).send('SERVER_CONFIG_ERROR')
+      }
+
+      if (isKzt) {
+        response = await fetch(initialCheckUrl, {
+          headers: {
+            ApiPublic: publicKey,
+            ApiPrivate: privateKey,
+            Accept: 'application/json'
+          }
+        })
+
+        if (!response.ok) {
+          console.error('[CALLBACK] Проверка KZT ключами не удалась:', await response.text())
+          return res.status(500).send('CHECK_FAILED')
+        }
+
+        data = await response.json()
+        order = data?.data
+
+        if (!order || order.externalID !== externalId) {
+          return res.status(404).send('ORDER_NOT_FOUND')
+        }
+      }
+
+      console.log('[CALLBACK] Получен заказ:', {
+        externalId,
+        status: order.status,
+        amount: order.amount,
+        currency: order.currency,
+        tokenCode: order.tokenCode
+      })
+
+      if (order.status !== 'SUCCESS') {
+        return res.send('OK')
+      }
+
+      const [transaction] = await db
+        .select()
+        .from(balanceTransactions)
+        .where(and(
+          eq(balanceTransactions.externalId, externalId),
+          eq(balanceTransactions.status, 'pending')
+        ))
+        .limit(1)
+
+      if (!transaction) {
+        console.log('[CALLBACK] Транзакция не найдена или уже обработана:', externalId)
+        return res.send('OK')
+      }
+
+      console.log('[CALLBACK] Нашли транзакцию:', transaction)
+
+      await db.transaction(async (tx) => {
+        console.log('[CALLBACK] Обновляем транзакцию → completed')
+
+        await tx
+          .update(balanceTransactions)
+          .set({
+            status: 'completed',
+            updatedAt: new Date(),
+            description: sql`${balanceTransactions.description} || ' • Nirvana #' || COALESCE(${order.tokenCode}, 'unknown')`
+          })
+          .where(eq(balanceTransactions.id, transaction.id))
+
+        console.log('[CALLBACK] Обновляем баланс пользователя')
+
+        await tx
+          .update(users)
+          .set({
+            balance: sql`${users.balance} + ${transaction.amount}`,
+            updatedAt: new Date()
+          })
+          .where(eq(users.id, transaction.userId))
+      })
+
+      console.log(`Зачислено ${transaction.amount} ${transaction.currency} пользователю ${transaction.userId} (Nirvana ${externalId})`)
+
+      try {
+        const topupUser = await storage.getUser(transaction.userId);
+        if (topupUser) {
+          const siteUrl = `${req.protocol}://${req.get("host")}`;
+          notifyTopup(
+            () => storage.getChatSettings(),
+            {
+              userName: topupUser.displayName || topupUser.username || "Пользователь",
+              userEmail: topupUser.email || "",
+              amount: String(transaction.amount),
+              currency: transaction.currency || "₽",
+              method: "NirvanaPay",
+              siteUrl,
+            }
+          ).catch(() => { });
+        }
+      } catch (tgErr) {
+        console.error("[CALLBACK] Telegram notify error:", tgErr);
+      }
+
+      res.send('OK')
+    } catch (err) {
+      console.error('[CALLBACK] Критическая ошибка:', err)
+      res.status(500).send('ERROR')
+    }
+  })
+
+  app.get('/api/payment/nirvana/status/:externalId', isAuthenticated, async (req, res) => {
+    try {
+      const { externalId } = req.params
+      const userId = req.user?.claims?.sub
+
+      if (!userId) {
+        return res.status(401).json({ error: 'Не авторизован' })
+      }
+
+      let { publicKey, privateKey } = getNirvanaKeys('RUB')
+
+      const checkUrl = `https://f.nirvanapay.pro/api/v2/order?externalId=${externalId}`
+
+      let response = await fetch(checkUrl, {
+        headers: {
+          ApiPublic: publicKey,
+          ApiPrivate: privateKey,
+          Accept: 'application/json'
+        }
+      })
+
+      let data = await response.json()
+      let order = data?.data
+
+      if (order?.currency?.toUpperCase() === 'KZT') {
+        ({ publicKey, privateKey } = getNirvanaKeys('KZT'))
+
+        response = await fetch(checkUrl, {
+          headers: {
+            ApiPublic: publicKey,
+            ApiPrivate: privateKey,
+            Accept: 'application/json'
+          }
+        })
+
+        if (response.ok) {
+          data = await response.json()
+          order = data?.data
+        }
+      }
+
+      if (!response.ok) {
+        console.error('[NIRVANA STATUS] ошибка запроса:', await response.text())
+        return res.status(500).json({ error: 'Ошибка проверки статуса' })
+      }
+
+      if (!order || order.externalID !== externalId) {
+        return res.status(404).json({ error: 'Ордер не найден' })
+      }
+
+      let mappedStatus = 'pending'
+      if (order.status === 'SUCCESS') mappedStatus = 'success'
+      if (order.status === 'ERROR') mappedStatus = 'error'
+
+      res.json({
+        status: order.status,
+        mappedStatus,
+        amount: order.amount,
+        currency: order.currency || 'RUB',
+        created: order.created,
+        tokenCode: order.tokenCode
+      })
+    } catch (err) {
+      console.error('[NIRVANA STATUS] ошибка:', err)
+      res.status(500).json({ error: 'Не удалось проверить статус' })
+    }
+  })
+
+  app.get('/api/og', async (req, res) => {
+    const { url } = req.query
+
+    if (!url || typeof url !== 'string') {
+      return res.status(400).json({ error: 'url обязателен' })
+    }
+
+    console.time(`[OG] Общее время для ${url}`)
+
+    if (metaCache.has(url)) {
+      console.timeEnd(`[OG] Общее время для ${url}`)
+      return res.json(metaCache.get(url))
+    }
+
+    try {
+      console.time(`[OG] fetch ${url}`)
+      const controller = new AbortController()
+      const timeout = setTimeout(() => controller.abort(), 8000)
+
+      const response = await fetch(url, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+        },
+        signal: controller.signal
+      })
+
+      clearTimeout(timeout)
+      console.timeEnd(`[OG] fetch ${url}`)
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`)
+      }
+
+      console.time(`[OG] html parse ${url}`)
+      const html = await response.text()
+      const $ = load(html)
+      console.timeEnd(`[OG] html parse ${url}`)
+
+      const og = {
+        title: $('meta[property="og:title"]').attr('content') ||
+          $('title').text().trim() ||
+          null,
+
+        description: $('meta[property="og:description"]').attr('content') ||
+          $('meta[name="description"]').attr('content') ||
+          null,
+
+        image: $('meta[property="og:image"]').attr('content') ||
+          $('meta[property="og:image:secure_url"]').attr('content') ||
+          null,
+
+        siteName: $('meta[property="og:site_name"]').attr('content') ||
+          new URL(url).hostname.replace(/^www\./, '') ||
+          null,
+
+        favicon: `https://www.google.com/s2/favicons?domain=${url}&sz=64`
+      }
+
+      metaCache.set(url, og)
+      console.timeEnd(`[OG] Общее время для ${url}`)
+      res.json(og)
+    } catch (err: any) {
+      console.error('[OG Parser] Error for', url, err.message)
+      console.timeEnd(`[OG] Общее время для ${url}`)
+
+      const fallback = {
+        title: `Страница на ${new URL(url).hostname.replace(/^www\./, '')}`,
+        description: `Материал с сайта ${new URL(url).hostname.replace(/^www\./, '')}`,
+        image: null,
+        siteName: new URL(url).hostname.replace(/^www\./, ''),
+        favicon: `https://www.google.com/s2/favicons?domain=${url}&sz=64`
+      }
+
+      metaCache.set(url, fallback)
+      res.status(500).json({
+        error: 'Не удалось получить метаданные',
+        fallback
+      })
+    }
+  })
+
+  app.get('/api/og-google', async (req, res) => {
+    const { url } = req.query
+
+    if (!url || typeof url !== 'string') {
+      return res.status(400).json({ error: 'url обязателен' })
+    }
+
+    console.time(`[OG-Google] Общее время для ${url}`)
+
+    if (metaCache.has(url)) {
+      console.timeEnd(`[OG-Google] Общее время для ${url}`)
+      return res.json(metaCache.get(url))
+    }
+
+    let browser
+    let page
+    try {
+      browser = await getBrowser()
+
+      console.time(`[OG-Google] newPage + setUserAgent ${url}`)
+      page = await browser.newPage()
+      await page.setUserAgent(
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36'
+      )
+      await page.setExtraHTTPHeaders({ 'Accept-Language': 'ru-RU,ru;q=0.9,en-US;q=0.8' })
+      await page.setViewport({ width: 1280, height: 800 })
+      console.timeEnd(`[OG-Google] newPage + setUserAgent ${url}`)
+
+      console.time(`[OG-Google] goto ${url}`)
+      await page.goto(url, {
+        waitUntil: 'domcontentloaded',
+        timeout: 90000
+      })
+      console.timeEnd(`[OG-Google] goto ${url}`)
+
+      console.time(`[OG-Google] waitForFunction ${url}`)
+      await page.waitForFunction(
+        () => document.title.trim().length > 0 ||
+          document.querySelector('meta[property="og:title"]') ||
+          document.querySelector('div[role="grid"]'),
+        { timeout: 45000 }
+      ).catch(() => { })
+      console.timeEnd(`[OG-Google] waitForFunction ${url}`)
+
+      console.time(`[OG-Google] evaluate ${url}`)
+      const meta = await page.evaluate(() => {
+        const title = document.title.trim() ||
+          document.querySelector('meta[property="og:title"]')?.content ||
+          null
+
+        let description =
+          document.querySelector('meta[property="og:description"]')?.content ||
+          document.querySelector('meta[name="description"]')?.content ||
+          null
+
+        const image = document.querySelector('meta[property="og:image"]')?.content || null
+
+        const siteName =
+          document.querySelector('meta[property="og:site_name"]')?.content ||
+          new URL(location.href).hostname.replace(/^www\./, '') ||
+          null
+
+        let firstText = ''
+        const selectors = [
+          'div[role="gridcell"]',
+          'div[role="heading"]',
+          'p, span.docs-title, .kix-lineview-text-block',
+          '.grid-cell-content'
+        ]
+
+        for (const sel of selectors) {
+          const el = document.querySelector(sel)
+          if (el?.innerText?.trim()) {
+            firstText = el.innerText.trim().replace(/\s+/g, ' ').slice(0, 180)
+            break
+          }
+        }
+
+        return { title, description, image, siteName, firstText }
+      })
+      console.timeEnd(`[OG-Google] evaluate ${url}`)
+
+      await page.close()
+
+      const domain = new URL(url).hostname.replace(/^www\./, '')
+      const finalTitle = meta.title?.replace(/\s*-\s*Google\s*(Sheets|Docs|Документы|Таблицы).*$/i, '').trim() || `Документ/Таблица на ${domain}`
+      const finalDesc = meta.description || meta.firstText || `Материал с ${domain}`
+
+      const result = {
+        title: finalTitle,
+        description: finalDesc,
+        image: meta.image,
+        siteName: meta.siteName || domain,
+        favicon: `https://www.google.com/s2/favicons?domain=${url}&sz=64`
+      }
+
+      metaCache.set(url, result)
+      console.timeEnd(`[OG-Google] Общее время для ${url}`)
+      res.json(result)
+    } catch (err) {
+      console.error('[OG Google] Error:', url, err.message)
+
+      if (page) await page.close().catch(() => { })
+
+      console.timeEnd(`[OG-Google] Общее время для ${url}`)
+
+      const domain = new URL(url).hostname.replace(/^www\./, '')
+      const fallback = {
+        title: `Страница на ${domain}`,
+        description: `Материал с сайта ${domain}`,
+        image: null,
+        siteName: domain,
+        favicon: `https://www.google.com/s2/favicons?domain=${url}&sz=64`
+      }
+
+      metaCache.set(url, fallback)
+      res.json(fallback)
+    }
+  })
+
+  // ==================== CHAT ROUTES ====================
+
+  const adminHeartbeats = new Map<string, number>();
+
+  function getGuestToken(req: any): string | null {
+    return req.headers['x-guest-token'] as string || null;
+  }
+
+  function canAccessConv(conv: any, userId: string | null, guestToken: string | null, isAdminUser: boolean): boolean {
+    if (isAdminUser) return true;
+    if (userId && conv.userId === userId) return true;
+    if (guestToken && conv.guestToken === guestToken) return true;
+    return false;
+  }
+
+  app.get('/api/chat/conversations', async (req: any, res) => {
+    try {
+      const userId = req.user?.claims?.sub;
+      const guestToken = getGuestToken(req);
+      if (userId) {
+        const convs = await storage.getChatConversationsByUser(userId);
+        return res.json(convs);
+      }
+      if (guestToken) {
+        const convs = await storage.getChatConversationsByGuest(guestToken);
+        return res.json(convs);
+      }
+      return res.json([]);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.post('/api/chat/conversations', async (req: any, res) => {
+    try {
+      const userId = req.user?.claims?.sub;
+      const guestToken = getGuestToken(req);
+      const { subject, guestName } = req.body;
+      if (!userId && !guestToken) return res.status(400).json({ error: 'Auth or guest token required' });
+      const conv = await storage.createChatConversation({
+        userId: userId || null,
+        subject,
+        guestName: userId ? null : (guestName || 'Гость'),
+        guestToken: userId ? null : guestToken,
+      } as any);
+      const siteUrl = process.env.REPLIT_DEV_DOMAIN ? `https://${process.env.REPLIT_DEV_DOMAIN}` : '';
+      let userName = guestName || 'Гость';
+      if (userId) {
+        const u = await storage.getUser(userId);
+        userName = u ? `${u.firstName || ''} ${u.lastName || ''}`.trim() || u.email : 'Пользователь';
+      }
+      notifyNewConversation(() => storage.getChatSettings(), {
+        userName,
+        subject: subject || '',
+        conversationId: conv.id,
+        siteUrl,
+      }).catch(() => { });
+      res.json(conv);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.get('/api/chat/conversations/:id/messages', async (req: any, res) => {
+    try {
+      const userId = req.user?.claims?.sub;
+      const guestToken = getGuestToken(req);
+      const conv = await storage.getChatConversation(req.params.id);
+      if (!conv) return res.status(404).json({ error: 'Not found' });
+      const user = userId ? await storage.getUser(userId) : null;
+      if (!canAccessConv(conv, userId, guestToken, !!user?.isAdmin)) return res.status(403).json({ error: 'Forbidden' });
+      const messages = await storage.getChatMessages(req.params.id);
+      res.json(messages);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.post('/api/chat/messages', async (req: any, res) => {
+    try {
+      const userId = req.user?.claims?.sub;
+      const guestToken = getGuestToken(req);
+      const { conversationId, text, fileUrl, fileName, fileType } = req.body;
+      if (!conversationId || (!text && !fileUrl)) return res.status(400).json({ error: 'Missing fields' });
+      const conv = await storage.getChatConversation(conversationId);
+      if (!conv) return res.status(404).json({ error: 'Conversation not found' });
+      const user = userId ? await storage.getUser(userId) : null;
+      const isAdminUser = !!user?.isAdmin;
+      if (!canAccessConv(conv, userId, guestToken, isAdminUser)) return res.status(403).json({ error: 'Forbidden' });
+      const role = isAdminUser ? 'admin' : 'client';
+      const senderId = userId || null;
+      if (role === 'client' && conv.status !== 'open') {
+        await storage.updateChatConversation(conversationId, { status: 'open' } as any);
+      }
+      const msgText = text || (fileName ? `📎 ${fileName}` : 'Файл');
+      const msg = await storage.createChatMessage({ conversationId, senderId, role, text: msgText, isRead: false, reactions: [], ...(fileUrl ? { fileUrl, fileName: fileName || null, fileType: fileType || null } : {}) });
+      if (isAdminUser && conv.status === 'open' && !conv.assigneeId) {
+        await storage.updateChatConversation(conversationId, { assigneeId: userId } as any);
+      }
+      if (role === 'client') {
+        const siteUrl = process.env.REPLIT_DEV_DOMAIN ? `https://${process.env.REPLIT_DEV_DOMAIN}` : '';
+        let clientName = conv.guestName || 'Гость';
+        if (userId) {
+          const u = await storage.getUser(userId);
+          clientName = u ? `${u.firstName || ''} ${u.lastName || ''}`.trim() || u.email : 'Пользователь';
+        }
+        notifyNewMessage(() => storage.getChatSettings(), {
+          userName: clientName,
+          messageText: text,
+          conversationId,
+          siteUrl,
+        }).catch(() => { });
+        const existingMsgs = await storage.getChatMessages(conversationId);
+        const clientMsgs = existingMsgs.filter(m => m.role === 'client');
+        const adminMsgs = existingMsgs.filter(m => m.role === 'admin');
+        const settings = await storage.getChatSettings();
+        const now = Date.now();
+        const lastAdminMsg = adminMsgs.length > 0 ? new Date(adminMsgs[adminMsgs.length - 1].createdAt!).getTime() : 0;
+        const inactiveMinutes = 30;
+        const shouldAutoReply = clientMsgs.length === 1 || (lastAdminMsg > 0 && (now - lastAdminMsg) > inactiveMinutes * 60 * 1000);
+        if (shouldAutoReply) {
+          const isOnline = Array.from(adminHeartbeats.values()).some(t => now - t < 30000);
+          const autoText = isOnline
+            ? (settings?.greeting || 'Добрый день! Чем могу помочь? Оператор скоро ответит.')
+            : (settings?.awayMessage || 'Мы сейчас не в сети. Ответим в ближайшее время.');
+          setTimeout(async () => {
+            try {
+              await storage.createChatMessage({
+                conversationId,
+                senderId: null,
+                role: 'admin',
+                text: autoText,
+                isRead: false,
+                reactions: [],
+              });
+            } catch { }
+          }, 1500);
+        }
+      }
+      res.json(msg);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.post('/api/chat/upload', async (req: any, res) => {
+    try {
+      const userId = req.user?.claims?.sub;
+      const guestToken = getGuestToken(req);
+      if (!userId && !guestToken) return res.status(401).json({ error: 'Unauthorized' });
+      const { fileName, fileType } = req.body;
+      if (!fileName) return res.status(400).json({ error: 'fileName required' });
+      const safeFileName = `chat/${Date.now()}_${fileName.replace(/[^a-zA-Z0-9._-]/g, "_")}`;
+      const command = new PutObjectCommand({
+        Bucket: process.env.NOWCDN_BUCKET!,
+        Key: safeFileName,
+        ContentType: fileType || "application/octet-stream",
+        ACL: "public-read",
+      });
+      const uploadUrl = await getSignedUrl(s3Client, command, { expiresIn: 120 });
+      const fileUrl = `https://cdn.go.vkurse.io/vkurse/${safeFileName}`;
+      res.json({ uploadUrl, fileUrl, fileName });
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.post('/api/chat/conversations/:id/read', async (req: any, res) => {
+    try {
+      const userId = req.user?.claims?.sub;
+      const guestToken = getGuestToken(req);
+      const conv = await storage.getChatConversation(req.params.id);
+      if (!conv) return res.status(404).json({ error: 'Not found' });
+      const user = userId ? await storage.getUser(userId) : null;
+      const isAdmin = !!user?.isAdmin;
+      if (!canAccessConv(conv, userId, guestToken, isAdmin)) return res.status(403).json({ error: 'Forbidden' });
+      const role = isAdmin ? 'admin' : 'client';
+      await storage.markChatMessagesRead(req.params.id, role);
+      res.json({ ok: true });
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.post('/api/chat/messages/:id/reactions', async (req: any, res) => {
+    try {
+      const userId = req.user?.claims?.sub;
+      const guestToken = getGuestToken(req);
+      const msg = await storage.getChatMessageById?.(req.params.id);
+      if (msg) {
+        const conv = await storage.getChatConversation(msg.conversationId);
+        const user = userId ? await storage.getUser(userId) : null;
+        if (conv && !canAccessConv(conv, userId, guestToken, !!user?.isAdmin)) {
+          return res.status(403).json({ error: 'Forbidden' });
+        }
+      }
+      const updated = await storage.updateChatMessageReactions(req.params.id, req.body.reactions || []);
+      res.json(updated);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.post('/api/chat/link-guest', isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.user?.claims?.sub;
+      const { guestToken } = req.body;
+      if (!guestToken || !userId) return res.status(400).json({ error: 'Missing data' });
+      const linked = await storage.linkGuestConversations(guestToken, userId);
+      res.json({ linked });
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.post('/api/admin/chat/heartbeat', isAuthenticated, isAdmin, async (req: any, res) => {
+    const userId = req.user?.claims?.sub;
+    if (userId) adminHeartbeats.set(userId, Date.now());
+    res.json({ ok: true });
+  });
+
+  app.get('/api/chat/support-status', async (_req, res) => {
+    const now = Date.now();
+    const threshold = 30000;
+    let anyOnline = false;
+    for (const [, ts] of adminHeartbeats) {
+      if (now - ts < threshold) { anyOnline = true; break; }
+    }
+    res.json({ online: anyOnline });
+  });
+
+  app.get('/api/chat/settings/public', async (_req, res) => {
+    try {
+      const settings = await storage.getChatSettings();
+      res.json({ greeting: settings?.greeting || '', awayMessage: settings?.awayMessage || '' });
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.get('/api/chat/unread', async (req: any, res) => {
+    try {
+      const userId = req.user?.claims?.sub;
+      const guestToken = getGuestToken(req);
+      let convs: any[] = [];
+      if (userId) {
+        convs = await storage.getChatConversationsByUser(userId);
+      } else if (guestToken) {
+        convs = await storage.getChatConversationsByGuest(guestToken);
+      }
+      const total = convs.reduce((s: number, c: any) => s + (c.unreadUser || 0), 0);
+      res.json({ unread: total });
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  // ==================== ADMIN CHAT ROUTES ====================
+
+  app.get('/api/admin/chat/conversations', isAuthenticated, isAdmin, async (req: any, res) => {
+    try {
+      const { status, priority, assigneeId } = req.query;
+      const convs = await storage.getAllChatConversations({ status, priority, assigneeId });
+      res.json(convs);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.get('/api/admin/chat/conversations/:id', isAuthenticated, isAdmin, async (req: any, res) => {
+    try {
+      const conv = await storage.getChatConversation(req.params.id);
+      if (!conv) return res.status(404).json({ error: 'Not found' });
+      const messages = await storage.getChatMessages(req.params.id);
+      let userInfo: any = null;
+      if (conv.userId) {
+        userInfo = await storage.getChatUserInfo(conv.userId);
+      } else {
+        userInfo = { firstName: conv.guestName || "Гость", lastName: "", email: "—", isGuest: true };
+      }
+      res.json({ conversation: conv, messages, userInfo });
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.patch('/api/admin/chat/conversations/:id', isAuthenticated, isAdmin, async (req: any, res) => {
+    try {
+      const { status, priority, assigneeId, note, tags, subject } = req.body;
+      const updates: any = {};
+      if (status !== undefined) updates.status = status;
+      if (priority !== undefined) updates.priority = priority;
+      if (assigneeId !== undefined) updates.assigneeId = assigneeId;
+      if (note !== undefined) updates.note = note;
+      if (tags !== undefined) updates.tags = tags;
+      if (subject !== undefined) updates.subject = subject;
+      const conv = await storage.updateChatConversation(req.params.id, updates);
+      res.json(conv);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.get('/api/admin/chat/stats', isAuthenticated, isAdmin, async (_req: any, res) => {
+    try {
+      const stats = await storage.getChatStats();
+      res.json(stats);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.get('/api/admin/chat/templates', isAuthenticated, isAdmin, async (_req: any, res) => {
+    try {
+      const templates = await storage.getChatTemplates();
+      res.json(templates);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.post('/api/admin/chat/templates', isAuthenticated, isAdmin, async (req: any, res) => {
+    try {
+      const { category, title, text } = req.body;
+      if (!category || !title || !text) return res.status(400).json({ error: 'Missing fields' });
+      const tpl = await storage.createChatTemplate({ category, title, text, uses: 0 });
+      res.json(tpl);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.patch('/api/admin/chat/templates/:id', isAuthenticated, isAdmin, async (req: any, res) => {
+    try {
+      const tpl = await storage.updateChatTemplate(req.params.id, req.body);
+      res.json(tpl);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.delete('/api/admin/chat/templates/:id', isAuthenticated, isAdmin, async (req: any, res) => {
+    try {
+      await storage.deleteChatTemplate(req.params.id);
+      res.json({ ok: true });
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.post('/api/admin/chat/templates/:id/use', isAuthenticated, isAdmin, async (req: any, res) => {
+    try {
+      await storage.incrementChatTemplateUses(req.params.id);
+      res.json({ ok: true });
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.get('/api/admin/chat/settings', isAuthenticated, isAdmin, async (_req: any, res) => {
+    try {
+      const settings = await storage.getChatSettings();
+      res.json(settings);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.patch('/api/admin/chat/settings', isAuthenticated, isAdmin, async (req: any, res) => {
+    try {
+      const { greeting, awayMessage, autoAssign, workingHours, botEnabled,
+        telegramBotToken, telegramChatId, telegramEnabled,
+        telegramNotifyNewConversation, telegramNotifyNewMessage,
+        telegramNotifyPurchase, telegramNotifyTopup, telegramNotifyReview, telegramNotifyCourseRequest } = req.body;
+      const updates: any = {};
+      if (greeting !== undefined) updates.greeting = greeting;
+      if (awayMessage !== undefined) updates.awayMessage = awayMessage;
+      if (autoAssign !== undefined) updates.autoAssign = autoAssign;
+      if (workingHours !== undefined) updates.workingHours = workingHours;
+      if (botEnabled !== undefined) updates.botEnabled = botEnabled;
+      if (telegramBotToken !== undefined) updates.telegramBotToken = telegramBotToken;
+      if (telegramChatId !== undefined) updates.telegramChatId = telegramChatId;
+      if (telegramEnabled !== undefined) updates.telegramEnabled = telegramEnabled;
+      if (telegramNotifyNewConversation !== undefined) updates.telegramNotifyNewConversation = telegramNotifyNewConversation;
+      if (telegramNotifyNewMessage !== undefined) updates.telegramNotifyNewMessage = telegramNotifyNewMessage;
+      if (telegramNotifyPurchase !== undefined) updates.telegramNotifyPurchase = telegramNotifyPurchase;
+      if (telegramNotifyTopup !== undefined) updates.telegramNotifyTopup = telegramNotifyTopup;
+      if (telegramNotifyReview !== undefined) updates.telegramNotifyReview = telegramNotifyReview;
+      if (telegramNotifyCourseRequest !== undefined) updates.telegramNotifyCourseRequest = telegramNotifyCourseRequest;
+      const settings = await storage.updateChatSettings(updates);
+      clearTelegramConfigCache();
+      res.json(settings);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.post('/api/admin/chat/telegram/test', isAuthenticated, isAdmin, async (req: any, res) => {
+    try {
+      const { botToken, chatId } = req.body;
+      if (!botToken || !chatId) return res.status(400).json({ ok: false, error: "Укажите токен бота и Chat ID" });
+      const result = await testTelegramConnection(botToken, chatId);
+      res.json(result);
+    } catch (e: any) { res.status(500).json({ ok: false, error: e.message }); }
+  });
+
+  app.get('/api/admin/chat/admins', isAuthenticated, isAdmin, async (_req: any, res) => {
+    try {
+      const admins = await db.select({
+        id: users.id,
+        firstName: users.firstName,
+        lastName: users.lastName,
+        email: users.email,
+        isAdmin: users.isAdmin,
+      }).from(users).where(eq(users.isAdmin, true));
+      res.json(admins);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
 
   const httpServer = createServer(app);
   return httpServer;

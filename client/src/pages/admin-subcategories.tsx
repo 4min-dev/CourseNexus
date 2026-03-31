@@ -21,6 +21,7 @@ import { Course } from "@shared/schema";
 import { formatPrice } from "@/lib/formatPrice";
 import { Switch } from "@/components/ui/switch";
 import { stripHtml } from "./admin-courses";
+import { debugLog } from "@/lib/debug";
 
 interface Category {
   id: string;
@@ -174,7 +175,7 @@ export default function AdminSubcategories() {
     enabled: !!categoryId,
   })
 
-  console.log('courses', courses)
+  debugLog('courses', courses)
 
   const handleCreate = () => {
     if (!addFormData.name || !addFormData.nameEn) {
@@ -243,7 +244,7 @@ export default function AdminSubcategories() {
   // Фильтрация: курсы, у которых level содержит categoryId или parentId, И подкатегорий нет (пустой массив)
   const coursesWithoutSubcategory = useMemo(() => {
     if (!courses || courses.length === 0) {
-      console.log('[coursesWithoutSubcategory] Нет курсов для обработки');
+      debugLog('[coursesWithoutSubcategory] Нет курсов для обработки');
       return [];
     }
 
@@ -258,46 +259,46 @@ export default function AdminSubcategories() {
         const hasParentId = parentId ? isLevelArray && level.includes(parentId) : false;
         const matchesLevel = hasCategoryId || hasParentId;
 
-        console.log(`[coursesWithoutSubcategory] Курс: "${course.title}" (ID: ${course.id})`);
-        console.log(`  → level:`, level);
-        console.log(`  → matchesLevel: ${matchesLevel} (categoryId: ${hasCategoryId}, parentId: ${hasParentId})`);
-        console.log(`  → subcatIds:`, subcatIds);
-        console.log(`  → query status: loading=${query.isLoading}, error=${query.isError}, success=${query.isSuccess}`);
+        debugLog(`[coursesWithoutSubcategory] Курс: "${course.title}" (ID: ${course.id})`);
+        debugLog(`  → level:`, level);
+        debugLog(`  → matchesLevel: ${matchesLevel} (categoryId: ${hasCategoryId}, parentId: ${hasParentId})`);
+        debugLog(`  → subcatIds:`, subcatIds);
+        debugLog(`  → query status: loading=${query.isLoading}, error=${query.isError}, success=${query.isSuccess}`);
 
         // Причина исключения
         if (!matchesLevel) {
-          console.log(`  ❌ Исключён: не соответствует level (categoryId=${categoryId}, parentId=${parentId})`);
+          debugLog(`  ❌ Исключён: не соответствует level (categoryId=${categoryId}, parentId=${parentId})`);
           return null;
         }
 
         if (query.isLoading) {
-          console.log(`  ⏳ Исключён временно: подкатегории ещё загружаются`);
+          debugLog(`  ⏳ Исключён временно: подкатегории ещё загружаются`);
           return null;
         }
 
         if (query.isError) {
-          console.log(`  ❌ Исключён: ошибка загрузки подкатегорий`);
+          debugLog(`  ❌ Исключён: ошибка загрузки подкатегорий`);
           return null;
         }
 
         if (!course.level?.includes(categoryId)) {
-          console.log(`  ❌ Исключён: не из этой категории:`, subcatIds);
+          debugLog(`  ❌ Исключён: не из этой категории:`, subcatIds);
           return null;
         }
 
         if (subcatIds.length > 0 && subcategories?.some(sub => subcatIds.includes(sub.id))) {
-          console.log(`  ❌ Исключён: есть подкатегории (${subcatIds.length}):`, subcatIds);
+          debugLog(`  ❌ Исключён: есть подкатегории (${subcatIds.length}):`, subcatIds);
           return null;
         }
 
-        console.log(`  ✅ Включён: нет подкатегорий и соответствует level`);
+        debugLog(`  ✅ Включён: нет подкатегорий и соответствует level`);
         return course;
       })
       .filter(Boolean) as Course[];
   }, [courses, subcategoriesQueries, categoryId, parentId]);
 
   useEffect(() => {
-    console.log('[coursesWithoutSubcategory] Финальный список:', coursesWithoutSubcategory.map(c => ({ title: c.title, id: c.id })));
+    debugLog('[coursesWithoutSubcategory] Финальный список:', coursesWithoutSubcategory.map(c => ({ title: c.title, id: c.id })));
   }, [coursesWithoutSubcategory]);
 
   return (

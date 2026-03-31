@@ -3,7 +3,7 @@ import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { ShoppingBag, Search, BookOpen, Gift, User, LogOut, Menu, ExternalLink, Link2, RefreshCw, Target, Settings, Bell, Handshake, ChevronDown, Store, Sparkles, Package, Headphones } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
-import { useState, useEffect } from "react";
+import { useState, useEffect, type MouseEvent } from "react";
 import { Input } from "@/components/ui/input";
 import { useQuery } from "@tanstack/react-query";
 import type { MenuItem, TradeInPageContent } from "@shared/schema";
@@ -32,8 +32,10 @@ import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { formatDistanceToNow } from "date-fns";
 import { ru } from "date-fns/locale";
+import { useLogout } from "@/hooks/useLogout";
 
 interface HeaderProps {
+  searchQuery?: string,
   onSearchChange?: (query: string) => void;
   onMenuToggle?: () => void;
   onResetFilters?: () => void;
@@ -52,14 +54,23 @@ interface Notification {
   createdAt: string;
 }
 
-export function Header({ onSearchChange, onMenuToggle, onResetFilters, onOpenFilters }: HeaderProps) {
+export function Header({ searchQuery = '', onSearchChange, onMenuToggle, onResetFilters, onOpenFilters }: HeaderProps) {
   const [location] = useLocation();
   const { user } = useAuth();
-  const [searchQuery, setSearchQuery] = useState("");
   const [openDropdown, setOpenDropdown] = useState<string | null>(null);
   const [closeTimeout, setCloseTimeout] = useState<NodeJS.Timeout | null>(null);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
+  const [isPageVisible, setIsPageVisible] = useState(() =>
+    typeof document === "undefined" ? true : document.visibilityState === "visible"
+  );
+  const [isPerfLow] = useState(() => {
+    try {
+      return typeof document !== "undefined" && document.documentElement.classList.contains("perf-low");
+    } catch {
+      return false;
+    }
+  });
 
   const { data: menuItems } = useQuery<MenuItem[]>({
     queryKey: ["/api/menu-items"],
@@ -69,19 +80,24 @@ export function Header({ onSearchChange, onMenuToggle, onResetFilters, onOpenFil
     queryKey: ['/api/trade-in-content'],
   });
 
+  const mobilePollingInterval = isPageVisible ? 120000 : false;
+
   const { data: unreadCount } = useQuery<{ count: number }>({
     queryKey: ['/api/notifications/unread-count'],
-    refetchInterval: 30000, // Обновлять каждые 30 секунд
+    refetchInterval: isMobile ? mobilePollingInterval : 30000,
+    refetchOnWindowFocus: true,
   });
 
   const { data: notifications } = useQuery<Notification[]>({
     queryKey: ['/api/notifications'],
-    refetchInterval: 30000, // Обновлять каждые 30 секунд
+    refetchInterval: isMobile ? mobilePollingInterval : 30000,
+    refetchOnWindowFocus: true,
   });
 
   const { data: newLibraryCount } = useQuery<{ count: number }>({
     queryKey: ['/api/library/new-count'],
-    refetchInterval: 30000, // Обновлять каждые 30 секунд
+    refetchInterval: isMobile ? mobilePollingInterval : 30000,
+    refetchOnWindowFocus: true,
     enabled: !!user, // Только если пользователь авторизован
   });
 
@@ -89,6 +105,8 @@ export function Header({ onSearchChange, onMenuToggle, onResetFilters, onOpenFil
     queryKey: ['/api/awards'],
     staleTime: 300000, // Кэшировать награды на 5 минут
   });
+
+  const logout = useLogout()
 
   useEffect(() => {
     const checkMobile = () => {
@@ -99,9 +117,27 @@ export function Header({ onSearchChange, onMenuToggle, onResetFilters, onOpenFil
     return () => window.removeEventListener('resize', checkMobile);
   }, []);
 
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      setIsPageVisible(document.visibilityState === "visible");
+    };
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () => document.removeEventListener("visibilitychange", handleVisibilityChange);
+  }, []);
+
   const handleSearchChange = (value: string) => {
-    setSearchQuery(value);
     onSearchChange?.(value);
+  };
+
+  const handleShopNavigation = (e: MouseEvent) => {
+    // Mobile SPA transition into /shop is prone to jank in this project.
+    // Use full reload for parity with manual refresh behavior.
+    if (typeof window !== "undefined" && window.innerWidth < 1024) {
+      e.preventDefault();
+      window.location.assign("/shop");
+      return;
+    }
+    onResetFilters?.();
   };
 
   const handleDropdownEnter = (dropdown: string) => {
@@ -120,7 +156,7 @@ export function Header({ onSearchChange, onMenuToggle, onResetFilters, onOpenFil
   };
 
   const getNotificationLink = (notification: Notification) => {
-    if (!notification.relatedId || !notification.relatedType) return null;
+    if (!notification.relatedId && !notification.relatedType) return null;
 
     switch (notification.relatedType) {
       case 'course':
@@ -129,6 +165,8 @@ export function Header({ onSearchChange, onMenuToggle, onResetFilters, onOpenFil
         return `/package/${notification.relatedId}`;
       case 'course_request':
         return `/sniper`;
+      case 'shop':
+        return `/shop`
       default:
         return null;
     }
@@ -137,11 +175,11 @@ export function Header({ onSearchChange, onMenuToggle, onResetFilters, onOpenFil
   const getIconForMenuItem = (item: MenuItem) => {
     if (item.isExternal) return ExternalLink;
     if (!item.href) return Menu;
-    
+
     if (item.href === "/shop") return ShoppingBag;
     if (item.href === "/library") return BookOpen;
     if (item.href === "/bonuses") return Gift;
-    
+
     return Link2;
   };
 
@@ -173,71 +211,70 @@ export function Header({ onSearchChange, onMenuToggle, onResetFilters, onOpenFil
   return (
     <header className="sticky top-0 z-[100] border-b border-border/40 overflow-hidden w-full">
       {/* Glowing gradient orbs - background layer */}
-      <div className="absolute inset-0 pointer-events-none">
-        <div className="absolute -top-10 left-1/4 w-96 h-96 bg-gradient-to-br from-purple-500/40 via-pink-500/40 to-transparent rounded-full blur-3xl animate-pulse" />
-        <div className="absolute -top-16 right-1/4 w-80 h-80 bg-gradient-to-br from-blue-500/35 via-cyan-500/35 to-transparent rounded-full blur-3xl animate-pulse" style={{ animationDelay: '1s' }} />
-        <div className="absolute -top-12 left-1/2 w-72 h-72 bg-gradient-to-br from-violet-500/30 via-fuchsia-500/30 to-transparent rounded-full blur-3xl animate-pulse" style={{ animationDelay: '2s' }} />
-      </div>
-      
+      {!isPerfLow && (
+        <div className="absolute inset-0 pointer-events-none">
+          <div className="absolute -top-10 left-1/4 w-96 h-96 bg-gradient-to-br from-purple-500/40 via-pink-500/40 to-transparent rounded-full blur-3xl animate-pulse" />
+          <div className="absolute -top-16 right-1/4 w-80 h-80 bg-gradient-to-br from-blue-500/35 via-cyan-500/35 to-transparent rounded-full blur-3xl animate-pulse" style={{ animationDelay: '1s' }} />
+          <div className="absolute -top-12 left-1/2 w-72 h-72 bg-gradient-to-br from-violet-500/30 via-fuchsia-500/30 to-transparent rounded-full blur-3xl animate-pulse" style={{ animationDelay: '2s' }} />
+        </div>
+      )}
+
       {/* Glassmorphism layer with backdrop blur */}
-      <div className="absolute inset-0 bg-gradient-to-r from-background/70 via-background/50 to-background/70 backdrop-blur-xl border-t border-white/5" 
-           style={{
-             backdropFilter: 'blur(24px) saturate(180%)',
-             WebkitBackdropFilter: 'blur(24px) saturate(180%)'
-           }} 
+      <div className="absolute inset-0 bg-gradient-to-r from-background/70 via-background/50 to-background/70 backdrop-blur-xl border-t border-white/5"
+        style={{
+          backdropFilter: isPerfLow ? 'blur(10px) saturate(140%)' : 'blur(24px) saturate(180%)',
+          WebkitBackdropFilter: isPerfLow ? 'blur(10px) saturate(140%)' : 'blur(24px) saturate(180%)'
+        }}
       />
-      
+
       {/* Subtle shine effect on top */}
       <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-white/30 to-transparent" />
-      
+
       {/* Content layer */}
       <div className="relative mx-auto px-0.5 sm:px-1 md:px-2 lg:px-4" style={{ maxWidth: '1690px' }}>
-        <div className="flex items-center justify-between h-12 sm:h-14 md:h-16 lg:h-20 gap-0.5 sm:gap-1 md:gap-2 lg:gap-4">
+        <div className="flex items-center justify-between h-9 sm:h-10  lg:h-20 gap-0.5 sm:gap-1 md:gap-2 lg:gap-4">
           <div className="flex items-center gap-0.5 sm:gap-1 md:gap-2 lg:gap-4 flex-shrink-0">
             <Button
               variant="ghost"
-              size="icon"
-              className="lg:hidden h-6 w-6 sm:h-7 sm:w-7 md:h-8 md:w-8 flex-shrink-0"
+              className="lg:hidden p-2 "
               onClick={() => setIsMobileMenuOpen(true)}
               data-testid="button-menu-toggle"
             >
-              <Menu className="h-3 w-3 sm:h-3.5 sm:w-3.5 md:h-4 md:w-4" />
+              <Menu size={21} style={{ width: 21, height: 21, minWidth: 21, minHeight: 21 }} />
             </Button>
-            
-            <Link href="/shop" onClick={onResetFilters}>
+
+            <Link href="/shop" onClick={handleShopNavigation}>
               <div className="hover-elevate px-0.5 py-0.5 md:px-1 md:py-0.5 lg:px-2 lg:py-1 rounded-md transition-all cursor-pointer" data-testid="link-home">
                 <NeonLogo variant="gradient" />
               </div>
             </Link>
           </div>
 
-          <nav className="hidden md:flex items-center gap-0.5 lg:gap-1">
+          <nav className="hidden lg:flex items-center gap-0.5 xl:gap-1">
             {/* Магазин Dropdown */}
             <div
               onMouseEnter={() => handleDropdownEnter('shop')}
               onMouseLeave={handleDropdownLeave}
             >
-              <DropdownMenu 
+              <DropdownMenu
                 open={openDropdown === 'shop'}
                 modal={false}
               >
                 <DropdownMenuTrigger asChild>
-                  <Button 
-                    variant="ghost" 
-                    className={`gap-0.5 md:gap-1 uppercase font-semibold px-2 md:px-3 lg:px-4 py-1 md:py-1.5 lg:py-2 h-auto text-xs md:text-sm lg:text-base leading-normal rounded-none focus-visible:ring-0 focus-visible:ring-offset-0 outline-none border-0 no-default-hover-elevate ${
-                      ['/shop', '/programs'].includes(location)
-                        ? "text-blue-500 border-b-2 md:border-b-4 border-blue-500" 
-                        : "text-muted-foreground border-b-2 md:border-b-4 border-transparent hover:text-foreground"
-                    }`}
+                  <Button
+                    variant="ghost"
+                    className={`gap-0.5 lg:gap-1 uppercase font-semibold px-1.5 lg:px-2 xl:px-3 2xl:px-4 py-1 lg:py-1.5 xl:py-2 h-auto text-[11px] lg:text-xs xl:text-sm 2xl:text-base leading-normal rounded-none focus-visible:ring-0 focus-visible:ring-offset-0 outline-none border-0 no-default-hover-elevate ${['/shop', '/programs'].includes(location)
+                      ? "text-blue-500 border-b-2 lg:border-b-4 border-blue-500"
+                      : "text-muted-foreground border-b-2 lg:border-b-4 border-transparent hover:text-foreground"
+                      }`}
                     data-testid="dropdown-shop"
                   >
-                    <ShoppingBag className="h-3 w-3 md:h-4 md:w-4" />
-                    <span className="hidden sm:inline">Магазин</span>
-                    <span className="sm:hidden">Маг.</span>
-                    <ChevronDown className="h-2.5 w-2.5 md:h-3 md:w-3" />
+                    <ShoppingBag className="h-3 w-3 lg:h-3.5 lg:w-3.5 xl:h-4 xl:w-4" />
+                    <span>Магазин</span>
+                    <ChevronDown className="h-2.5 w-2.5 lg:h-3 lg:w-3" />
                   </Button>
                 </DropdownMenuTrigger>
-                <DropdownMenuContent 
+                <DropdownMenuContent
                   align="start"
                   sideOffset={2}
                   className="overflow-hidden rounded-xl border border-border/40 p-0 shadow-2xl min-w-[240px] bg-transparent"
@@ -249,11 +286,11 @@ export function Header({ onSearchChange, onMenuToggle, onResetFilters, onOpenFil
                 >
                   {/* Subtle shine effect on top */}
                   <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-white/30 to-transparent pointer-events-none" />
-                  
+
                   {/* Content layer */}
                   <div className="relative">
                     <DropdownMenuItem asChild className={`py-6 px-4 ${location === '/shop' ? 'border-b-2 border-blue-500' : ''}`}>
-                      <Link href="/shop">
+                      <Link href="/shop" onClick={handleShopNavigation}>
                         <div className={`flex items-center gap-3 cursor-pointer w-full uppercase font-semibold text-base ${location === '/shop' ? 'text-blue-500' : ''}`}>
                           <BookOpen className="h-5 w-5" />
                           <span>Курсы</span>
@@ -277,22 +314,20 @@ export function Header({ onSearchChange, onMenuToggle, onResetFilters, onOpenFil
             <Link href="/library">
               <div className="relative inline-flex">
                 <div
-                  className={`px-2 md:px-3 lg:px-4 py-1 md:py-1.5 lg:py-2 cursor-pointer transition-all uppercase font-semibold text-xs md:text-sm lg:text-base ${
-                    location === "/library"
-                      ? "text-blue-500 border-b-2 md:border-b-4 border-blue-500" 
-                      : "text-muted-foreground hover:text-foreground border-b-2 md:border-b-4 border-transparent"
-                  }`}
+                  className={`px-1.5 lg:px-2 xl:px-3 2xl:px-4 py-1 lg:py-1.5 xl:py-2 cursor-pointer transition-all uppercase font-semibold text-[11px] lg:text-xs xl:text-sm 2xl:text-base ${location === "/library"
+                    ? "text-blue-500 border-b-2 lg:border-b-4 border-blue-500"
+                    : "text-muted-foreground hover:text-foreground border-b-2 lg:border-b-4 border-transparent"
+                    }`}
                   data-testid="link-library"
                 >
-                  <span className="hidden sm:inline">Библиотека</span>
-                  <span className="sm:hidden">Библ.</span>
+                  <span>Библиотека</span>
                 </div>
                 {newLibraryCount && newLibraryCount.count > 0 && (
-                  <div 
-                    className="absolute -top-1 -right-1 h-4 w-4 md:h-5 md:w-5 rounded-full bg-red-600 flex items-center justify-center pointer-events-none"
+                  <div
+                    className="absolute -top-1 -right-1 h-4 w-4 lg:h-5 lg:w-5 rounded-full bg-red-600 flex items-center justify-center pointer-events-none"
                     data-testid="badge-new-library-count"
                   >
-                    <span className="text-[8px] md:text-[10px] font-bold text-white">
+                    <span className="text-[8px] lg:text-[10px] font-bold text-white">
                       {newLibraryCount.count > 9 ? '9+' : newLibraryCount.count}
                     </span>
                   </div>
@@ -305,27 +340,25 @@ export function Header({ onSearchChange, onMenuToggle, onResetFilters, onOpenFil
               onMouseEnter={() => handleDropdownEnter('activities')}
               onMouseLeave={handleDropdownLeave}
             >
-              <DropdownMenu 
+              <DropdownMenu
                 open={openDropdown === 'activities'}
                 modal={false}
               >
                 <DropdownMenuTrigger asChild>
-                  <Button 
-                    variant="ghost" 
-                    className={`gap-0.5 md:gap-1 uppercase font-semibold px-2 md:px-3 lg:px-4 py-1 md:py-1.5 lg:py-2 h-auto text-xs md:text-sm lg:text-base leading-normal rounded-none focus-visible:ring-0 focus-visible:ring-offset-0 outline-none border-0 no-default-hover-elevate ${
-                      ['/bonuses', '/sniper', '/partners'].includes(location)
-                        ? "text-blue-500 border-b-2 md:border-b-4 border-blue-500" 
-                        : "text-muted-foreground border-b-2 md:border-b-4 border-transparent hover:text-foreground"
-                    }`}
+                  <Button
+                    variant="ghost"
+                    className={`gap-0.5 lg:gap-1 uppercase font-semibold px-1.5 lg:px-2 xl:px-3 2xl:px-4 py-1 lg:py-1.5 xl:py-2 h-auto text-[11px] lg:text-xs xl:text-sm 2xl:text-base leading-normal rounded-none focus-visible:ring-0 focus-visible:ring-offset-0 outline-none border-0 no-default-hover-elevate ${['/bonuses', '/sniper', '/partners'].includes(location)
+                      ? "text-blue-500 border-b-2 lg:border-b-4 border-blue-500"
+                      : "text-muted-foreground border-b-2 lg:border-b-4 border-transparent hover:text-foreground"
+                      }`}
                     data-testid="dropdown-activities"
                   >
-                    <Sparkles className="h-3 w-3 md:h-4 md:w-4" />
-                    <span className="hidden sm:inline">Активности</span>
-                    <span className="sm:hidden">Акт.</span>
-                    <ChevronDown className="h-2.5 w-2.5 md:h-3 md:w-3" />
+                    <Sparkles className="h-3 w-3 lg:h-3.5 lg:w-3.5 xl:h-4 xl:w-4" />
+                    <span>Активности</span>
+                    <ChevronDown className="h-2.5 w-2.5 lg:h-3 lg:w-3" />
                   </Button>
                 </DropdownMenuTrigger>
-                <DropdownMenuContent 
+                <DropdownMenuContent
                   align="start"
                   sideOffset={2}
                   className="overflow-hidden rounded-xl border border-border/40 p-0 shadow-2xl min-w-[240px] bg-transparent"
@@ -337,7 +370,7 @@ export function Header({ onSearchChange, onMenuToggle, onResetFilters, onOpenFil
                 >
                   {/* Subtle shine effect on top */}
                   <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-white/30 to-transparent pointer-events-none" />
-                  
+
                   {/* Content layer */}
                   <div className="relative">
                     <DropdownMenuItem asChild className={`py-6 px-4 ${location === '/bonuses' ? 'border-b-2 border-blue-500' : ''}`}>
@@ -352,18 +385,18 @@ export function Header({ onSearchChange, onMenuToggle, onResetFilters, onOpenFil
                       <Link href="/sniper">
                         <div className={`flex items-center gap-3 cursor-pointer w-full uppercase font-semibold text-base ${location === '/sniper' ? 'text-blue-500' : ''}`}>
                           <div className="relative h-5 w-5">
-                            <Target className="h-5 w-5 text-transparent bg-gradient-to-r from-purple-500 via-pink-500 to-purple-500 bg-clip-text" 
-                                    style={{
-                                      WebkitBackgroundClip: 'text',
-                                      WebkitTextFillColor: 'transparent',
-                                      backgroundClip: 'text'
-                                    }} 
+                            <Target className="h-5 w-5 text-transparent bg-gradient-to-r from-purple-500 via-pink-500 to-purple-500 bg-clip-text"
+                              style={{
+                                WebkitBackgroundClip: 'text',
+                                WebkitTextFillColor: 'transparent',
+                                backgroundClip: 'text'
+                              }}
                             />
-                            <Target className="h-5 w-5 absolute inset-0" 
-                                    style={{
-                                      stroke: 'url(#sniper-gradient)',
-                                      fill: 'none'
-                                    }}
+                            <Target className="h-5 w-5 absolute inset-0"
+                              style={{
+                                stroke: 'url(#sniper-gradient)',
+                                fill: 'none'
+                              }}
                             />
                             <svg width="0" height="0" style={{ position: 'absolute' }}>
                               <defs>
@@ -391,44 +424,42 @@ export function Header({ onSearchChange, onMenuToggle, onResetFilters, onOpenFil
                 </DropdownMenuContent>
               </DropdownMenu>
             </div>
-            
+
             {/* Trade-In Button with Gradient */}
             <Link href="/trade-in">
-              <Button 
+              <Button
                 size="sm"
-                className="gap-0.5 md:gap-1 lg:gap-2 bg-gradient-to-r from-purple-600 to-pink-600 text-white shadow-lg shadow-purple-500/30 ml-1 md:ml-2 px-2 md:px-3 lg:px-4 h-auto py-1 md:py-1.5 lg:py-2 text-xs md:text-sm"
+                className="gap-0.5 lg:gap-1 xl:gap-2 bg-gradient-to-r from-purple-600 to-pink-600 text-white shadow-lg shadow-purple-500/30 ml-1 lg:ml-2 px-1.5 lg:px-2 xl:px-3 2xl:px-4 h-auto py-1 lg:py-1.5 xl:py-2 text-[11px] lg:text-xs xl:text-sm"
                 data-testid="button-trade-in"
               >
-                <RefreshCw className="h-3 w-3 md:h-4 md:w-4" />
-                <span className="hidden sm:inline">Trade-In</span>
-                <span className="sm:hidden">TI</span>
+                <RefreshCw className="h-3 w-3 lg:h-3.5 lg:w-3.5 xl:h-4 xl:w-4" />
+                <span>Trade-In</span>
               </Button>
             </Link>
           </nav>
 
           {/* Desktop Search */}
-          <div className="flex-1 max-w-xl mx-2 md:mx-4 hidden lg:block">
-            <div className={`relative rounded-xl overflow-hidden ${
-              (location === "/shop" || location === "/library") ? "visible" : "invisible"
-            }`}>
+          <div className="flex-1 max-w-md xl:max-w-lg 2xl:max-w-xl mx-2 lg:mx-3 xl:mx-4 hidden lg:block">
+            <div className={`relative rounded-xl overflow-hidden ${(location === "/shop" || location === "/library") ? "visible" : "invisible"
+              }`}>
               {/* Glassmorphism layer with backdrop blur */}
-              <div className="absolute inset-0 bg-gradient-to-r from-background/40 via-background/30 to-background/40 border border-border/40 rounded-xl" 
-                   style={{
-                     backdropFilter: 'blur(24px) saturate(180%)',
-                     WebkitBackdropFilter: 'blur(24px) saturate(180%)'
-                   }} 
+              <div className="absolute inset-0 bg-gradient-to-r from-background/40 via-background/30 to-background/40 border border-border/40 rounded-xl"
+                style={{
+                  backdropFilter: 'blur(24px) saturate(180%)',
+                  WebkitBackdropFilter: 'blur(24px) saturate(180%)'
+                }}
               />
-              
+
               {/* Subtle shine effect on top */}
               <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-white/30 to-transparent rounded-t-xl" />
-              
+
               {/* Content layer */}
               <div className="relative">
-                <Search className="absolute left-2 md:left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 md:h-4 md:w-4 text-muted-foreground z-10" />
+                <Search className="absolute left-2 lg:left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 lg:h-4 lg:w-4 text-muted-foreground z-10" />
                 <Input
                   type="search"
                   placeholder="Поиск курсов..."
-                  className="pl-8 md:pl-10 pr-2 text-sm md:text-base bg-transparent border-0 focus-visible:ring-0 relative h-8 md:h-10"
+                  className="pl-8 lg:pl-10 pr-2 text-sm lg:text-base bg-transparent border-0 focus-visible:ring-0 relative h-8 lg:h-10"
                   value={searchQuery}
                   onChange={(e) => handleSearchChange(e.target.value)}
                   data-testid="input-search"
@@ -439,20 +470,19 @@ export function Header({ onSearchChange, onMenuToggle, onResetFilters, onOpenFil
 
           {/* Mobile Search */}
           <div className="flex-1 min-w-0 mx-0.5 sm:mx-1 md:mx-2 lg:hidden">
-            <div className={`relative rounded-lg sm:rounded-xl overflow-hidden ${
-              (location === "/shop" || location === "/library") ? "visible" : "invisible"
-            }`}>
+            <div className={`relative rounded-lg sm:rounded-xl overflow-hidden ${(location === "/shop" || location === "/library") ? "visible" : "invisible"
+              }`}>
               {/* Glassmorphism layer with backdrop blur */}
-              <div className="absolute inset-0 bg-gradient-to-r from-background/40 via-background/30 to-background/40 border border-border/40 rounded-lg sm:rounded-xl" 
-                   style={{
-                     backdropFilter: 'blur(24px) saturate(180%)',
-                     WebkitBackdropFilter: 'blur(24px) saturate(180%)'
-                   }} 
+              <div className="absolute inset-0 bg-gradient-to-r from-background/40 via-background/30 to-background/40 border border-border/40 rounded-lg sm:rounded-xl"
+                style={{
+                  backdropFilter: 'blur(24px) saturate(180%)',
+                  WebkitBackdropFilter: 'blur(24px) saturate(180%)'
+                }}
               />
-              
+
               {/* Subtle shine effect on top */}
               <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-white/30 to-transparent rounded-t-lg sm:rounded-t-xl" />
-              
+
               {/* Content layer */}
               <div className="relative">
                 <Search className="absolute left-1.5 sm:left-2 top-1/2 -translate-y-1/2 h-3 w-3 sm:h-3.5 sm:w-3.5 text-muted-foreground z-10" />
@@ -468,26 +498,26 @@ export function Header({ onSearchChange, onMenuToggle, onResetFilters, onOpenFil
             </div>
           </div>
 
-          <div className="flex items-center gap-0.5 sm:gap-1 md:gap-1.5 lg:gap-2 flex-shrink-0">
+          <div className="flex items-center gap-0.5 sm:gap-1 lg:gap-1.5 xl:gap-2 flex-shrink-0">
             {/* Balance */}
             <Tooltip>
               <TooltipTrigger asChild>
-                <div className="hidden md:block relative rounded-lg md:rounded-xl overflow-hidden cursor-help">
+                <a href="/payment" className="hidden lg:block relative rounded-lg xl:rounded-xl overflow-hidden cursor-pointer">
                   {/* Glassmorphism layer */}
-                  <div className="absolute inset-0 bg-gradient-to-r from-background/40 via-background/30 to-background/40 border border-border/40 rounded-lg md:rounded-xl" 
-                       style={{
-                         backdropFilter: 'blur(24px) saturate(180%)',
-                         WebkitBackdropFilter: 'blur(24px) saturate(180%)'
-                       }} 
+                  <div className="absolute inset-0 bg-gradient-to-r from-background/40 via-background/30 to-background/40 border border-border/40 rounded-lg xl:rounded-xl"
+                    style={{
+                      backdropFilter: 'blur(24px) saturate(180%)',
+                      WebkitBackdropFilter: 'blur(24px) saturate(180%)'
+                    }}
                   />
                   {/* Subtle shine effect */}
-                  <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-white/30 to-transparent rounded-t-lg md:rounded-t-xl" />
+                  <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-white/30 to-transparent rounded-t-lg xl:rounded-t-xl" />
                   {/* Content */}
-                  <div className="relative flex items-center gap-0.5 md:gap-1 lg:gap-2 px-1.5 py-0.5 md:px-2 md:py-1 lg:px-3 lg:py-1.5">
-                    <span className="text-[10px] md:text-xs lg:text-sm text-muted-foreground hidden xl:inline">Баланс:</span>
-                    <span className="text-[10px] md:text-xs lg:text-sm font-semibold whitespace-nowrap" data-testid="text-balance">{formatPrice(totalBalance)} ₽</span>
+                  <div className="relative flex items-center gap-0.5 lg:gap-1 xl:gap-2 px-1.5 py-0.5 lg:px-2 lg:py-1 xl:px-3 xl:py-1.5">
+                    <span className="text-[10px] lg:text-xs xl:text-sm text-muted-foreground hidden 2xl:inline">Баланс:</span>
+                    <span className="text-[10px] lg:text-xs xl:text-sm font-semibold whitespace-nowrap" data-testid="text-balance">{formatPrice(totalBalance)} ₽</span>
                   </div>
-                </div>
+                </a>
               </TooltipTrigger>
               <TooltipContent>
                 <p>Основной баланс для покупки курсов</p>
@@ -498,22 +528,22 @@ export function Header({ onSearchChange, onMenuToggle, onResetFilters, onOpenFil
             {/* Fantiks */}
             <Tooltip>
               <TooltipTrigger asChild>
-                <div className="hidden md:block relative rounded-lg md:rounded-xl overflow-hidden cursor-help">
+                <a href="/bonuses" className="hidden lg:block relative rounded-lg xl:rounded-xl overflow-hidden cursor-pointer">
                   {/* Glassmorphism layer */}
-                  <div className="absolute inset-0 bg-gradient-to-r from-background/40 via-background/30 to-background/40 border border-border/40 rounded-lg md:rounded-xl" 
-                       style={{
-                         backdropFilter: 'blur(24px) saturate(180%)',
-                         WebkitBackdropFilter: 'blur(24px) saturate(180%)'
-                       }} 
+                  <div className="absolute inset-0 bg-gradient-to-r from-background/40 via-background/30 to-background/40 border border-border/40 rounded-lg xl:rounded-xl"
+                    style={{
+                      backdropFilter: 'blur(24px) saturate(180%)',
+                      WebkitBackdropFilter: 'blur(24px) saturate(180%)'
+                    }}
                   />
                   {/* Subtle shine effect */}
-                  <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-white/30 to-transparent rounded-t-lg md:rounded-t-xl" />
+                  <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-white/30 to-transparent rounded-t-lg xl:rounded-t-xl" />
                   {/* Content */}
-                  <div className="relative flex items-center gap-0.5 md:gap-1 lg:gap-2 px-1.5 py-0.5 md:px-2 md:py-1 lg:px-3 lg:py-1.5">
-                    <Gift className="h-3 w-3 md:h-3.5 md:w-3.5 lg:h-4 lg:w-4 text-purple-500 flex-shrink-0" />
-                    <span className="text-[10px] md:text-xs lg:text-sm font-semibold text-purple-600 dark:text-purple-400" data-testid="text-fantiks">{user?.fantiks || 0}</span>
+                  <div className="relative flex items-center gap-0.5 lg:gap-1 xl:gap-2 px-1.5 py-0.5 lg:px-2 lg:py-1 xl:px-3 xl:py-1.5">
+                    <Gift className="h-3 w-3 lg:h-3.5 lg:w-3.5 xl:h-4 xl:w-4 text-purple-500 flex-shrink-0" />
+                    <span className="text-[10px] lg:text-xs xl:text-sm font-semibold text-purple-600 dark:text-purple-400" data-testid="text-fantiks">{user?.fantiks || 0}</span>
                   </div>
-                </div>
+                </a>
               </TooltipTrigger>
               <TooltipContent>
                 <p>Фантики — бонусная валюта</p>
@@ -528,14 +558,14 @@ export function Header({ onSearchChange, onMenuToggle, onResetFilters, onOpenFil
                   <Button
                     variant="ghost"
                     size="icon"
-                    className="hidden sm:flex h-7 w-7 md:h-8 md:w-8 lg:h-9 lg:w-9"
+                    className="hidden sm:flex h-7 w-7 lg:h-8 lg:w-8 xl:h-9 xl:w-9"
                     data-testid="button-notifications"
                     title="Уведомления"
                   >
-                    <Bell className="h-3.5 w-3.5 md:h-4 md:w-4 lg:h-5 lg:w-5" />
+                    <Bell className="h-3.5 w-3.5 lg:h-4 lg:w-4 xl:h-5 xl:w-5" />
                   </Button>
                   {unreadCount && unreadCount.count > 0 && (
-                    <div 
+                    <div
                       className="absolute -top-0.5 -right-0.5 md:-top-1 md:-right-1 h-4 w-4 md:h-5 md:w-5 rounded-full bg-red-600 flex items-center justify-center pointer-events-none"
                       data-testid="badge-notification-count"
                     >
@@ -563,9 +593,8 @@ export function Header({ onSearchChange, onMenuToggle, onResetFilters, onOpenFil
                         return (
                           <div
                             key={notification.id}
-                            className={`p-4 hover-elevate cursor-pointer transition-colors ${
-                              !notification.isRead ? 'bg-blue-50/50 dark:bg-blue-950/20' : ''
-                            }`}
+                            className={`p-4 hover-elevate cursor-pointer transition-colors ${!notification.isRead ? 'bg-blue-50/50 dark:bg-blue-950/20' : ''
+                              }`}
                             data-testid={`notification-item-${notification.id}`}
                           >
                             {link ? (
@@ -642,12 +671,12 @@ export function Header({ onSearchChange, onMenuToggle, onResetFilters, onOpenFil
             <Button
               variant="ghost"
               size="icon"
-              className="hidden sm:flex h-7 w-7 md:h-8 md:w-8 lg:h-9 lg:w-9"
+              className="hidden sm:flex h-7 w-7 lg:h-8 lg:w-8 xl:h-9 xl:w-9"
               onClick={() => window.open(tradeInContent?.telegramUrl || 'https://t.me/vkurse_support', '_blank')}
               data-testid="button-support"
               title="Техподдержка"
             >
-              <Headphones className="h-3.5 w-3.5 md:h-4 md:w-4 lg:h-5 lg:w-5" />
+              <Headphones className="h-3.5 w-3.5 lg:h-4 lg:w-4 xl:h-5 xl:w-5" />
             </Button>
 
             {/* User Avatar Dropdown - Hidden on mobile */}
@@ -655,104 +684,104 @@ export function Header({ onSearchChange, onMenuToggle, onResetFilters, onOpenFil
               <DropdownMenu>
                 <TooltipTrigger asChild>
                   <DropdownMenuTrigger asChild>
-                    <div className="hidden md:block relative rounded-lg md:rounded-xl overflow-hidden cursor-pointer">
+                    <div className="hidden lg:block relative rounded-lg xl:rounded-xl overflow-hidden cursor-pointer">
                       {/* Glassmorphism layer */}
-                      <div className="absolute inset-0 bg-gradient-to-r from-background/40 via-background/30 to-background/40 border border-border/40 rounded-lg md:rounded-xl" 
-                           style={{
-                             backdropFilter: 'blur(24px) saturate(180%)',
-                             WebkitBackdropFilter: 'blur(24px) saturate(180%)'
-                           }} 
+                      <div className="absolute inset-0 bg-gradient-to-r from-background/40 via-background/30 to-background/40 border border-border/40 rounded-lg xl:rounded-xl"
+                        style={{
+                          backdropFilter: 'blur(24px) saturate(180%)',
+                          WebkitBackdropFilter: 'blur(24px) saturate(180%)'
+                        }}
                       />
                       {/* Subtle shine effect */}
-                      <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-white/30 to-transparent rounded-t-lg md:rounded-t-xl" />
+                      <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-white/30 to-transparent rounded-t-lg xl:rounded-t-xl" />
                       {/* Content */}
-                      <div className="relative flex items-center gap-1 md:gap-1.5 lg:gap-2 px-1.5 py-0.5 md:px-2 md:py-1 lg:px-3 lg:py-2 hover-elevate active-elevate-2" data-testid="button-user-menu">
+                      <div className="relative flex items-center gap-1 lg:gap-1.5 xl:gap-2 px-1.5 py-0.5 lg:px-2 lg:py-1 xl:px-3 xl:py-2 hover-elevate active-elevate-2" data-testid="button-user-menu">
                         {selectedAward ? (
-                          <AwardIcon emoji={selectedAward.imageUrl} rarity={selectedAward.rarity} size={24} className="md:w-7 md:h-7 lg:w-8 lg:h-8" />
+                          <AwardIcon emoji={selectedAward.imageUrl} rarity={selectedAward.rarity} size={24} className="lg:w-7 lg:h-7 xl:w-8 xl:h-8" />
                         ) : (
-                          <Avatar className="h-6 w-6 md:h-7 md:w-7 lg:h-8 lg:w-8 rounded-full">
+                          <Avatar className="h-6 w-6 lg:h-7 lg:w-7 xl:h-8 xl:w-8 rounded-full">
                             <AvatarImage src={user?.profileImageUrl || undefined} />
-                            <AvatarFallback className="text-[10px] md:text-xs">{userInitials}</AvatarFallback>
+                            <AvatarFallback className="text-[10px] lg:text-xs">{userInitials}</AvatarFallback>
                           </Avatar>
                         )}
-                        <div className="hidden lg:flex flex-col items-start">
-                          <span className="text-[10px] md:text-xs font-medium leading-none">Настройки</span>
-                          <span className="text-[9px] md:text-xs text-muted-foreground leading-none mt-0.5">профиля</span>
+                        <div className="hidden 2xl:flex flex-col items-start">
+                          <span className="text-[10px] lg:text-xs font-medium leading-none">Настройки</span>
+                          <span className="text-[9px] lg:text-xs text-muted-foreground leading-none mt-0.5">профиля</span>
                         </div>
-                        <Settings className="h-3 w-3 md:h-3.5 md:w-3.5 lg:h-4 lg:w-4 text-muted-foreground hidden lg:block" />
+                        <Settings className="h-3 w-3 lg:h-3.5 lg:w-3.5 xl:h-4 xl:w-4 text-muted-foreground hidden 2xl:block" />
                       </div>
                     </div>
                   </DropdownMenuTrigger>
                 </TooltipTrigger>
-              <DropdownMenuContent align="end" className="w-56">
-                <div className="px-2 py-1.5">
-                  <p className="text-sm font-medium" data-testid="text-username">
-                    {user?.firstName && user?.lastName
-                      ? `${user.firstName} ${user.lastName}`
-                      : user?.email || "Пользователь"}
-                  </p>
-                  <p className="text-xs text-muted-foreground" data-testid="text-user-email">
-                    {user?.email}
-                  </p>
-                </div>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem asChild>
-                  <Link href="/profile">
-                    <span className="flex items-center cursor-pointer w-full" data-testid="link-profile">
-                      <User className="mr-2 h-4 w-4" />
-                      Мой профиль
-                    </span>
-                  </Link>
-                </DropdownMenuItem>
-                {user?.isAdmin && (
+                <DropdownMenuContent align="end" className="w-56">
+                  <div className="px-2 py-1.5">
+                    <p className="text-sm font-medium" data-testid="text-username">
+                      {user?.firstName && user?.lastName
+                        ? `${user.firstName} ${user.lastName}`
+                        : user?.email || "Пользователь"}
+                    </p>
+                    <p className="text-xs text-muted-foreground" data-testid="text-user-email">
+                      {user?.email}
+                    </p>
+                  </div>
+                  <DropdownMenuSeparator />
                   <DropdownMenuItem asChild>
-                    <Link href="/admin">
-                      <span className="flex items-center cursor-pointer w-full" data-testid="link-admin">
-                        <ShoppingBag className="mr-2 h-4 w-4" />
-                        Админ панель
+                    <Link href="/profile">
+                      <span className="flex items-center cursor-pointer w-full" data-testid="link-profile">
+                        <User className="mr-2 h-4 w-4" />
+                        Мой профиль
                       </span>
                     </Link>
                   </DropdownMenuItem>
-                )}
-                <DropdownMenuSeparator />
-                <DropdownMenuItem 
-                  onClick={() => {
-                    // Clear all Telegram reminder session flags before logout
-                    Object.keys(sessionStorage).forEach(key => {
-                      if (key.startsWith('telegramReminderShown:')) {
-                        sessionStorage.removeItem(key);
-                      }
-                    });
-                    // Redirect to logout
-                    window.location.href = '/api/logout';
-                  }}
-                  className="cursor-pointer"
-                  data-testid="button-logout"
-                >
-                  <LogOut className="mr-2 h-4 w-4" />
-                  Выйти
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
-            <TooltipContent>
-              <div className="text-sm">
-                <p className="font-medium mb-1">Настройки профиля</p>
-                <p className="text-xs text-muted-foreground">• Редактирование данных</p>
-                <p className="text-xs text-muted-foreground">• Баланс и пополнение</p>
-                <p className="text-xs text-muted-foreground">• Реферальная система</p>
-                <p className="text-xs text-muted-foreground">• Выход из аккаунта</p>
-              </div>
-            </TooltipContent>
-          </Tooltip>
+                  {user?.isAdmin && (
+                    <DropdownMenuItem asChild>
+                      <Link href="/admin">
+                        <span className="flex items-center cursor-pointer w-full" data-testid="link-admin">
+                          <ShoppingBag className="mr-2 h-4 w-4" />
+                          Админ панель
+                        </span>
+                      </Link>
+                    </DropdownMenuItem>
+                  )}
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem
+                    onClick={() => {
+                      // Clear all Telegram reminder session flags before logout
+                      Object.keys(sessionStorage).forEach(key => {
+                        if (key.startsWith('telegramReminderShown:')) {
+                          sessionStorage.removeItem(key);
+                        }
+                      });
+                      logout()
+                    }}
+                    className="cursor-pointer"
+                    data-testid="button-logout"
+                  >
+                    <LogOut className="mr-2 h-4 w-4" />
+                    Выйти
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+              <TooltipContent>
+                <div className="text-sm">
+                  <p className="font-medium mb-1">Настройки профиля</p>
+                  <p className="text-xs text-muted-foreground">• Редактирование данных</p>
+                  <p className="text-xs text-muted-foreground">• Баланс и пополнение</p>
+                  <p className="text-xs text-muted-foreground">• Реферальная система</p>
+                  <p className="text-xs text-muted-foreground">• Выход из аккаунта</p>
+                </div>
+              </TooltipContent>
+            </Tooltip>
           </div>
         </div>
       </div>
-      
+
       <MobileNavDrawer
         isOpen={isMobileMenuOpen}
         onClose={() => setIsMobileMenuOpen(false)}
         user={user}
         onOpenFilters={onOpenFilters}
+        logout={logout}
       />
     </header>
   );

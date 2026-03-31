@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
-import { useQuery, useMutation, useQueries } from "@tanstack/react-query";
+import { useQuery, useMutation } from "@tanstack/react-query";
 import { useRoute, useLocation } from "wouter";
-import { Card, CardContent, CardHeader, CardDescription } from "@/components/ui/card";
+import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -15,10 +15,11 @@ import { Header } from "@/components/header";
 import { Sidebar } from "@/components/sidebar";
 import { Footer } from "@/components/footer";
 import { useToast } from "@/hooks/use-toast";
-import { apiRequest, queryClient } from "@/lib/queryClient";
+import {  queryClient } from "@/lib/queryClient";
 import { Pagination } from "@/components/pagination";
 import { StarRating } from "@/components/star-rating";
-import { ViewingCounter } from "@/components/viewing-counter";
+import { TagsMarquee } from "@/components/ui/tags-marquee";
+import { debugLog } from "@/lib/debug";
 
 const COURSES_PER_PAGE = 12;
 
@@ -43,9 +44,10 @@ export default function VipCourseSelect() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [selectedCategories, setSelectedCategories] = useState<{
     platform?: string;
-    level?: string;
+    levels?: string[];
     year?: number;
     author?: string;
+    minRating?: number;
   }>({});
   const [searchQuery, setSearchQuery] = useState("");
   const [currentYearPage, setCurrentYearPage] = useState(1);
@@ -100,29 +102,59 @@ export default function VipCourseSelect() {
     queryKey: ["/api/favorites"],
   });
 
-  // Load available courses (exclude VIP packages and already purchased courses)
-  const { data: allCourses, isLoading: coursesLoading } = useQuery<Course[]>({
-    queryKey: ["/api/courses", "vip-selection", selectedCategories, searchQuery, "excludePurchased", "excludeVipPackages"],
+  const currentYear = new Date().getFullYear();
+
+  const { data: currentYearData, isLoading: currentYearLoading } = useQuery<{ courses: Course[]; total: number }>({
+    queryKey: ["/api/courses", "vip-selection", "current-year", selectedCategories, searchQuery, currentYearPage],
     queryFn: async () => {
       const params = new URLSearchParams();
       if (selectedCategories.platform) params.append("platform", selectedCategories.platform);
-      if (selectedCategories.level) params.append("level", selectedCategories.level);
-      if (selectedCategories.year) params.append("year", selectedCategories.year.toString());
+      if (selectedCategories.levels) params.append("level", selectedCategories.levels.join(','));
       if (selectedCategories.author) params.append("author", selectedCategories.author);
+      if (selectedCategories.minRating) params.append("minRating", selectedCategories.minRating.toString());
       if (searchQuery) params.append("search", searchQuery);
 
-      // Exclude VIP packages and already purchased courses
+      params.append("year", currentYear.toString());
       params.append("excludeVipPackages", "true");
       params.append("excludePurchased", "true");
+      params.append("limit", COURSES_PER_PAGE.toString());
+      params.append("offset", ((currentYearPage - 1) * COURSES_PER_PAGE).toString());
 
-      const url = `/api/courses${params.toString() ? `?${params.toString()}` : ""}`;
+      const url = `/api/courses?${params.toString()}`;
       const res = await fetch(url, { credentials: "include" });
       if (!res.ok) throw new Error("Failed to load courses");
-      return res.json();
+      const courses = await res.json();
+      const total = parseInt(res.headers.get("X-Total-Count") || "0", 10);
+      return { courses, total };
     },
   });
 
-  const currentYear = new Date().getFullYear();
+  const { data: previousYearsData, isLoading: previousYearsLoading } = useQuery<{ courses: Course[]; total: number }>({
+    queryKey: ["/api/courses", "vip-selection", "previous-years", selectedCategories, searchQuery, previousYearsPage],
+    queryFn: async () => {
+      const params = new URLSearchParams();
+      if (selectedCategories.platform) params.append("platform", selectedCategories.platform);
+      if (selectedCategories.levels) params.append("level", selectedCategories.levels.join(','));
+      if (selectedCategories.author) params.append("author", selectedCategories.author);
+      if (selectedCategories.minRating) params.append("minRating", selectedCategories.minRating.toString());
+      if (searchQuery) params.append("search", searchQuery);
+
+      params.append("excludeCurrentYear", currentYear.toString());
+      params.append("excludeVipPackages", "true");
+      params.append("excludePurchased", "true");
+      params.append("limit", COURSES_PER_PAGE.toString());
+      params.append("offset", ((previousYearsPage - 1) * COURSES_PER_PAGE).toString());
+
+      const url = `/api/courses?${params.toString()}`;
+      const res = await fetch(url, { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to load courses");
+      const courses = await res.json();
+      const total = parseInt(res.headers.get("X-Total-Count") || "0", 10);
+      return { courses, total };
+    },
+  });
+
+  const coursesLoading = currentYearLoading || previousYearsLoading;
 
   const { data: categories } = useQuery<Category[]>({
     queryKey: ["/api/categories"],
@@ -132,33 +164,28 @@ export default function VipCourseSelect() {
     queryKey: ["/api/subcategories"]
   })
 
-  // Get favorite courses that are available for VIP selection
-  const favoriteCourses = favorites
-    ?.map(f => f.course)
-    .filter(course => {
-      // Only include courses that are in the available courses list (not VIP packages, not purchased)
-      return allCourses?.some(c => c.id === course.id);
-    }) || [];
+  const favoriteIds = new Set(favorites?.map(f => f.courseId) || []);
 
-  const favoritesCurrentYear = favoriteCourses.filter(c => c.year === currentYear);
-  const favoritesPreviousYears = favoriteCourses.filter(c => c.year !== currentYear);
+  const paginatedCurrentYearCourses = (currentYearData?.courses || [])
+    .sort((a, b) => {
+      const aIsFav = favoriteIds.has(a.id) ? 0 : 1;
+      const bIsFav = favoriteIds.has(b.id) ? 0 : 1;
+      return aIsFav - bIsFav;
+    });
 
-  const currentYearCourses = allCourses?.filter(c => c.year === currentYear) || [];
-  const previousYearsCourses = allCourses?.filter(c => c.year !== currentYear) || [];
+  const paginatedPreviousYearsCourses = (previousYearsData?.courses || [])
+    .sort((a, b) => {
+      const aIsFav = favoriteIds.has(a.id) ? 0 : 1;
+      const bIsFav = favoriteIds.has(b.id) ? 0 : 1;
+      return aIsFav - bIsFav;
+    });
 
-  // Pagination for current year courses
-  const currentYearTotal = currentYearCourses.length;
+  const currentYearTotal = currentYearData?.total || 0;
   const currentYearTotalPages = Math.ceil(currentYearTotal / COURSES_PER_PAGE);
-  const currentYearStartIndex = (currentYearPage - 1) * COURSES_PER_PAGE;
-  const paginatedCurrentYearCourses = currentYearCourses.slice(currentYearStartIndex, currentYearStartIndex + COURSES_PER_PAGE);
 
-  // Pagination for previous years courses
-  const previousYearsTotal = previousYearsCourses.length;
+  const previousYearsTotal = previousYearsData?.total || 0;
   const previousYearsTotalPages = Math.ceil(previousYearsTotal / COURSES_PER_PAGE);
-  const previousYearsStartIndex = (previousYearsPage - 1) * COURSES_PER_PAGE;
-  const paginatedPreviousYearsCourses = previousYearsCourses.slice(previousYearsStartIndex, previousYearsStartIndex + COURSES_PER_PAGE);
 
-  // Reset to page 1 when filters change
   useEffect(() => {
     setCurrentYearPage(1);
     setPreviousYearsPage(1);
@@ -235,96 +262,7 @@ export default function VipCourseSelect() {
     setShowCourseDetails(true);
   };
 
-  const platformPrevYearsQueries = useQueries({
-    queries: previousYearsCourses.map((course) => ({
-      queryKey: ['course-platforms', course.id],
-      queryFn: async () => {
-        const response = await fetch(`/api/admin/courses/${course.id}/subcategories`, {
-          credentials: 'include',
-        });
-        if (!response.ok) {
-          throw new Error('Failed to fetch subcategories');
-        }
-        return response.json();
-      },
-      enabled: !!course.id,
-      staleTime: 5 * 60 * 1000,
-      retry: 1,
-    })),
-  });
-
-  const platformCurrentYearsQueries = useQueries({
-    queries: currentYearCourses.map((course) => ({
-      queryKey: ['course-platforms', course.id],
-      queryFn: async () => {
-        const response = await fetch(`/api/admin/courses/${course.id}/subcategories`, {
-          credentials: 'include',
-        });
-        if (!response.ok) {
-          throw new Error('Failed to fetch subcategories');
-        }
-        return response.json();
-      },
-      enabled: !!course.id,
-      staleTime: 5 * 60 * 1000,
-      retry: 1,
-    })),
-  });
-
-  const platformFavQueries = useQueries({
-    queries: favoritesCurrentYear.map((course) => ({
-      queryKey: ['course-platforms', course.id],
-      queryFn: async () => {
-        const response = await fetch(`/api/admin/courses/${course.id}/subcategories`, {
-          credentials: 'include',
-        });
-        if (!response.ok) {
-          throw new Error('Failed to fetch subcategories');
-        }
-        return response.json();
-      },
-      enabled: !!course.id,
-      staleTime: 5 * 60 * 1000,
-      retry: 1,
-    })),
-  });
-
-
-  const platformFavPrevQueries = useQueries({
-    queries: favoritesPreviousYears.map((course) => ({
-      queryKey: ['course-platforms', course.id],
-      queryFn: async () => {
-        const response = await fetch(`/api/admin/courses/${course.id}/subcategories`, {
-          credentials: 'include',
-        });
-        if (!response.ok) {
-          throw new Error('Failed to fetch subcategories');
-        }
-        return response.json();
-      },
-      enabled: !!course.id,
-      staleTime: 5 * 60 * 1000,
-      retry: 1,
-    })),
-  });
-
-  const platformSelectedCourseQueries = useQueries({
-    queries: [selectedCourse].map((course) => ({
-      queryKey: ['course-platforms', course?.id],
-      queryFn: async () => {
-        const response = await fetch(`/api/admin/courses/${course?.id}/subcategories`, {
-          credentials: 'include',
-        });
-        if (!response.ok) {
-          throw new Error('Failed to fetch subcategories');
-        }
-        return response.json();
-      },
-      enabled: !!course?.id || false,
-      staleTime: 5 * 60 * 1000,
-      retry: 1,
-    })),
-  });
+  // subcategoryIds are already included on Course from `/api/courses` (`Course.subcategoryIds`).
 
 
   const canActivate =
@@ -420,6 +358,7 @@ export default function VipCourseSelect() {
           isOpen={sidebarOpen}
           showPriceFilter={false}
           catalogPath="#"
+          hideVipAndFavorites={true}
         />
 
         {sidebarOpen && (
@@ -611,308 +550,9 @@ export default function VipCourseSelect() {
               </div>
             ) : (
               <>
-                {/* Favorite Courses Section */}
-                {(favoritesCurrentYear.length > 0 || favoritesPreviousYears.length > 0) && (
-                  <div className="space-y-4">
-                    <div>
-                      <h2 className="text-2xl font-bold flex items-center gap-2">
-                        <Heart className="h-6 w-6 text-red-500" />
-                        <span className="text-red-500">Избранные курсы</span>
-                      </h2>
-                      <p className="text-muted-foreground mt-2 text-sm md:text-base">
-                        Курсы из вашего избранного — выбирайте те, что больше всего интересуют, и добавляйте их в VIP пакет
-                      </p>
-                    </div>
 
-                    {favoritesCurrentYear.length > 0 && (
-                      <div>
-                        <h3 className="text-lg font-semibold mb-3 text-muted-foreground">Курсы {currentYear} года</h3>
-                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-                          {favoritesCurrentYear.map((course, index) => {
-                            const isSelected = selectedCurrentYear.has(course.id);
-                            const isDisabled = !isSelected && selectedCurrentYear.size >= vipPackage.currentYearLimit;
 
-                            const platformQuery = platformFavQueries[index];
-                            console.log('platformQuery', platformQuery.data)
-                            const subcategoryIds = platformQuery?.data ?? [];
-
-                            const getPlatforms = () => {
-                              if (!subcategoryIds.length || !subcategories || !categories) return [];
-                              const matched = subcategories.filter(sub => subcategoryIds.includes(sub.id));
-                              const categoryIds = [...new Set(matched.map(sub => sub.categoryId))];
-                              return categories.filter(cat => categoryIds.includes(cat.id));
-                            };
-
-                            const platforms = getPlatforms()
-
-                            return (
-                              <Card
-                                key={course.id}
-                                className={`group cursor-pointer transition-all duration-300 overflow-hidden flex flex-col border-red-500/30 ${isSelected
-                                  ? "border-primary border-2 shadow-2xl shadow-primary/50 scale-105 ring-4 ring-primary/20"
-                                  : isDisabled
-                                    ? "opacity-40 cursor-not-allowed grayscale"
-                                    : "hover:border-red-500 hover:shadow-xl hover:scale-105 hover:-translate-y-1"
-                                  }`}
-                                onClick={() => !isDisabled && handleToggleCourse(course.id, true)}
-                                data-testid={`card-favorite-course-${course.id}`}
-                              >
-                                <div className="aspect-video w-full bg-gradient-to-br from-red-500/10 to-pink-500/5 relative overflow-hidden">
-                                  {course.thumbnailImage ? (
-                                    <img
-                                      src={course.thumbnailImage}
-                                      alt={course.title}
-                                      className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-110"
-                                    />
-                                  ) : (
-                                    <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-red-500/20 to-pink-500/5">
-                                      <BookOpen className="h-16 w-16 text-red-500/40" />
-                                    </div>
-                                  )}
-
-                                  <div className="absolute top-2 left-2 bg-red-500 text-white rounded-full p-1.5 shadow-lg">
-                                    <Heart className="h-4 w-4 fill-current" />
-                                  </div>
-
-                                  {isSelected && (
-                                    <div className="absolute top-2 right-2 bg-primary text-primary-foreground rounded-full p-2 shadow-lg animate-in zoom-in duration-300">
-                                      <Check className="h-5 w-5" />
-                                    </div>
-                                  )}
-                                </div>
-
-                                <CardHeader className="flex flex-col space-y-3 h-full">
-                                  <h3 className="font-bold line-clamp-2 text-lg group-hover:text-primary transition-colors">
-                                    {course.title}
-                                  </h3>
-
-                                  {/* Course Stats */}
-                                  <div className="flex items-center gap-2 flex-wrap text-sm text-muted-foreground">
-                                    {platforms && platforms.map((platform) => (
-                                      <Badge key={platform.id} variant="outline" className="text-xs h-5">
-                                        {platform.name}
-                                      </Badge>
-                                    ))}
-                                    {course.year && (
-                                      <div className="flex items-center gap-1">
-                                        <Sparkles className="h-4 w-4 text-primary" />
-                                        <span className="font-semibold">{course.year}</span>
-                                      </div>
-                                    )}
-
-                                    {Array.isArray(course.level) && course.level.length > 0 &&
-                                      Array.from(
-                                        new Set(
-                                          course.level
-                                            .map(id => subcategories?.find(sub => sub.id === id))
-                                            .filter(Boolean)
-                                            .map(sub => sub.name)
-                                        )
-                                      ).map(levelName => (
-                                        <Badge variant="outline" className="text-xs h-5">
-                                          {levelName}
-                                        </Badge>
-                                      ))
-                                    }
-                                  </div>
-
-                                  {/* Rating - Always reserve space */}
-                                  <div className="min-h-[24px] flex items-center gap-2">
-                                    {course.reviewsCount > 0 && (
-                                      <StarRating
-                                        rating={Number(course.rating || 0)}
-                                        reviewsCount={Number(course.reviewsCount)}
-                                        size="sm"
-                                      />
-                                    )}
-                                  </div>
-
-                                  <div className="flex-1" />
-
-                                  {/* Details Button */}
-                                  <Button
-                                    size="sm"
-                                    variant="outline"
-                                    className="w-full"
-                                    onClick={(e) => handleShowDetails(course, e)}
-                                    data-testid={`button-info-${course.id}`}
-                                  >
-                                    <Info className="h-4 w-4 mr-1" />
-                                    Подробнее
-                                  </Button>
-
-                                  {/* Selection Status */}
-                                  <div className="pt-2">
-                                    {isSelected ? (
-                                      <div className="flex items-center gap-2 text-primary font-semibold">
-                                        <div className="h-2 w-2 rounded-full bg-primary animate-pulse" />
-                                        Курс выбран
-                                      </div>
-                                    ) : isDisabled ? (
-                                      <div className="text-sm text-muted-foreground">
-                                        Лимит выбора достигнут
-                                      </div>
-                                    ) : (
-                                      <div className="flex items-center gap-2 text-muted-foreground group-hover:text-primary transition-colors">
-                                        <div className="h-2 w-2 rounded-full border-2 border-current" />
-                                        Нажмите для выбора
-                                      </div>
-                                    )}
-                                  </div>
-                                </CardHeader>
-                              </Card>
-                            );
-                          })}
-                        </div>
-                      </div>
-                    )}
-
-                    {favoritesPreviousYears.length > 0 && (
-                      <div>
-                        <h3 className="text-lg font-semibold mb-3 text-muted-foreground">Курсы предыдущих лет</h3>
-                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-                          {favoritesPreviousYears.map((course, index) => {
-                            const isSelected = selectedPreviousYears.has(course.id);
-                            const isDisabled = !isSelected && selectedPreviousYears.size >= vipPackage.previousYearsLimit;
-
-                            const platformQuery = platformFavPrevQueries[index];
-                            console.log('platformQuery', platformQuery.data)
-                            const subcategoryIds = platformQuery?.data ?? [];
-
-                            const getPlatforms = () => {
-                              if (!subcategoryIds.length || !subcategories || !categories) return [];
-                              const matched = subcategories.filter(sub => subcategoryIds.includes(sub.id));
-                              const categoryIds = [...new Set(matched.map(sub => sub.categoryId))];
-                              return categories.filter(cat => categoryIds.includes(cat.id));
-                            };
-
-                            const platforms = getPlatforms()
-
-                            return (
-                              <Card
-                                key={course.id}
-                                className={`group cursor-pointer transition-all duration-300 overflow-hidden flex flex-col border-red-500/30 ${isSelected
-                                  ? "border-primary border-2 shadow-2xl shadow-primary/50 scale-105 ring-4 ring-primary/20"
-                                  : isDisabled
-                                    ? "opacity-40 cursor-not-allowed grayscale"
-                                    : "hover:border-red-500 hover:shadow-xl hover:scale-105 hover:-translate-y-1"
-                                  }`}
-                                onClick={() => !isDisabled && handleToggleCourse(course.id, false)}
-                                data-testid={`card-favorite-course-${course.id}`}
-                              >
-                                <div className="aspect-video w-full bg-gradient-to-br from-red-500/10 to-pink-500/5 relative overflow-hidden">
-                                  {course.thumbnailImage ? (
-                                    <img
-                                      src={course.thumbnailImage}
-                                      alt={course.title}
-                                      className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-110"
-                                    />
-                                  ) : (
-                                    <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-red-500/20 to-pink-500/5">
-                                      <BookOpen className="h-16 w-16 text-red-500/40" />
-                                    </div>
-                                  )}
-
-                                  <div className="absolute top-2 left-2 bg-red-500 text-white rounded-full p-1.5 shadow-lg">
-                                    <Heart className="h-4 w-4 fill-current" />
-                                  </div>
-
-                                  {isSelected && (
-                                    <div className="absolute top-2 right-2 bg-primary text-primary-foreground rounded-full p-2 shadow-lg animate-in zoom-in duration-300">
-                                      <Check className="h-5 w-5" />
-                                    </div>
-                                  )}
-                                </div>
-
-                                <CardHeader className="flex flex-col space-y-3 h-full">
-                                  <h3 className="font-bold line-clamp-2 text-lg group-hover:text-primary transition-colors">
-                                    {course.title}
-                                  </h3>
-
-                                  {/* Course Stats */}
-                                  <div className="flex items-center gap-2 flex-wrap text-sm text-muted-foreground">
-                                    {platforms.length > 0 && platforms.map((platform) => (
-                                      <Badge variant="outline" className="text-xs h-5">
-                                        {course.platform}
-                                      </Badge>
-                                    ))}
-                                    {course.year && (
-                                      <div className="flex items-center gap-1">
-                                        <Sparkles className="h-4 w-4 text-primary" />
-                                        <span className="font-semibold">{course.year}</span>
-                                      </div>
-                                    )}
-
-                                    {Array.isArray(course.level) && course.level.length > 0 &&
-                                      Array.from(
-                                        new Set(
-                                          course.level
-                                            .map(id => subcategories.find(sub => sub.id === id))
-                                            .filter(Boolean)
-                                            .map(sub => sub.name)
-                                        )
-                                      ).map(levelName => (
-                                        <Badge variant="outline" className="text-xs h-5">
-                                          {levelName}
-                                        </Badge>
-                                      ))
-                                    }
-                                  </div>
-
-                                  {/* Rating - Always reserve space */}
-                                  <div className="min-h-[24px] flex items-center gap-2">
-                                    {course.reviewsCount > 0 && (
-                                      <StarRating
-                                        rating={Number(course.rating || 0)}
-                                        reviewsCount={Number(course.reviewsCount)}
-                                        size="sm"
-                                      />
-                                    )}
-                                  </div>
-
-                                  <div className="flex-1" />
-
-                                  {/* Details Button */}
-                                  <Button
-                                    size="sm"
-                                    variant="outline"
-                                    className="w-full"
-                                    onClick={(e) => handleShowDetails(course, e)}
-                                    data-testid={`button-info-${course.id}`}
-                                  >
-                                    <Info className="h-4 w-4 mr-1" />
-                                    Подробнее
-                                  </Button>
-
-                                  {/* Selection Status */}
-                                  <div className="pt-2">
-                                    {isSelected ? (
-                                      <div className="flex items-center gap-2 text-primary font-semibold">
-                                        <div className="h-2 w-2 rounded-full bg-primary animate-pulse" />
-                                        Курс выбран
-                                      </div>
-                                    ) : isDisabled ? (
-                                      <div className="text-sm text-muted-foreground">
-                                        Лимит выбора достигнут
-                                      </div>
-                                    ) : (
-                                      <div className="flex items-center gap-2 text-muted-foreground group-hover:text-primary transition-colors">
-                                        <div className="h-2 w-2 rounded-full border-2 border-current" />
-                                        Нажмите для выбора
-                                      </div>
-                                    )}
-                                  </div>
-                                </CardHeader>
-                              </Card>
-                            );
-                          })}
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                {currentYearCourses.length > 0 && (
+                {currentYearTotal > 0 && (
                   <div className="space-y-4">
                     <h2 className="text-2xl font-bold flex items-center gap-2">
                       <Sparkles className="h-6 w-6 text-primary" />
@@ -923,9 +563,7 @@ export default function VipCourseSelect() {
                         const isSelected = selectedCurrentYear.has(course.id);
                         const isDisabled = !isSelected && selectedCurrentYear.size >= vipPackage.currentYearLimit;
 
-                        const platformQuery = platformCurrentYearsQueries[index];
-                        console.log('platformQuery', platformQuery.data)
-                        const subcategoryIds = platformQuery?.data ?? [];
+                        const subcategoryIds = course.subcategoryIds ?? [];
 
                         const getPlatforms = () => {
                           if (!subcategoryIds.length || !subcategories || !categories) return [];
@@ -936,19 +574,25 @@ export default function VipCourseSelect() {
 
                         const platforms = getPlatforms()
 
+                        const isFavorite = favoriteIds.has(course.id);
+
                         return (
                           <Card
                             key={course.id}
                             className={`group cursor-pointer transition-all duration-300 overflow-hidden flex flex-col ${isSelected
-                              ? "border-primary border-2 shadow-2xl shadow-primary/50 scale-105 ring-4 ring-primary/20"
+                              ? isFavorite
+                                ? "border-red-500 border-2 shadow-2xl shadow-red-500/50 scale-105 ring-4 ring-red-500/20"
+                                : "border-primary border-2 shadow-2xl shadow-primary/50 scale-105 ring-4 ring-primary/20"
                               : isDisabled
                                 ? "opacity-40 cursor-not-allowed grayscale"
-                                : "hover:border-primary/50 hover:shadow-xl hover:scale-105 hover:-translate-y-1"
+                                : isFavorite
+                                  ? "border-red-500/30 hover:border-red-500 hover:shadow-xl hover:scale-105 hover:-translate-y-1"
+                                  : "hover:border-primary/50 hover:shadow-xl hover:scale-105 hover:-translate-y-1"
                               }`}
                             onClick={() => !isDisabled && handleToggleCourse(course.id, true)}
                             data-testid={`card-course-${course.id}`}
                           >
-                            <div className="aspect-video w-full bg-gradient-to-br from-primary/10 to-primary/5 relative overflow-hidden">
+                            <div className="bg-gradient-to-br from-primary/10 to-primary/5 relative overflow-hidden w-full min-h-[138px]">
                               {course.thumbnailImage ? (
                                 <img
                                   src={course.thumbnailImage}
@@ -961,29 +605,19 @@ export default function VipCourseSelect() {
                                 </div>
                               )}
 
-                              {/* Selection Badge with Animation */}
+                              {isFavorite && (
+                                <div className="absolute top-2 left-2 bg-red-500 text-white rounded-full p-1.5 shadow-lg">
+                                  <Heart className="h-4 w-4 fill-current" />
+                                </div>
+                              )}
+
                               {isSelected && (
                                 <div className="absolute top-2 right-2 bg-primary text-primary-foreground rounded-full p-2 shadow-lg animate-in zoom-in duration-300">
                                   <Check className="h-5 w-5" />
                                 </div>
                               )}
 
-                              {/* Hover Overlay with Info */}
-                              <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/40 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex flex-col justify-end p-4">
-                                <div className="text-white space-y-2">
-                                  {course.authorName && (
-                                    <p className="flex items-center gap-1 text-sm">
-                                      <Users className="h-3 w-3" />
-                                      {course.authorName}
-                                    </p>
-                                  )}
-                                  {course.description && (
-                                    <p className="text-xs line-clamp-2 opacity-90">
-                                      {course.description}
-                                    </p>
-                                  )}
-                                </div>
-                              </div>
+
                             </div>
 
                             <CardHeader className="flex flex-col space-y-3 h-full">
@@ -991,78 +625,87 @@ export default function VipCourseSelect() {
                                 {course.title}
                               </h3>
 
-                              {/* Course Stats */}
-                              <div className="flex items-center gap-2 flex-wrap text-sm text-muted-foreground">
-                                {platforms && platforms.map((platform) => (
-                                  <Badge key={platform.id} variant="outline" className="text-xs h-5">
-                                    {platform.name}
-                                  </Badge>
-                                ))}
-                                {course.year && (
-                                  <div className="flex items-center gap-1">
-                                    <Sparkles className="h-4 w-4 text-primary" />
-                                    <span className="font-semibold">{course.year}</span>
-                                  </div>
-                                )}
-
-                                {Array.isArray(course.level) && course.level.length > 0 &&
-                                  Array.from(
-                                    new Set(
-                                      course.level
-                                        .map(id => subcategories.find(sub => sub.id === id))
-                                        .filter(Boolean)
-                                        .map(sub => sub.name)
-                                    )
-                                  ).map(levelName => (
-                                    <Badge variant="outline" className="text-xs h-5">
-                                      {levelName}
-                                    </Badge>
-                                  ))
-                                }
-                              </div>
-
                               {/* Rating - Always reserve space */}
-                              <div className="min-h-[24px] flex items-center gap-2">
                                 {course.reviewsCount > 0 && (
-                                  <StarRating
-                                    rating={Number(course.rating || 0)}
-                                    reviewsCount={Number(course.reviewsCount)}
-                                    size="sm"
+                                  <div className="min-h-[24px] flex items-center gap-2">
+
+                                    <StarRating
+                                      rating={Number(course.rating || 0)}
+                                      reviewsCount={Number(course.reviewsCount)}
+                                      size="sm"
+                                    />
+                                  </div>
+
+                                )}
+
+                              {(() => {
+                                const courseSubcategoryIds = course.subcategoryIds ?? [];
+                                const selectedSubcategories = subcategories?.filter(sub =>
+                                  courseSubcategoryIds.includes(sub.id) && sub.isActive
+                                ) ?? [];
+                                const parentCategories = categories?.filter(cat =>
+                                  course.level?.includes(cat.id) &&
+                                  cat.isActive &&
+                                  !selectedSubcategories.some(selectedSub => selectedSub.categoryId === cat.id)
+                                ) ?? [];
+                                parentCategories.forEach(parent => selectedSubcategories.push(parent as any));
+                                const categoriesWithoutSub = categories?.filter((cat) => course.level?.includes(cat.id) && cat.isActive) ?? [];
+
+                                const tagItems: { id?: string; name: string }[] = [];
+                                platforms.forEach(p => tagItems.push({ id: p.id, name: p.name }));
+                                const subcats = selectedSubcategories && selectedSubcategories.length > 0
+                                  ? selectedSubcategories
+                                  : categoriesWithoutSub || [];
+                                subcats.forEach(s => tagItems.push({ id: s.id, name: s.name }));
+                                if (course.year) tagItems.push({ name: String(course.year) });
+                                return tagItems.length > 0 ? (
+                                  <TagsMarquee
+                                    items={tagItems}
+                                    repeatCount={2}
+                                    className="h-6 my-0"
                                   />
-                                )}
-                              </div>
+                                ) : null;
+                              })()}
 
-                              <div className="flex-1" />
+                              {course.description && (
+                                <div
+                                  className="prose prose-sm dark:prose-invert max-w-none text-sm text-muted-foreground line-clamp-4 leading-relaxed"
+                                  dangerouslySetInnerHTML={{ __html: course.description || '' }}
+                                />
+                              )}
 
-                              {/* Details Button */}
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                className="w-full"
-                                onClick={(e) => handleShowDetails(course, e)}
-                                data-testid={`button-info-${course.id}`}
-                              >
-                                <Info className="h-4 w-4 mr-1" />
-                                Подробнее
-                              </Button>
 
-                              {/* Selection Status */}
-                              <div className="pt-2">
-                                {isSelected ? (
-                                  <div className="flex items-center gap-2 text-primary font-semibold">
-                                    <div className="h-2 w-2 rounded-full bg-primary animate-pulse" />
-                                    Курс выбран
-                                  </div>
-                                ) : isDisabled ? (
-                                  <div className="text-sm text-muted-foreground">
-                                    Лимит выбора достигнут
-                                  </div>
-                                ) : (
-                                  <div className="flex items-center gap-2 text-muted-foreground group-hover:text-primary transition-colors">
-                                    <div className="h-2 w-2 rounded-full border-2 border-current" />
-                                    Нажмите для выбора
-                                  </div>
-                                )}
+                              <div className="!mt-auto">
+                                {/* Details Button */}
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  className="w-full mb-3"
+                                  onClick={(e) => handleShowDetails(course, e)}
+                                  data-testid={`button-info-${course.id}`}
+                                >
+                                  <Info className="h-4 w-4 mr-1" />
+                                  Подробнее
+                                </Button>
+
+                                {/* Selection Status */}
+                                <div>
+                                  {isSelected ? (
+                                    <div className="flex items-center gap-2 text-primary font-semibold">
+                                      <div className="h-2 w-2 rounded-full bg-primary animate-pulse" />
+                                      Курс выбран
+                                    </div>
+                                  ) : isDisabled ? (
+                                    <div className="text-sm text-muted-foreground">
+                                      Лимит выбора достигнут
+                                    </div>
+                                  ) : (
+                                    <div className="flex items-center gap-2 text-muted-foreground group-hover:text-primary transition-colors">
+                                      <div className="h-2 w-2 rounded-full border-2 border-current" />
+                                      Нажмите для выбора
+                                    </div>
+                                  )}
+                                </div>
                               </div>
                             </CardHeader>
                           </Card>
@@ -1080,7 +723,7 @@ export default function VipCourseSelect() {
                   </div>
                 )}
 
-                {previousYearsCourses.length > 0 && (
+                {previousYearsTotal > 0 && (
                   <div className="space-y-4">
                     <h2 className="text-2xl font-bold flex items-center gap-2">
                       <BookOpen className="h-6 w-6 text-primary" />
@@ -1091,9 +734,7 @@ export default function VipCourseSelect() {
                         const isSelected = selectedPreviousYears.has(course.id);
                         const isDisabled = !isSelected && selectedPreviousYears.size >= vipPackage.previousYearsLimit;
 
-                        const platformQuery = platformPrevYearsQueries[index];
-                        console.log('platformQuery', platformQuery.data)
-                        const subcategoryIds = platformQuery?.data ?? [];
+                        const subcategoryIds = course.subcategoryIds ?? [];
 
                         const getPlatforms = () => {
                           if (!subcategoryIds.length || !subcategories || !categories) return [];
@@ -1103,19 +744,25 @@ export default function VipCourseSelect() {
                         };
 
                         const platforms = getPlatforms();
+                        const isFavorite = favoriteIds.has(course.id);
+
                         return (
                           <Card
                             key={course.id}
                             className={`group cursor-pointer transition-all duration-300 overflow-hidden flex flex-col ${isSelected
-                              ? "border-primary border-2 shadow-2xl shadow-primary/50 scale-105 ring-4 ring-primary/20"
+                              ? isFavorite
+                                ? "border-red-500 border-2 shadow-2xl shadow-red-500/50 scale-105 ring-4 ring-red-500/20"
+                                : "border-primary border-2 shadow-2xl shadow-primary/50 scale-105 ring-4 ring-primary/20"
                               : isDisabled
                                 ? "opacity-40 cursor-not-allowed grayscale"
-                                : "hover:border-primary/50 hover:shadow-xl hover:scale-105 hover:-translate-y-1"
+                                : isFavorite
+                                  ? "border-red-500/30 hover:border-red-500 hover:shadow-xl hover:scale-105 hover:-translate-y-1"
+                                  : "hover:border-primary/50 hover:shadow-xl hover:scale-105 hover:-translate-y-1"
                               }`}
                             onClick={() => !isDisabled && handleToggleCourse(course.id, false)}
                             data-testid={`card-course-${course.id}`}
                           >
-                            <div className="aspect-video w-full bg-gradient-to-br from-primary/10 to-primary/5 relative overflow-hidden">
+                            <div className="bg-gradient-to-br from-primary/10 to-primary/5 relative overflow-hidden w-full min-h-[138px]">
                               {course.thumbnailImage ? (
                                 <img
                                   src={course.thumbnailImage}
@@ -1128,28 +775,19 @@ export default function VipCourseSelect() {
                                 </div>
                               )}
 
+                              {isFavorite && (
+                                <div className="absolute top-2 left-2 bg-red-500 text-white rounded-full p-1.5 shadow-lg">
+                                  <Heart className="h-4 w-4 fill-current" />
+                                </div>
+                              )}
+
                               {isSelected && (
                                 <div className="absolute top-2 right-2 bg-primary text-primary-foreground rounded-full p-2 shadow-lg animate-in zoom-in duration-300">
                                   <Check className="h-5 w-5" />
                                 </div>
                               )}
 
-                              {/* Hover Overlay with Info */}
-                              <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/40 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex flex-col justify-end p-4">
-                                <div className="text-white space-y-2">
-                                  {course.authorName && (
-                                    <p className="flex items-center gap-1 text-sm">
-                                      <Users className="h-3 w-3" />
-                                      {course.authorName}
-                                    </p>
-                                  )}
-                                  {course.description && (
-                                    <p className="text-xs line-clamp-2 opacity-90">
-                                      {course.description}
-                                    </p>
-                                  )}
-                                </div>
-                              </div>
+
                             </div>
 
                             <CardHeader className="flex flex-col space-y-3 h-full">
@@ -1157,78 +795,85 @@ export default function VipCourseSelect() {
                                 {course.title}
                               </h3>
 
-                              {/* Course Stats */}
-                              <div className="flex items-center gap-2 flex-wrap text-sm text-muted-foreground">
-                                {platforms && platforms.map((platform) => (
-                                  <Badge key={platform.id} variant="outline" className="text-xs h-5">
-                                    {platform.name}
-                                  </Badge>
-                                ))}
-                                {course.year && (
-                                  <div className="flex items-center gap-1">
-                                    <Sparkles className="h-4 w-4 text-primary" />
-                                    <span className="font-semibold">{course.year}</span>
-                                  </div>
-                                )}
-
-                                {Array.isArray(course.level) && course.level.length > 0 &&
-                                  Array.from(
-                                    new Set(
-                                      course.level
-                                        .map(id => subcategories.find(sub => sub.id === id))
-                                        .filter(Boolean)
-                                        .map(sub => sub.name)
-                                    )
-                                  ).map(levelName => (
-                                    <Badge variant="outline" className="text-xs h-5">
-                                      {levelName}
-                                    </Badge>
-                                  ))
-                                }
-                              </div>
-
                               {/* Rating - Always reserve space */}
-                              <div className="min-h-[24px] flex items-center gap-2">
                                 {course.reviewsCount > 0 && (
-                                  <StarRating
-                                    rating={Number(course.rating || 0)}
-                                    reviewsCount={Number(course.reviewsCount)}
-                                    size="sm"
+                                  <div className="min-h-[24px] flex items-center gap-2">
+                                    <StarRating
+                                      rating={Number(course.rating || 0)}
+                                      reviewsCount={Number(course.reviewsCount)}
+                                      size="sm"
+                                    />
+                                  </div>
+
+                                )}
+
+                              {(() => {
+                                const courseSubcategoryIds = course.subcategoryIds ?? [];
+                                const selectedSubcategories = subcategories?.filter(sub =>
+                                  courseSubcategoryIds.includes(sub.id) && sub.isActive
+                                ) ?? [];
+                                const parentCategories = categories?.filter(cat =>
+                                  course.level?.includes(cat.id) &&
+                                  cat.isActive &&
+                                  !selectedSubcategories.some(selectedSub => selectedSub.categoryId === cat.id)
+                                ) ?? [];
+                                parentCategories.forEach(parent => selectedSubcategories.push(parent as any));
+                                const categoriesWithoutSub = categories?.filter((cat) => course.level?.includes(cat.id) && cat.isActive) ?? [];
+
+                                const tagItems: { id?: string; name: string }[] = [];
+                                platforms.forEach(p => tagItems.push({ id: p.id, name: p.name }));
+                                const subcats = selectedSubcategories && selectedSubcategories.length > 0
+                                  ? selectedSubcategories
+                                  : categoriesWithoutSub || [];
+                                subcats.forEach(s => tagItems.push({ id: s.id, name: s.name }));
+                                if (course.year) tagItems.push({ name: String(course.year) });
+                                return tagItems.length > 0 ? (
+                                  <TagsMarquee
+                                    items={tagItems}
+                                    repeatCount={2}
+                                    className="h-6 my-0"
                                   />
-                                )}
-                              </div>
+                                ) : null;
+                              })()}
 
-                              <div className="flex-1" />
+                              {course.description && (
+                                <div
+                                  className="prose prose-sm dark:prose-invert max-w-none text-sm text-muted-foreground line-clamp-4 leading-relaxed"
+                                  dangerouslySetInnerHTML={{ __html: course.description || '' }}
+                                />
+                              )}
 
-                              {/* Details Button */}
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                className="w-full"
-                                onClick={(e) => handleShowDetails(course, e)}
-                                data-testid={`button-info-${course.id}`}
-                              >
-                                <Info className="h-4 w-4 mr-1" />
-                                Подробнее
-                              </Button>
+                              <div className="!mt-auto">
+                                {/* Details Button */}
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  className="w-full mb-3"
+                                  onClick={(e) => handleShowDetails(course, e)}
+                                  data-testid={`button-info-${course.id}`}
+                                >
+                                  <Info className="h-4 w-4 mr-1" />
+                                  Подробнее
+                                </Button>
 
-                              {/* Selection Status */}
-                              <div className="pt-2">
-                                {isSelected ? (
-                                  <div className="flex items-center gap-2 text-primary font-semibold">
-                                    <div className="h-2 w-2 rounded-full bg-primary animate-pulse" />
-                                    Курс выбран
-                                  </div>
-                                ) : isDisabled ? (
-                                  <div className="text-sm text-muted-foreground">
-                                    Лимит выбора достигнут
-                                  </div>
-                                ) : (
-                                  <div className="flex items-center gap-2 text-muted-foreground group-hover:text-primary transition-colors">
-                                    <div className="h-2 w-2 rounded-full border-2 border-current" />
-                                    Нажмите для выбора
-                                  </div>
-                                )}
+                                {/* Selection Status */}
+                                <div>
+                                  {isSelected ? (
+                                    <div className="flex items-center gap-2 text-primary font-semibold">
+                                      <div className="h-2 w-2 rounded-full bg-primary animate-pulse" />
+                                      Курс выбран
+                                    </div>
+                                  ) : isDisabled ? (
+                                    <div className="text-sm text-muted-foreground">
+                                      Лимит выбора достигнут
+                                    </div>
+                                  ) : (
+                                    <div className="flex items-center gap-2 text-muted-foreground group-hover:text-primary transition-colors">
+                                      <div className="h-2 w-2 rounded-full border-2 border-current" />
+                                      Нажмите для выбора
+                                    </div>
+                                  )}
+                                </div>
                               </div>
                             </CardHeader>
                           </Card>
@@ -1246,7 +891,7 @@ export default function VipCourseSelect() {
                   </div>
                 )}
 
-                {currentYearCourses.length === 0 && previousYearsCourses.length === 0 && (
+                {currentYearTotal === 0 && previousYearsTotal === 0 && (
                   <Card className="p-12">
                     <div className="text-center space-y-4">
                       <BookOpen className="h-16 w-16 mx-auto text-muted-foreground" />
@@ -1267,9 +912,7 @@ export default function VipCourseSelect() {
       <Dialog open={showCourseDetails} onOpenChange={setShowCourseDetails}>
         <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
           {selectedCourse && (() => {
-            const platformQuery = platformSelectedCourseQueries[0];
-            console.log('platformQuery', platformQuery.data)
-            const subcategoryIds = platformQuery?.data ?? [];
+            const subcategoryIds = selectedCourse.subcategoryIds ?? [];
 
             const getPlatforms = () => {
               if (!subcategoryIds.length || !subcategories || !categories) return [];
@@ -1351,7 +994,10 @@ export default function VipCourseSelect() {
                   {selectedCourse.description && (
                     <div>
                       <h3 className="text-lg font-semibold mb-2">Описание</h3>
-                      <p className="text-muted-foreground whitespace-pre-wrap">{selectedCourse.description}</p>
+                      <div 
+                        className="prose prose-sm dark:prose-invert max-w-none text-muted-foreground"
+                        dangerouslySetInnerHTML={{ __html: selectedCourse.description }}
+                      />
                     </div>
                   )}
 

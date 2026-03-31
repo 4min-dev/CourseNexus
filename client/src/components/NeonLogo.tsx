@@ -19,7 +19,7 @@ export function NeonLogo({ variant = "pulse", className }: NeonLogoProps) {
       <div className="absolute inset-0 blur-2xl opacity-30 bg-gradient-to-r from-purple-500 via-cyan-500 to-purple-500 animate-pulse" style={{ zIndex: -1 }}></div>
       
       <ShoppingBag className={cn(
-        "h-8 w-8 sm:h-10 sm:w-10 text-primary transition-all flex-shrink-0",
+        "h-8 w-8 lg:h-10 lg:w-10 text-primary transition-all flex-shrink-0",
         variant === "flicker" && "animate-neon-flicker",
         variant === "pulse" && "animate-neon-pulse",
         variant === "gradient" && "animate-neon-pulse"
@@ -29,7 +29,7 @@ export function NeonLogo({ variant = "pulse", className }: NeonLogoProps) {
       }}
       />
       <span className={cn(
-        "font-black text-xl sm:text-3xl transition-all relative whitespace-nowrap",
+        "font-black text-xl lg:text-3xl transition-all relative whitespace-nowrap",
         variants[variant]
       )}
       style={{

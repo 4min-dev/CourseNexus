@@ -1,5 +1,5 @@
 import { useParams, useLocation } from "wouter";
-import { useQuery, useMutation, useQueries } from "@tanstack/react-query";
+import { useQuery, useMutation } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -22,6 +22,10 @@ import { celebrateJackpot } from "@/lib/celebration";
 import { SuccessDialog } from "@/components/success-dialog";
 import { Header } from "@/components/header";
 import { Category, Subcategory } from "@shared/schema";
+import { TagsMarquee } from "@/components/ui/tags-marquee";
+import { CoursePreviewDialog } from "@/components/ui/course-preview-dialog";
+import type { Course as FullCourse } from "@shared/schema";
+import { debugLog } from "@/lib/debug";
 
 interface Course {
   id: string;
@@ -33,6 +37,7 @@ interface Course {
   level: string[] | null;
   year: number | null;
   authorName: string | null;
+  subcategoryIds?: string[];
 }
 
 interface CoursePackage {
@@ -66,6 +71,8 @@ export default function PackagePurchase() {
   const [confirmDialogOpen, setConfirmDialogOpen] = useState(false);
   const [successDialogOpen, setSuccessDialogOpen] = useState(false);
   const [useFantiks, setUseFantiks] = useState(false);
+  const [selectedCourse, setSelectedCourse] = useState<FullCourse | null>(null);
+  const [coursePreviewOpen, setCoursePreviewOpen] = useState(false);
 
   // Helper function to navigate back to shop with preserved filters
   const handleBackToShop = () => {
@@ -170,38 +177,7 @@ export default function PackagePurchase() {
     queryKey: ["/api/subcategories"]
   })
 
-  const subcategoriesQueries = useQueries({
-    queries: (pkg?.courses || []).map((course) => ({
-      queryKey: ["/api/admin/courses", course.id, "subcategories"],
-      queryFn: async (): Promise<string[]> => {
-        const response = await fetch(`/api/admin/courses/${course.id}/subcategories`, {
-          credentials: "include",
-        });
-        if (!response.ok) return [];
-        return response.json();
-      },
-      enabled: !!course.id,
-      staleTime: 5 * 60 * 1000,
-    })),
-  });
-
-  const platformQueries = useQueries({
-    queries: pkg?.courses ? pkg?.courses?.map((course) => ({
-      queryKey: ['course-platforms', course.id],
-      queryFn: async () => {
-        const response = await fetch(`/api/admin/courses/${course.id}/subcategories`, {
-          credentials: 'include',
-        });
-        if (!response.ok) {
-          throw new Error('Failed to fetch subcategories');
-        }
-        return response.json();
-      },
-      enabled: !!course.id,
-      staleTime: 5 * 60 * 1000,
-      retry: 1,
-    })) : [],
-  });
+  // subcategoryIds are already included on Course objects from `/api/packages/:id` (`Course.subcategoryIds`).
 
   if (!isAuthenticated) {
     return (
@@ -335,30 +311,21 @@ export default function PackagePurchase() {
           <h2 className="text-3xl font-bold">Курсы в подборке</h2>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
             {pkg.courses.map((course, index) => {
-
-              const platformQuery = platformQueries[index];
-              console.log('platformQuery', platformQuery.data)
-              const subcategoryIds = platformQuery?.data ?? [];
+              const subcategoryIds = course.subcategoryIds ?? [];
 
               const getPlatforms = () => {
                 if (!subcategoryIds.length || !subcategories || !categories) return [];
                 const matched = subcategories.filter((sub) => subcategoryIds.includes(sub.id) && sub.isActive);
-                console.log('matched', matched)
+                debugLog('matched', matched)
                 const categoryIds = [...new Set(matched.map(sub => sub.categoryId))];
                 return categories.filter((cat) => categoryIds.includes(cat.id) && cat.isActive);
               };
 
               const platforms = getPlatforms();
-              console.log(platforms)
-
-              const originalIndex = index
-
-              const courseSubcategoryIds = originalIndex !== -1
-                ? subcategoriesQueries[originalIndex]?.data ?? []
-                : [];
+              debugLog(platforms)
 
               const selectedSubcategories = subcategories?.filter(sub =>
-                courseSubcategoryIds.includes(sub.id) && sub.isActive
+                subcategoryIds.includes(sub.id) && sub.isActive
               ) ?? []
 
               const parentCategorires = categories?.filter(cat =>
@@ -371,10 +338,18 @@ export default function PackagePurchase() {
 
               const categoriesWithoutSub = categories?.filter((cat) => course.level?.includes(cat.id) && cat.isActive) ?? []
 
-              console.log('selectedSubcategories', selectedSubcategories)
+              debugLog('selectedSubcategories', selectedSubcategories)
 
               return (
-                <Card key={course.id} className="overflow-hidden hover-elevate" data-testid={`card-course-${course.id}`}>
+                <Card
+                  key={course.id}
+                  className="flex flex-col overflow-hidden hover-elevate cursor-pointer"
+                  data-testid={`card-course-${course.id}`}
+                  onClick={() => {
+                    setSelectedCourse(course as unknown as FullCourse);
+                    setCoursePreviewOpen(true);
+                  }}
+                >
                   {/* Thumbnail */}
                   <div className="relative aspect-video overflow-hidden bg-gradient-to-br from-purple-900/20 to-pink-900/20">
                     {course.thumbnailImage ? (
@@ -400,34 +375,35 @@ export default function PackagePurchase() {
                     <h3 className="font-bold line-clamp-2" data-testid={`text-course-title-${course.id}`}>
                       {course.title}
                     </h3>
-                    <div className="flex items-center gap-2 pt-2 flex-wrap">
-                      {platforms.length > 0 && platforms.map((platform) => (
-                        <Badge variant="outline" className="text-xs">
-                          {platform.name}
-                        </Badge>
-                      ))}
+                    {(() => {
+                      const tagItems: { id?: string; name: string }[] = [];
+                      platforms.forEach(p => tagItems.push({ id: p.id, name: p.name }));
+                      const subcats = selectedSubcategories && selectedSubcategories.length > 0
+                        ? selectedSubcategories
+                        : categoriesWithoutSub || [];
+                      subcats.forEach(s => tagItems.push({ id: s.id, name: s.name }));
+                      if (course.year) tagItems.push({ name: String(course.year) });
+                      return tagItems.length > 0 ? (
+                        <TagsMarquee
+                          items={tagItems}
+                          repeatCount={2}
+                          className="h-auto my-0 pt-2"
+                        />
+                      ) : null;
+                    })()}
 
-                      {((Array.isArray(selectedSubcategories) && selectedSubcategories.length > 0) || categoriesWithoutSub) && (
-
-                        selectedSubcategories && selectedSubcategories.length > 0 ? selectedSubcategories.map(subCategory => (
-                          <Badge variant="outline" className="text-xs">
-                            {subCategory.name}
-                          </Badge>
-                        )) : categoriesWithoutSub?.map(subCategory => (
-                          <Badge variant="outline" className="text-xs">
-                            {subCategory.name}
-                          </Badge>
-                        ))
-
-
-                      )}
-
-                    </div>
+                    {course.description && (
+                      <div
+                        className="prose prose-sm dark:prose-invert max-w-none text-sm text-muted-foreground line-clamp-4 leading-relaxed pt-2"
+                        data-testid={`text-course-description-${course.id}`}
+                        dangerouslySetInnerHTML={{ __html: course.description || '' }}
+                      />
+                    )}
                   </CardHeader>
 
 
 
-                  <CardContent>
+                  <CardContent className="mt-auto">
                     <div className="flex items-center justify-between">
                       <span className="text-sm text-muted-foreground">Стоимость</span>
                       <span className="text-lg font-bold" data-testid={`text-course-price-${course.id}`}>
@@ -636,6 +612,12 @@ export default function PackagePurchase() {
         isVip={false}
         onGoToCourse={() => setLocation("/library")}
         onContinueShopping={handleBackToShop}
+      />
+
+      <CoursePreviewDialog
+        course={selectedCourse}
+        open={coursePreviewOpen}
+        onOpenChange={setCoursePreviewOpen}
       />
     </div>
   );

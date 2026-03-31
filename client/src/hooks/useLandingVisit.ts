@@ -13,6 +13,8 @@ interface StoredVisit {
   timestamp: number;
 }
 
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
 /**
  * Hook to track landing page visits and manage visitId in sessionStorage.
  * 
@@ -45,7 +47,8 @@ export function useLandingVisit() {
         if (stored) {
           try {
             const parsed: StoredVisit = JSON.parse(stored);
-            if (parsed.visitId && mounted) {
+            const isValidVisitId = typeof parsed.visitId === 'string' && UUID_REGEX.test(parsed.visitId);
+            if (isValidVisitId && mounted) {
               setState({
                 visitId: parsed.visitId,
                 status: 'success',
@@ -53,6 +56,8 @@ export function useLandingVisit() {
               });
               return;
             }
+            // Corrupted/legacy value: remove and request a fresh id.
+            sessionStorage.removeItem(STORAGE_KEY);
           } catch (parseError) {
             console.warn('[useLandingVisit] Failed to parse stored visit, will fetch new:', parseError);
             sessionStorage.removeItem(STORAGE_KEY);
@@ -95,7 +100,7 @@ export function useLandingVisit() {
         const data = await response.json();
         const visitId = data.visitId;
 
-        if (!visitId) {
+        if (!visitId || !UUID_REGEX.test(visitId)) {
           throw new Error('No visitId returned from server');
         }
 

@@ -9,7 +9,8 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { queryClient, apiRequest } from "@/lib/queryClient";
-import { Save, Shield } from "lucide-react";
+import { Switch } from "@/components/ui/switch";
+import { Save, Shield, ShieldOff } from "lucide-react";
 
 interface AdminSettingsForm {
   siteName: string;
@@ -19,6 +20,7 @@ interface AdminSettingsForm {
   telegramBotToken: string;
   referralBonusPercent: number;
   require2FA: 'disabled' | 'optional' | 'mandatory';
+  skip2FAOnLogin: boolean;
 }
 
 export default function AdminSettings() {
@@ -35,6 +37,7 @@ export default function AdminSettings() {
       telegramBotToken: "",
       referralBonusPercent: 30,
       require2FA: 'disabled',
+      skip2FAOnLogin: false,
     },
   });
 
@@ -47,6 +50,7 @@ export default function AdminSettings() {
     telegramBotToken: "",
     referralBonusPercent: 30,
     require2FA: 'disabled',
+    skip2FAOnLogin: false,
   });
 
   // Update form when settings load (normalize API data to ensure types are correct)
@@ -60,6 +64,7 @@ export default function AdminSettings() {
         telegramBotToken: settings.telegramBotToken ?? "",
         referralBonusPercent: Number(settings.referralBonusPercent ?? 30),
         require2FA: settings.require2FA ?? 'disabled',
+        skip2FAOnLogin: settings.skip2FAOnLogin ?? false,
       });
     }
   }, [settings]);
@@ -232,6 +237,35 @@ export default function AdminSettings() {
                     </SelectItem>
                   </SelectContent>
                 </Select>
+              </div>
+
+              <div className="space-y-3 p-4 rounded-lg border bg-card">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <ShieldOff className="h-4 w-4 text-orange-500" />
+                    <Label htmlFor="skip2FAOnLogin" className="text-base font-medium">
+                      Пропустить 2FA при входе
+                    </Label>
+                  </div>
+                  <Switch
+                    id="skip2FAOnLogin"
+                    checked={formData.skip2FAOnLogin}
+                    onCheckedChange={(checked) =>
+                      setFormData({ ...formData, skip2FAOnLogin: checked })
+                    }
+                  />
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Когда включено, пользователи с привязанным Telegram входят на сайт только по email и паролю — без запроса кода подтверждения из Telegram. Полезно при замедлении Telegram.
+                </p>
+                {formData.skip2FAOnLogin && (
+                  <div className="flex items-center gap-2 p-2 rounded bg-orange-50 border border-orange-200">
+                    <ShieldOff className="h-4 w-4 text-orange-500 shrink-0" />
+                    <p className="text-xs text-orange-700">
+                      Внимание: 2FA при входе отключена для всех пользователей. Безопасность авторизации снижена.
+                    </p>
+                  </div>
+                )}
               </div>
 
               <Button

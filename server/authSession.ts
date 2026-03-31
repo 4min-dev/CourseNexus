@@ -3,10 +3,10 @@ import session from "express-session";
 import type { Express, RequestHandler } from "express";
 import connectPg from "connect-pg-simple";
 import { storage } from "./storage";
+import { lastReminderLevelMap } from "./telegram-bot";
 
-// Throttle user activity updates - only update once per minute
 const lastActivityUpdates = new Map<string, number>();
-const ACTIVITY_UPDATE_INTERVAL = 60 * 1000; // 1 minute
+const ACTIVITY_UPDATE_INTERVAL = 60 * 1000;
 
 export function updateUserActivityThrottled(userId: string) {
   const now = Date.now();
@@ -15,9 +15,15 @@ export function updateUserActivityThrottled(userId: string) {
 
   if (timeSinceLastUpdate > ACTIVITY_UPDATE_INTERVAL) {
     lastActivityUpdates.set(userId, now);
-    // Fire and forget - don't await to avoid blocking the request
-    storage.updateUserActivity(userId).catch(err => {
-      console.error('[Activity] Failed to update user activity:', err);
+
+    Promise.all([
+      storage.updateUserActivity(userId),
+      Promise.resolve().then(() => {
+        lastReminderLevelMap.delete(userId);
+        console.log(`[Activity] Сброс уровня напоминаний для пользователя ${userId} (активность)`);
+      })
+    ]).catch(err => {
+      console.error('[Activity] Ошибка при обновлении активности / сбросе уровня:', err);
     });
   }
 }

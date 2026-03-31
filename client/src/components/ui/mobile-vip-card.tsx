@@ -14,19 +14,29 @@ import { VipTier } from "@/pages/shop";
 type MobileVipCardProps = {
     sortedVips: Course[]
     itemIndex: number,
-    activeIndex: number,
+    isActive: boolean,
     purchasedCourseIds: Set<string>,
     vipTiers?: VipTier[]
+    disableExpand?: boolean
+    maxWidthPx?: number
 }
 
-const MobileVipCard: React.FC<MobileVipCardProps> = ({ sortedVips, itemIndex, activeIndex, purchasedCourseIds, vipTiers }) => {
+const MobileVipCard: React.FC<MobileVipCardProps> = ({
+    sortedVips,
+    itemIndex,
+    isActive,
+    purchasedCourseIds,
+    vipTiers,
+    disableExpand = false,
+    maxWidthPx
+}) => {
 
     const [location, setLocation] = useLocation();
 
     const vip = sortedVips[itemIndex];
     if (!vip) return null;
 
-    const isExpanded = activeIndex === itemIndex;
+    const isExpanded = disableExpand ? false : isActive;
     const isPurchased = purchasedCourseIds.has(vip.id);
     const tier = vip.vipTier || 'bronze';
 
@@ -59,7 +69,11 @@ const MobileVipCard: React.FC<MobileVipCardProps> = ({ sortedVips, itemIndex, ac
     const config = tierConfig[tier] || tierConfig.bronze;
 
     return (
-        <div key={vip.id} className="w-full px-2">
+        <div
+            key={vip.id}
+            className="w-full px-2 pt-2 mx-auto"
+            style={maxWidthPx ? { maxWidth: `${maxWidthPx}px` } : undefined}
+        >
             <Link href={`/course/${vip.id}`} className="block">
                 <GlassCard
                     variant="premium"
@@ -68,61 +82,62 @@ const MobileVipCard: React.FC<MobileVipCardProps> = ({ sortedVips, itemIndex, ac
                     isActive={isExpanded}
                     className={`
         w-full  transition-all duration-500 ease-out
-        min-h-[350px]
+        min-h-[305px]
       `}
                     data-testid={`card-vip-${tier}`}
                 >
                     <div className="flex flex-col h-full">
                         {/* Заголовок всегда одинаковый */}
-                        <CardHeader className="space-y-2 pb-3 relative z-10">
-                            <div className="flex items-center justify-between">
-                                {config.isDiamond ? (
-                                    <Diamond className="diamond-sparkle w-7 h-7" />
-                                ) : (
-                                    <div className={`h-7 w-7 rounded-full ${config.sphereClass}`} />
-                                )}
+                        <CardHeader className="space-y-0.5 pb-1 !px-4 !py-3 relative z-10">
+                            <div className="flex items-start justify-between gap-2">
+                                <div className="flex items-center gap-2 min-w-0">
+                                    {config.isDiamond ? (
+                                        <Diamond className="diamond-sparkle w-6 h-6 flex-shrink-0" />
+                                    ) : (
+                                        <div className={`h-6 w-6 rounded-full ${config.sphereClass} flex-shrink-0`} />
+                                    )}
+                                    <h3 className="font-bold tracking-tight text-xl leading-tight break-words">
+                                        {tierData?.displayName || vip.title}
+                                    </h3>
+                                </div>
                                 {isPurchased && (
-                                    <Badge variant="default" className="bg-green-600 text-xs">
+                                    <Badge variant="default" className="bg-green-600 text-xs whitespace-nowrap">
                                         <Shield className="h-3 w-3 mr-1" />
                                         Активна
                                     </Badge>
                                 )}
                             </div>
-                            <h3 className="font-bold tracking-tight text-2xl">
-                                {tierData?.displayName || vip.title}
-                            </h3>
                         </CardHeader>
 
                         {/* Контент с анимацией расширения */}
-                        <div className="flex-1 flex flex-col justify-between px-6 pb-6">
-                            <div className={`space-y-4 transition-all duration-500 ${isExpanded ? 'opacity-100' : 'opacity-0'}`}>
-                                <div className="flex items-baseline gap-2">
+                        <div className="flex-1 flex flex-col justify-between px-4 pb-4">
+                            <div className="space-y-1.5">
+                                <div className="flex items-baseline gap-1.5">
                                     <span className="font-bold bg-gradient-to-r from-foreground to-foreground/80 bg-clip-text text-transparent text-3xl">
                                         {formatPrice(tierData?.price || vip.price || "0")}
                                     </span>
                                 </div>
 
-                                <p className={`text-sm text-muted-foreground/90 leading-snug transition-all duration-500 ${isExpanded ? 'line-clamp-none' : 'line-clamp-3'
-                                    }`}>
+                                <p className={`text-sm text-muted-foreground/90 leading-snug ${!isExpanded ? 'line-clamp-3' : ''}`}>
                                     {tierData?.description || (vip.description ? htmlToText(vip.description) : 'Эксклюзивный доступ к премиум контенту и персональной поддержке')}
                                 </p>
 
-                                {/* Список фич — показывается только при расширении */}
-                                <div className={`space-y-2 overflow-hidden transition-all duration-500 ${isExpanded ? 'max-h-96 opacity-100' : 'max-h-0 opacity-0'
-                                    }`}>
-                                    <p className="text-xs font-semibold text-muted-foreground">Что входит:</p>
-                                    {(tierData?.features || []).map((feature: string, idx: number) => (
-                                        <div key={idx} className="flex items-start gap-1.5">
-                                            <Check className="h-3 w-3 text-primary mt-0.5 flex-shrink-0" />
-                                            <span className="text-xs leading-snug">{feature}</span>
-                                        </div>
-                                    ))}
-                                </div>
+                                {isExpanded && (
+                                    <div className="space-y-1.5">
+                                        <p className="text-xs font-semibold text-muted-foreground">Что входит:</p>
+                                        {(tierData?.features || []).map((feature: string, idx: number) => (
+                                            <div key={idx} className="flex items-start gap-1">
+                                                <Check className="h-3 w-3 text-primary mt-0.5 flex-shrink-0" />
+                                                <span className="text-xs leading-snug">{feature}</span>
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
                             </div>
 
                             {/* Кнопка всегда внизу */}
                             <Button
-                                className={`w-full relative overflow-hidden backdrop-blur-sm font-semibold transition-all duration-300 group mt-6 ${isPurchased
+                                className={`w-full relative overflow-hidden backdrop-blur-sm font-semibold transition-all duration-300 group mt-3 ${isPurchased
                                     ? 'bg-white/5 border-2 border-green-500/30 text-white shadow-lg'
                                     : 'bg-white/5 border-2 border-yellow-500/30 text-white shadow-yellow-500/50'
                                     }`}
@@ -152,4 +167,4 @@ const MobileVipCard: React.FC<MobileVipCardProps> = ({ sortedVips, itemIndex, ac
     )
 }
 
-export default MobileVipCard
+export default React.memo(MobileVipCard)

@@ -132,6 +132,16 @@ export default function AdminLayout({ children, breadcrumbs }: AdminLayoutProps)
               Уведомления
             </Button>
           </Link>
+          <Link href="/admin/chat">
+            <Button
+              variant="ghost"
+              className="w-full justify-start"
+              data-testid="link-admin-chat"
+            >
+              <MessageSquare className="mr-2 h-4 w-4" />
+              Чат поддержки
+            </Button>
+          </Link>
 
           <Separator className="my-3" />
 

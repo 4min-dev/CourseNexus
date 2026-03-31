@@ -1,0 +1,1 @@
+ALTER TABLE "lessons" ADD COLUMN "conversionProgress" integer DEFAULT 0;

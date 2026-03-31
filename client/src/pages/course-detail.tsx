@@ -1,4 +1,4 @@
-import { useRoute } from "wouter";
+import { useParams, useRoute } from "wouter";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -9,15 +9,15 @@ import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
-import { ShoppingCart, BookOpen, ArrowLeft, CheckCircle2, Star, Sparkles, Crown, Check, Gem, Package, TrendingDown, ArrowRight, ThumbsUp, ThumbsDown, Edit, Trash2, AlertCircle, Heart, Users, PlayCircle, Clock, Award, TrendingUp } from "lucide-react";
+import { ShoppingCart, BookOpen, ArrowLeft, CheckCircle2, Star, Sparkles, Crown, Check, Gem, Package, TrendingDown, ArrowRight, ThumbsUp, ThumbsDown, Edit, Trash2, AlertCircle, Heart, Users, PlayCircle, Clock, Award, TrendingUp, Wallet } from "lucide-react";
 import { Link } from "wouter";
 import type { Course, Review, Lesson, Subcategory, Category } from "@shared/schema";
 import { Header } from "@/components/header";
-import { useToast } from "@/hooks/use-toast";
+import { toast, useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { isUnauthorizedError } from "@/lib/authUtils";
 import { useAuth } from "@/hooks/useAuth";
-import { useEffect, useState } from "react";
+import React, { useEffect, useState } from "react";
 import { Footer } from "@/components/footer";
 import { formatPrice } from "@/lib/formatPrice";
 import { VideoPlayer } from "@/components/VideoPlayer";
@@ -25,6 +25,9 @@ import { celebrateJackpot } from "@/lib/celebration";
 import { SuccessDialog } from "@/components/success-dialog";
 import { useLocation } from "wouter";
 import { AwardIcon } from "@/components/award-icon";
+import { cn } from "@/lib/utils";
+import { debugLog } from "@/lib/debug";
+import { useIsMobile } from "@/hooks/useIsMobile";
 
 interface VipTier {
   id: string;
@@ -47,7 +50,8 @@ function VipSubscriptionPage({
   setShowPurchaseDialog,
   showSuccessDialog,
   setShowSuccessDialog,
-  purchaseMutation
+  purchaseMutation,
+  purchasedData
 }: {
   course: Course;
   vipTier: VipTier;
@@ -61,12 +65,14 @@ function VipSubscriptionPage({
   showSuccessDialog: boolean;
   setShowSuccessDialog: (value: boolean) => void;
   purchaseMutation: ReturnType<typeof useMutation<void, Error, { useFantiks: boolean; payWithFantiks: boolean }, unknown>>;
+  purchasedData: any
 }) {
   const [, setLocation] = useLocation();
 
   const price = parseFloat(vipTier.price || "0");
   const maxFantiksDiscount = price * 0.2;
   const fantiksToUse = Math.min(fantiks, maxFantiksDiscount);
+  const payWithFantiks = useFantiks;
   const priceWithDiscount = useFantiks ? Math.max(0, price - fantiksToUse) : price;
   const canAfford = balance >= priceWithDiscount;
 
@@ -368,8 +374,18 @@ function VipSubscriptionPage({
               Отмена
             </Button>
             <Button
-              onClick={() => purchaseMutation.mutate({ useFantiks, payWithFantiks: false })}
-              disabled={!canAfford || purchaseMutation.isPending}
+              onClick={() => {
+                if (!canAfford) {
+                  toast({
+                    title: "Недостаточно средств",
+                    description: "Пополните баланс или отключите скидку фантиками и попробуйте снова.",
+                    variant: "destructive",
+                  });
+                  return;
+                }
+                purchaseMutation.mutate({ useFantiks, payWithFantiks })
+              }}
+              disabled={purchaseMutation.isPending}
               data-testid="button-dialog-confirm"
             >
               {purchaseMutation.isPending ? "Обработка..." : "Подтвердить покупку"}
@@ -383,16 +399,16 @@ function VipSubscriptionPage({
         open={showSuccessDialog}
         onOpenChange={setShowSuccessDialog}
         title="🎉 Покупка успешна!"
-        description={`VIP подписка "${vipTier.displayName}" активирована! Откройте библиотеку и выберите курсы из вашего VIP пакета.`}
+        description={`VIP подписка "${vipTier.displayName}" приобретена! Для дальнейшей активации свяжитесь с администрацией.`}
         isVip={true}
         onGoToCourse={() => {
-          setShowSuccessDialog(false);
-          setLocation('/library');
+          // setShowSuccessDialog(false);
+          // setLocation(`/library/vip-select/${purchasedData.id}`);
+          window.location.href = 'https://t.me/kurs_helper'
         }}
         onContinueShopping={() => {
           setShowSuccessDialog(false);
-          const shopUrl = sessionStorage.getItem('shopUrl');
-          setLocation(shopUrl || '/shop');
+          setLocation('/library');
         }}
       />
     </div>
@@ -410,6 +426,13 @@ export default function CourseDetail() {
   const [useFantiks, setUseFantiks] = useState(false);
   const [payWithFantiks, setPayWithFantiks] = useState(false);
   const [platforms, setPlatforms] = useState<Category[]>([])
+  const [purchasedData, setPurchasedData] = useState<any>(null);
+  const isMobile = useIsMobile()
+
+  useEffect(() => {
+    if (!showPurchaseDialog) return;
+    queryClient.invalidateQueries({ queryKey: ["/api/auth/user"] });
+  }, [showPurchaseDialog]);
 
   const { data: subcategories } = useQuery<Subcategory[]>({
     queryKey: ["/api/subcategories"],
@@ -419,46 +442,26 @@ export default function CourseDetail() {
     queryKey: ["/api/categories"],
   });
 
-  const { data: courseSubcategoryIds = [] } = useQuery<string[]>({
-    queryKey: ["/api/admin/courses", courseId, "subcategories"],
-    queryFn: async () => {
-      const response = await fetch(`/api/admin/courses/${courseId}/subcategories`, {
-        credentials: "include",
-      });
-      if (!response.ok) throw new Error("Failed to fetch");
-      return response.json();
-    },
-    enabled: !!courseId,
-  });
-
-  useEffect(() => {
-    if (!subcategories || !categories || !courseSubcategoryIds?.length) return;
-
-    // Шаг 1: Находим все подкатегории, привязанные к курсу
-    const matchedSubcategories = subcategories.filter((sub) =>
-      courseSubcategoryIds.includes(sub.id) && sub.isActive
-    );
-
-    // Шаг 2: Собираем уникальные categoryId из них
-    const targetCategoryIds = [...new Set(matchedSubcategories.map(sub => sub.categoryId))];
-
-
-
-    const parentCategories = categories?.filter(cat =>
-      course?.level?.includes(cat.id) &&
-      cat.isActive
-    ) ?? [];
-
-    setPlatforms(parentCategories)
-  }, [subcategories, categories, courseSubcategoryIds]);
-
-
   const { data: course, isLoading } = useQuery<Course>({
     queryKey: ["/api/courses", courseId],
     enabled: !!courseId,
   });
 
-  console.log('course', course)
+  const courseSubcategoryIds = course?.subcategoryIds ?? [];
+
+  useEffect(() => {
+    if (!subcategories || !categories || !courseSubcategoryIds.length) return;
+
+    // Keeps existing behavior: platforms are derived from `course.level` (parent categories).
+    // We just avoid an extra per-course admin fetch.
+    const parentCategories = categories.filter(
+      (cat) => !!course?.level?.includes(cat.id) && cat.isActive
+    );
+
+    setPlatforms(parentCategories);
+  }, [subcategories, categories, courseSubcategoryIds, course?.level]);
+
+  debugLog('course', course)
 
   const { data: purchases } = useQuery<{ courseId: string }[]>({
     queryKey: ["/api/purchases"],
@@ -513,17 +516,20 @@ export default function CourseDetail() {
     enabled: !!course?.isVipSubscription && !!course?.vipTier,
   });
 
+  const innerRef = React.useRef<HTMLDivElement>(null)
+
   const isPurchased = purchases?.some((p) => p.courseId === courseId);
 
   const purchaseMutation = useMutation({
-    mutationFn: async (params: { useFantiks: boolean; payWithFantiks: boolean }) => {
-      await apiRequest("POST", `/api/purchases`, {
+    mutationFn: async (params: { useFantiks: boolean, payWithFantiks: boolean }) => {
+      const response = await apiRequest("POST", `/api/purchases`, {
         courseId,
         useFantiks: params.useFantiks,
         payWithFantiks: params.payWithFantiks
       });
+      return response.json()
     },
-    onSuccess: () => {
+    onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ["/api/purchases"] });
       queryClient.invalidateQueries({ queryKey: ["/api/auth/user"] });
       queryClient.invalidateQueries({ queryKey: ["/api/library/new-count"] });
@@ -536,9 +542,11 @@ export default function CourseDetail() {
           );
         }
       });
+
       setShowPurchaseDialog(false);
       setUseFantiks(false);
       setPayWithFantiks(false);
+      setPurchasedData(data);
 
       celebrateJackpot();
 
@@ -642,6 +650,60 @@ export default function CourseDetail() {
     canAfford = balance >= priceWithDiscount;
   }
 
+  const subcategoryIds = course?.subcategoryIds || [];
+
+  const selectedSubcategories = React.useMemo(() => {
+    if (!subcategories) return []
+    return subcategories.filter(sub =>
+      subcategoryIds.includes(sub.id) && sub.isActive
+    )
+  }, [subcategoryIds, subcategories])
+
+  const fallbackCategories = React.useMemo(() => {
+    if (selectedSubcategories.length > 0 || !categories) return []
+    return categories.filter(cat =>
+      course?.level?.includes(cat.id) && cat.isActive
+    )
+  }, [selectedSubcategories.length, categories, course?.level])
+
+  const allLevelBadges = selectedSubcategories.length > 0
+    ? selectedSubcategories
+    : fallbackCategories
+
+  const getAllItems = () => {
+    const items: Array<{ id?: string; name: string }> = []
+    if (!course) return items
+
+    platforms.forEach(p => items.push({ id: p.id, name: p.name }))
+    allLevelBadges.forEach(l => items.push({ id: l.id, name: l.name }))
+    if (course.year) {
+      items.push({ name: String(course.year) })
+    }
+
+    return items
+  }
+  const items = getAllItems()
+  const repeatedItems = [...items, ...items]
+
+  const charCount = items.reduce((sum, item) => sum + (item.name?.length || 0), 0)
+
+  const allItems = React.useMemo(() => {
+
+    const items: Array<{ id?: string; name: string }> = [];
+
+    platforms.forEach(p => items.push({ id: p.id, name: p.name }))
+    allLevelBadges.forEach(l => items.push({ id: l.id, name: l.name }))
+    if (course?.year) {
+      items.push({ name: String(course?.year) })
+    }
+
+    return items;
+  }, [platforms, allLevelBadges, course?.year]);
+
+  const tripleItems = React.useMemo(() =>
+    [...allItems, ...allItems, ...allItems],
+    [allItems]
+  );
   if (isLoading || !course) {
     return (
       <div className="min-h-screen bg-background">
@@ -674,6 +736,7 @@ export default function CourseDetail() {
               data-testid="link-back-to-shop"
               onClick={() => {
                 const shopUrl = sessionStorage.getItem('shopUrl');
+
                 setLocation(shopUrl || '/shop');
               }}
             >
@@ -772,6 +835,7 @@ export default function CourseDetail() {
       showSuccessDialog={showSuccessDialog}
       setShowSuccessDialog={setShowSuccessDialog}
       purchaseMutation={purchaseMutation}
+      purchasedData={purchasedData}
     />;
   }
 
@@ -784,6 +848,7 @@ export default function CourseDetail() {
           data-testid="link-back-to-shop"
           onClick={() => {
             const shopUrl = sessionStorage.getItem('shopUrl');
+            console.log('shopUrl', shopUrl)
             setLocation(shopUrl || '/shop');
           }}
         >
@@ -791,12 +856,16 @@ export default function CourseDetail() {
           Назад к магазину
         </div>
 
+        <h1 className="text-3xl font-bold mb-5" data-testid="text-course-title">ДЕМО УРОК:</h1>
+
         <div className="grid lg:grid-cols-3 gap-6">
           <div className="lg:col-span-2 space-y-6">
+
             {/* Preview Video Section - Full Player with Controls */}
-            <div className="aspect-video w-full bg-muted overflow-hidden rounded-lg">
+            <div className="w-full bg-muted overflow-hidden rounded-lg">
               {previewLesson?.videoUrl ? (
                 <VideoPlayer
+                  className="lg:max-h-[415px]"
                   src={previewLesson.videoUrl}
                 />
               ) : course.thumbnailImage ? (
@@ -820,39 +889,32 @@ export default function CourseDetail() {
 
               <div className="relative space-y-4">
                 {/* Badges */}
-                <div className="flex flex-wrap gap-2">
-                  {
-                    platforms.length > 0 && platforms.map((platform) => (
-                      <Badge key={platform.id} variant="outline" className="border-purple-500/30 bg-purple-500/10">
-                        <Award className="h-3 w-3 mr-1" />
-                        {platform.name}
-                      </Badge>
-                    ))
-                  }
-                  {((Array.isArray(courseSubcategories) && courseSubcategories.length > 0 && subcategories) || categoriesWithoutSub) && (
-                    <div className="flex flex-wrap gap-2">
-                      {
-                        courseSubcategories && courseSubcategories.length > 0 ?
-                          courseSubcategories.map(subCategory => (
-                            <Badge key={subCategory.id} variant="outline" className="text-sm font-medium">
-                              {subCategory.name}
-                            </Badge>
-                          )) : categoriesWithoutSub && categoriesWithoutSub.map(subCategory => <Badge key={subCategory.id} variant="outline" className="text-sm font-medium">
-                            {subCategory.name}
-                          </Badge>)
-                      }
-                    </div>
-                  )}
-                  <Badge variant="outline" className="border-orange-500/30 bg-orange-500/10">
-                    <Clock className="h-3 w-3 mr-1" />
-                    {course.year}
-                  </Badge>
-                  {course.isFree && (
-                    <Badge className="bg-gradient-to-r from-green-500 to-emerald-500 text-white border-none">
-                      <Sparkles className="h-3 w-3 mr-1" />
-                      Бесплатно
-                    </Badge>
-                  )}
+                <div
+                  className="overflow-hidden relative h-7 my-2 cursor-pointer"
+                >
+                  <div
+                    ref={innerRef}
+                    className={cn(
+                      "inline-flex whitespace-nowrap will-change-transform animate-marquee",
+                      "gap-1.5 absolute"
+                    )}
+                    style={{
+                      contain: 'paint layout'
+                    }}
+                  >
+                    {tripleItems.map((item, idx) => (
+                      <div
+                        key={`${item.id || item.name}-${idx}`}
+                        className={cn(
+                          "inline-flex items-center px-3 py-1 mx-1.5 rounded-full text-xs font-medium border",
+                          "bg-background/80 border-border/50 text-foreground/90",
+                          "shadow-sm"
+                        )}
+                      >
+                        {item.name}
+                      </div>
+                    ))}
+                  </div>
                 </div>
 
                 {/* Title */}
@@ -898,7 +960,7 @@ export default function CourseDetail() {
                     </Avatar>
                   </div>
                   <div className="flex-1">
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 flex-wrap">
                       <p className="font-semibold text-lg" data-testid="text-author-name">
                         {course.authorName || 'Автор'}
                       </p>
@@ -915,6 +977,249 @@ export default function CourseDetail() {
               </div>
             </div>
 
+            {
+              isMobile && (
+                <div className="lg:col-span-1">
+                  <Card className="sticky top-20">
+                    {/* Thumbnail above price - only show if preview video exists */}
+                    {previewLesson?.videoUrl && course.thumbnailImage && (
+                      <div className="aspect-video w-full bg-muted overflow-hidden">
+                        <img
+                          src={course.thumbnailImage}
+                          alt={course.title}
+                          className="w-full h-full object-cover"
+                        />
+                      </div>
+                    )}
+
+                    <CardHeader>
+                      <div data-testid="text-course-price">
+                        {course.isFree ? (
+                          <h3 className="text-3xl font-bold">Бесплатно</h3>
+                        ) : paymentType === 'fantiks_only' ? (
+                          <div className="flex flex-col gap-1">
+                            <h3 className="text-3xl font-bold text-purple-400">{fantikPrice} 🎫</h3>
+                            <span className="text-sm text-purple-400/70">фантики</span>
+                          </div>
+                        ) : paymentType === 'both' ? (
+                          <div className="flex items-center gap-4">
+                            <div className="flex flex-col">
+                              <h3 className="text-3xl font-bold">{formatPrice(moneyPrice)} ₽</h3>
+                            </div>
+                            <div className="h-12 w-px bg-gradient-to-b from-transparent via-border to-transparent" />
+                            <div className="flex flex-col">
+                              <span className="text-2xl font-bold text-purple-400">{fantikPrice} 🎫</span>
+                              <span className="text-xs text-purple-400/70">фантики</span>
+                            </div>
+                          </div>
+                        ) : (
+                          <h3 className="text-3xl font-bold">{formatPrice(moneyPrice)} ₽</h3>
+                        )}
+                      </div>
+                    </CardHeader>
+                    <CardContent className="space-y-4">
+                      {isPurchased ? (
+                        <div className="space-y-3">
+                          <div className="flex items-center gap-2 text-chart-2">
+                            <CheckCircle2 className="h-5 w-5" />
+                            <span className="font-semibold">Курс куплен</span>
+                          </div>
+                          <Link href="/library">
+                            <Button className="w-full" data-testid="button-go-to-library">
+                              Перейти в библиотеку
+                            </Button>
+                          </Link>
+                        </div>
+                      ) : (
+                        <>
+                          <Button
+                            className="w-full"
+                            onClick={() => {
+                              if (course.isFree) {
+                                purchaseMutation.mutate({ useFantiks: useFantiks, payWithFantiks: payWithFantiks });
+                              } else {
+                                if (paymentType === 'fantiks_only') {
+                                  setPayWithFantiks(true);
+                                }
+                                setShowPurchaseDialog(true);
+                              }
+                            }}
+                            disabled={purchaseMutation.isPending}
+                            data-testid="button-purchase-course"
+                          >
+                            {purchaseMutation.isPending ? (
+                              "Обработка..."
+                            ) : course.isFree ? (
+                              <>
+                                <BookOpen className="mr-2 h-4 w-4" />
+                                Получить бесплатно
+                              </>
+                            ) : (
+                              <>
+                                <ShoppingCart className="mr-2 h-4 w-4" />
+                                Купить курс
+                              </>
+                            )}
+                          </Button>
+                          {!course.isFree && (
+                            <p className="text-xs text-muted-foreground text-center">
+                              На вашем балансе: {formatPrice(balance)} ₽
+                            </p>
+                          )}
+
+                          {/* Favorite Button - показываем только для авторизованных пользователей */}
+                          {user && (
+                            <div className="flex flex-col gap-3 w-full">
+                              <Button
+                                variant="outline"
+                                className={`
+        w-full transition-colors
+        ${isFavorited
+                                    ? 'border-red-500/70 text-red-500 hover:bg-red-50 dark:hover:bg-red-950/30 hover:border-red-500'
+                                    : 'border-border hover:border-red-400/70 hover:text-red-500/90'
+                                  }
+      `}
+                                onClick={handleToggleFavorite}
+                                disabled={favoriteMutation.isPending}
+                                data-testid="button-toggle-favorite"
+                              >
+                                <Heart
+                                  className={`h-4 w-4 mr-2 transition-all ${isFavorited ? 'fill-current scale-110' : 'stroke-current'}`}
+                                />
+                                {isFavorited ? "Убрать из избранного" : "Добавить в избранное"}
+                              </Button>
+
+                              <Button
+                                asChild
+                                variant="outline"
+                                className="border-border
+      "
+                                data-testid="button-add-balance"
+                              >
+                                <Link href="/payment">
+                                  <Wallet className="h-4 w-4 mr-2" />
+                                  Пополнить баланс
+                                </Link>
+                              </Button>
+                            </div>
+                          )}
+                        </>
+                      )}
+
+                      {/* Course Statistics */}
+                      {courseStats && (
+                        <div className="pt-4 border-t border-border">
+                          <div className="grid grid-cols-3 gap-3 text-center">
+                            <div className="space-y-1">
+                              <div className="flex items-center justify-center">
+                                <PlayCircle className="h-4 w-4 text-primary" />
+                              </div>
+                              <p className="text-lg font-bold">{courseStats.lessonCount}</p>
+                              <p className="text-xs text-muted-foreground">
+                                {courseStats.lessonCount === 1 ? 'урок' : courseStats.lessonCount < 5 ? 'урока' : 'уроков'}
+                              </p>
+                            </div>
+                            <div className="space-y-1">
+                              <div className="flex items-center justify-center">
+                                <Clock className="h-4 w-4 text-primary" />
+                              </div>
+                              <p className="text-lg font-bold">
+                                {courseStats.totalDurationMinutes >= 60
+                                  ? `${Math.floor(courseStats.totalDurationMinutes / 60)}ч`
+                                  : `${courseStats.totalDurationMinutes}м`
+                                }
+                              </p>
+                              <p className="text-xs text-muted-foreground">длительность</p>
+                            </div>
+                            <div className="space-y-1">
+                              <div className="flex items-center justify-center">
+                                <Users className="h-4 w-4 text-primary" />
+                              </div>
+                              <p className="text-lg font-bold">{courseStats.purchaseCount}</p>
+                              <p className="text-xs text-muted-foreground">
+                                {courseStats.purchaseCount === 1 ? 'студент' : courseStats.purchaseCount < 5 ? 'студента' : 'студентов'}
+                              </p>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+
+
+
+                      {/* Package Advertisement - показываем если курс входит в подборку */}
+                      {coursePackages && coursePackages.length > 0 && !isPurchased && (
+                        <div className="pt-4 border-t border-border">
+                          {coursePackages.map((pkg) => (
+                            <div
+                              key={pkg.id}
+                              className="relative overflow-hidden rounded-lg border border-primary/30 bg-gradient-to-br from-purple-500/10 via-pink-500/10 to-orange-500/10 p-4 space-y-3 hover-elevate active-elevate-2 transition-all duration-300"
+                              data-testid={`package-ad-${pkg.id}`}
+                            >
+                              {/* Discount Badge */}
+                              <div className="absolute top-2 right-2">
+                                <Badge className="bg-gradient-to-r from-orange-500 to-pink-500 text-white border-none shadow-lg">
+                                  <TrendingDown className="h-3 w-3 mr-1" />
+                                  -{pkg.discount}%
+                                </Badge>
+                              </div>
+
+                              {/* Package Icon & Title */}
+                              <div className="flex items-start gap-3">
+                                <div className="p-2 rounded-lg bg-primary/10 shrink-0">
+                                  <Package className="h-5 w-5 text-primary" />
+                                </div>
+                                <div className="flex-1 min-w-0">
+                                  <h4 className="font-semibold text-sm leading-tight mb-1">
+                                    Этот курс входит в подборку
+                                  </h4>
+                                  <p className="text-xs text-primary font-medium truncate">
+                                    {pkg.name}
+                                  </p>
+                                </div>
+                              </div>
+
+                              {/* Package Stats */}
+                              <div className="flex items-center justify-between text-xs">
+                                <span className="text-muted-foreground">
+                                  {pkg.courseCount} {pkg.courseCount === 1 ? 'курс' : pkg.courseCount < 5 ? 'курса' : 'курсов'}
+                                </span>
+                                <div className="flex items-center gap-2">
+                                  <span className="line-through text-muted-foreground">
+                                    {formatPrice(pkg.totalPrice)} ₽
+                                  </span>
+                                  <span className="font-bold text-primary">
+                                    {formatPrice(pkg.discountedPrice)} ₽
+                                  </span>
+                                </div>
+                              </div>
+
+                              {/* CTA Button */}
+                              <Link href={`/package/${pkg.id}`}>
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  className="w-full border-primary/50 hover:bg-primary/10 group"
+                                  data-testid={`button-view-package-${pkg.id}`}
+                                >
+                                  <span className="text-xs">Смотреть подборку</span>
+                                  <ArrowRight className="ml-2 h-3 w-3 transition-transform group-hover:translate-x-1" />
+                                </Button>
+                              </Link>
+
+                              {/* Savings Highlight */}
+                              <p className="text-center text-xs text-muted-foreground">
+                                Экономия: <span className="text-chart-2 font-semibold">{formatPrice(pkg.totalPrice - pkg.discountedPrice)} ₽</span>
+                              </p>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </CardContent>
+                  </Card>
+                </div>
+              )
+            }
+
             <Card>
               <CardHeader>
                 <h2 className="text-2xl font-bold">Описание курса</h2>
@@ -929,260 +1234,248 @@ export default function CourseDetail() {
             </Card>
           </div>
 
-          <div className="lg:col-span-1">
-            <Card className="sticky top-20">
-              {/* Thumbnail above price - only show if preview video exists */}
-              {previewLesson?.videoUrl && course.thumbnailImage && (
-                <div className="aspect-video w-full bg-muted overflow-hidden">
-                  <img
-                    src={course.thumbnailImage}
-                    alt={course.title}
-                    className="w-full h-full object-cover"
-                  />
-                </div>
-              )}
-
-              <CardHeader>
-                <div data-testid="text-course-price">
-                  {course.isFree ? (
-                    <h3 className="text-3xl font-bold">Бесплатно</h3>
-                  ) : paymentType === 'fantiks_only' ? (
-                    <div className="flex flex-col gap-1">
-                      <h3 className="text-3xl font-bold text-purple-400">{fantikPrice} 🎫</h3>
-                      <span className="text-sm text-purple-400/70">фантики</span>
-                    </div>
-                  ) : paymentType === 'both' ? (
-                    <div className="flex items-center gap-4">
-                      <div className="flex flex-col">
-                        <h3 className="text-3xl font-bold">{formatPrice(moneyPrice)} ₽</h3>
-                      </div>
-                      <div className="h-12 w-px bg-gradient-to-b from-transparent via-border to-transparent" />
-                      <div className="flex flex-col">
-                        <span className="text-2xl font-bold text-purple-400">{fantikPrice} 🎫</span>
-                        <span className="text-xs text-purple-400/70">фантики</span>
-                      </div>
-                    </div>
-                  ) : (
-                    <h3 className="text-3xl font-bold">{formatPrice(moneyPrice)} ₽</h3>
-                  )}
-                </div>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                {isPurchased ? (
-                  <div className="space-y-3">
-                    <div className="flex items-center gap-2 text-chart-2">
-                      <CheckCircle2 className="h-5 w-5" />
-                      <span className="font-semibold">Курс куплен</span>
-                    </div>
-                    <Link href="/library">
-                      <Button className="w-full" data-testid="button-go-to-library">
-                        Перейти в библиотеку
-                      </Button>
-                    </Link>
-                  </div>
-                ) : (
-                  <>
-                    <Button
-                      className="w-full"
-                      onClick={() => {
-                        if (course.isFree) {
-                          purchaseMutation.mutate({ useFantiks: false, payWithFantiks: false });
-                        } else {
-                          if (paymentType === 'fantiks_only') {
-                            setPayWithFantiks(true);
-                          }
-                          setShowPurchaseDialog(true);
-                        }
-                      }}
-                      disabled={purchaseMutation.isPending}
-                      data-testid="button-purchase-course"
-                    >
-                      {purchaseMutation.isPending ? (
-                        "Обработка..."
-                      ) : course.isFree ? (
-                        <>
-                          <BookOpen className="mr-2 h-4 w-4" />
-                          Получить бесплатно
-                        </>
-                      ) : (
-                        <>
-                          <ShoppingCart className="mr-2 h-4 w-4" />
-                          Купить курс
-                        </>
-                      )}
-                    </Button>
-                    {!course.isFree && (
-                      <p className="text-xs text-muted-foreground text-center">
-                        На вашем балансе: {formatPrice(balance)} ₽
-                      </p>
-                    )}
-
-                    {/* Favorite Button - показываем только для авторизованных пользователей */}
-                    {user && (
-                      <Button
-                        variant="outline"
-                        className={`w-full ${isFavorited
-                          ? 'border-red-500 text-red-500 hover:bg-red-50 dark:hover:bg-red-950/20'
-                          : 'hover:border-red-500 hover:text-red-500'
-                          }`}
-                        onClick={handleToggleFavorite}
-                        disabled={favoriteMutation.isPending}
-                        data-testid="button-toggle-favorite"
-                      >
-                        <Heart className={`h-4 w-4 mr-2 ${isFavorited ? 'fill-current' : ''}`} />
-                        {isFavorited ? "Убрать из избранного" : "Добавить в избранное"}
-                      </Button>
-                    )}
-                  </>
-                )}
-
-                {/* Course Statistics */}
-                {courseStats && (
-                  <div className="pt-4 border-t border-border">
-                    <div className="grid grid-cols-3 gap-3 text-center">
-                      <div className="space-y-1">
-                        <div className="flex items-center justify-center">
-                          <PlayCircle className="h-4 w-4 text-primary" />
-                        </div>
-                        <p className="text-lg font-bold">{courseStats.lessonCount}</p>
-                        <p className="text-xs text-muted-foreground">
-                          {courseStats.lessonCount === 1 ? 'урок' : courseStats.lessonCount < 5 ? 'урока' : 'уроков'}
-                        </p>
-                      </div>
-                      <div className="space-y-1">
-                        <div className="flex items-center justify-center">
-                          <Clock className="h-4 w-4 text-primary" />
-                        </div>
-                        <p className="text-lg font-bold">
-                          {courseStats.totalDurationMinutes >= 60
-                            ? `${Math.floor(courseStats.totalDurationMinutes / 60)}ч`
-                            : `${courseStats.totalDurationMinutes}м`
-                          }
-                        </p>
-                        <p className="text-xs text-muted-foreground">длительность</p>
-                      </div>
-                      <div className="space-y-1">
-                        <div className="flex items-center justify-center">
-                          <Users className="h-4 w-4 text-primary" />
-                        </div>
-                        <p className="text-lg font-bold">{courseStats.purchaseCount}</p>
-                        <p className="text-xs text-muted-foreground">
-                          {courseStats.purchaseCount === 1 ? 'студент' : courseStats.purchaseCount < 5 ? 'студента' : 'студентов'}
-                        </p>
-                      </div>
-                    </div>
-                  </div>
-                )}
-
-                <div className="pt-4 border-t border-border space-y-2 text-sm">
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">Платформа:</span>
-                    {
-                      platforms.length > 0 && platforms.map((platform) => (
-                        <span className="font-medium" key={platform.id}>
-                          {platform.name}
-                        </span>
-                      ))
-                    }
-                  </div>
-
-                  {((Array.isArray(courseSubcategories) && courseSubcategories.length > 0 && subcategories) || categories?.filter(cat => course.level?.includes(cat.id))) && (
-                    <div className="flex justify-between">
-
-                      <div className="inline-flex flex-wrap items-center gap-2">
-                        <span className="text-muted-foreground">Подкатегории:</span>
-                        {
-                          courseSubcategories && courseSubcategories.length > 0 ? courseSubcategories.map(subCategory => (
-                            <span key={subCategory.id} className="font-medium">
-                              {subCategory.name}
-                            </span>
-                          )) : categoriesWithoutSub.map(subCategory => (
-                            <span key={subCategory.id} className="font-medium">
-                              {subCategory.name}
-                            </span>
-                          ))
-                        }
-                      </div>
+          {
+            !isMobile && (
+              <div className="lg:col-span-1">
+                <Card className="sticky top-20">
+                  {/* Thumbnail above price - only show if preview video exists */}
+                  {previewLesson?.videoUrl && course.thumbnailImage && (
+                    <div className="aspect-video w-full bg-muted overflow-hidden">
+                      <img
+                        src={course.thumbnailImage}
+                        alt={course.title}
+                        className="w-full h-full object-cover"
+                      />
                     </div>
                   )}
 
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">Год:</span>
-                    <span className="font-medium">{course.year}</span>
-                  </div>
-                </div>
-
-                {/* Package Advertisement - показываем если курс входит в подборку */}
-                {coursePackages && coursePackages.length > 0 && !isPurchased && (
-                  <div className="pt-4 border-t border-border">
-                    {coursePackages.map((pkg) => (
-                      <div
-                        key={pkg.id}
-                        className="relative overflow-hidden rounded-lg border border-primary/30 bg-gradient-to-br from-purple-500/10 via-pink-500/10 to-orange-500/10 p-4 space-y-3 hover-elevate active-elevate-2 transition-all duration-300"
-                        data-testid={`package-ad-${pkg.id}`}
-                      >
-                        {/* Discount Badge */}
-                        <div className="absolute top-2 right-2">
-                          <Badge className="bg-gradient-to-r from-orange-500 to-pink-500 text-white border-none shadow-lg">
-                            <TrendingDown className="h-3 w-3 mr-1" />
-                            -{pkg.discount}%
-                          </Badge>
+                  <CardHeader>
+                    <div data-testid="text-course-price">
+                      {course.isFree ? (
+                        <h3 className="text-3xl font-bold">Бесплатно</h3>
+                      ) : paymentType === 'fantiks_only' ? (
+                        <div className="flex flex-col gap-1">
+                          <h3 className="text-3xl font-bold text-purple-400">{fantikPrice} 🎫</h3>
+                          <span className="text-sm text-purple-400/70">фантики</span>
                         </div>
-
-                        {/* Package Icon & Title */}
-                        <div className="flex items-start gap-3">
-                          <div className="p-2 rounded-lg bg-primary/10 shrink-0">
-                            <Package className="h-5 w-5 text-primary" />
+                      ) : paymentType === 'both' ? (
+                        <div className="flex items-center gap-4">
+                          <div className="flex flex-col">
+                            <h3 className="text-3xl font-bold">{formatPrice(moneyPrice)} ₽</h3>
                           </div>
-                          <div className="flex-1 min-w-0">
-                            <h4 className="font-semibold text-sm leading-tight mb-1">
-                              Этот курс входит в подборку
-                            </h4>
-                            <p className="text-xs text-primary font-medium truncate">
-                              {pkg.name}
+                          <div className="h-12 w-px bg-gradient-to-b from-transparent via-border to-transparent" />
+                          <div className="flex flex-col">
+                            <span className="text-2xl font-bold text-purple-400">{fantikPrice} 🎫</span>
+                            <span className="text-xs text-purple-400/70">фантики</span>
+                          </div>
+                        </div>
+                      ) : (
+                        <h3 className="text-3xl font-bold">{formatPrice(moneyPrice)} ₽</h3>
+                      )}
+                    </div>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    {isPurchased ? (
+                      <div className="space-y-3">
+                        <div className="flex items-center gap-2 text-chart-2">
+                          <CheckCircle2 className="h-5 w-5" />
+                          <span className="font-semibold">Курс куплен</span>
+                        </div>
+                        <Link href="/library">
+                          <Button className="w-full" data-testid="button-go-to-library">
+                            Перейти в библиотеку
+                          </Button>
+                        </Link>
+                      </div>
+                    ) : (
+                      <>
+                        <Button
+                          className="w-full"
+                          onClick={() => {
+                            if (course.isFree) {
+                              purchaseMutation.mutate({ useFantiks: useFantiks, payWithFantiks: payWithFantiks });
+                            } else {
+                              if (paymentType === 'fantiks_only') {
+                                setPayWithFantiks(true);
+                              }
+                              setShowPurchaseDialog(true);
+                            }
+                          }}
+                          disabled={purchaseMutation.isPending}
+                          data-testid="button-purchase-course"
+                        >
+                          {purchaseMutation.isPending ? (
+                            "Обработка..."
+                          ) : course.isFree ? (
+                            <>
+                              <BookOpen className="mr-2 h-4 w-4" />
+                              Получить бесплатно
+                            </>
+                          ) : (
+                            <>
+                              <ShoppingCart className="mr-2 h-4 w-4" />
+                              Купить курс
+                            </>
+                          )}
+                        </Button>
+                        {!course.isFree && (
+                          <p className="text-xs text-muted-foreground text-center">
+                            На вашем балансе: {formatPrice(balance)} ₽
+                          </p>
+                        )}
+
+                        {/* Favorite Button - показываем только для авторизованных пользователей */}
+                        {user && (
+                          <div className="flex flex-col gap-3 w-full">
+                            <Button
+                              variant="outline"
+                              className={`
+        w-full transition-colors
+        ${isFavorited
+                                  ? 'border-red-500/70 text-red-500 hover:bg-red-50 dark:hover:bg-red-950/30 hover:border-red-500'
+                                  : 'border-border hover:border-red-400/70 hover:text-red-500/90'
+                                }
+      `}
+                              onClick={handleToggleFavorite}
+                              disabled={favoriteMutation.isPending}
+                              data-testid="button-toggle-favorite"
+                            >
+                              <Heart
+                                className={`h-4 w-4 mr-2 transition-all ${isFavorited ? 'fill-current scale-110' : 'stroke-current'}`}
+                              />
+                              {isFavorited ? "Убрать из избранного" : "Добавить в избранное"}
+                            </Button>
+
+                            <Button
+                              asChild
+                              variant="outline"
+                              className="border-border
+      "
+                              data-testid="button-add-balance"
+                            >
+                              <Link href="/payment">
+                                <Wallet className="h-4 w-4 mr-2" />
+                                Пополнить баланс
+                              </Link>
+                            </Button>
+                          </div>
+                        )}
+                      </>
+                    )}
+
+                    {/* Course Statistics */}
+                    {courseStats && (
+                      <div className="pt-4 border-t border-border">
+                        <div className="grid grid-cols-3 gap-3 text-center">
+                          <div className="space-y-1">
+                            <div className="flex items-center justify-center">
+                              <PlayCircle className="h-4 w-4 text-primary" />
+                            </div>
+                            <p className="text-lg font-bold">{courseStats.lessonCount}</p>
+                            <p className="text-xs text-muted-foreground">
+                              {courseStats.lessonCount === 1 ? 'урок' : courseStats.lessonCount < 5 ? 'урока' : 'уроков'}
+                            </p>
+                          </div>
+                          <div className="space-y-1">
+                            <div className="flex items-center justify-center">
+                              <Clock className="h-4 w-4 text-primary" />
+                            </div>
+                            <p className="text-lg font-bold">
+                              {courseStats.totalDurationMinutes >= 60
+                                ? `${Math.floor(courseStats.totalDurationMinutes / 60)}ч`
+                                : `${courseStats.totalDurationMinutes}м`
+                              }
+                            </p>
+                            <p className="text-xs text-muted-foreground">длительность</p>
+                          </div>
+                          <div className="space-y-1">
+                            <div className="flex items-center justify-center">
+                              <Users className="h-4 w-4 text-primary" />
+                            </div>
+                            <p className="text-lg font-bold">{courseStats.purchaseCount}</p>
+                            <p className="text-xs text-muted-foreground">
+                              {courseStats.purchaseCount === 1 ? 'студент' : courseStats.purchaseCount < 5 ? 'студента' : 'студентов'}
                             </p>
                           </div>
                         </div>
-
-                        {/* Package Stats */}
-                        <div className="flex items-center justify-between text-xs">
-                          <span className="text-muted-foreground">
-                            {pkg.courseCount} {pkg.courseCount === 1 ? 'курс' : pkg.courseCount < 5 ? 'курса' : 'курсов'}
-                          </span>
-                          <div className="flex items-center gap-2">
-                            <span className="line-through text-muted-foreground">
-                              {formatPrice(pkg.totalPrice)} ₽
-                            </span>
-                            <span className="font-bold text-primary">
-                              {formatPrice(pkg.discountedPrice)} ₽
-                            </span>
-                          </div>
-                        </div>
-
-                        {/* CTA Button */}
-                        <Link href={`/package/${pkg.id}`}>
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            className="w-full border-primary/50 hover:bg-primary/10 group"
-                            data-testid={`button-view-package-${pkg.id}`}
-                          >
-                            <span className="text-xs">Смотреть подборку</span>
-                            <ArrowRight className="ml-2 h-3 w-3 transition-transform group-hover:translate-x-1" />
-                          </Button>
-                        </Link>
-
-                        {/* Savings Highlight */}
-                        <p className="text-center text-xs text-muted-foreground">
-                          Экономия: <span className="text-chart-2 font-semibold">{formatPrice(pkg.totalPrice - pkg.discountedPrice)} ₽</span>
-                        </p>
                       </div>
-                    ))}
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-          </div>
+                    )}
+
+
+
+                    {/* Package Advertisement - показываем если курс входит в подборку */}
+                    {coursePackages && coursePackages.length > 0 && !isPurchased && (
+                      <div className="pt-4 border-t border-border">
+                        {coursePackages.map((pkg) => (
+                          <div
+                            key={pkg.id}
+                            className="relative overflow-hidden rounded-lg border border-primary/30 bg-gradient-to-br from-purple-500/10 via-pink-500/10 to-orange-500/10 p-4 space-y-3 hover-elevate active-elevate-2 transition-all duration-300"
+                            data-testid={`package-ad-${pkg.id}`}
+                          >
+                            {/* Discount Badge */}
+                            <div className="absolute top-2 right-2">
+                              <Badge className="bg-gradient-to-r from-orange-500 to-pink-500 text-white border-none shadow-lg">
+                                <TrendingDown className="h-3 w-3 mr-1" />
+                                -{pkg.discount}%
+                              </Badge>
+                            </div>
+
+                            {/* Package Icon & Title */}
+                            <div className="flex items-start gap-3">
+                              <div className="p-2 rounded-lg bg-primary/10 shrink-0">
+                                <Package className="h-5 w-5 text-primary" />
+                              </div>
+                              <div className="flex-1 min-w-0">
+                                <h4 className="font-semibold text-sm leading-tight mb-1">
+                                  Этот курс входит в подборку
+                                </h4>
+                                <p className="text-xs text-primary font-medium truncate">
+                                  {pkg.name}
+                                </p>
+                              </div>
+                            </div>
+
+                            {/* Package Stats */}
+                            <div className="flex items-center justify-between text-xs">
+                              <span className="text-muted-foreground">
+                                {pkg.courseCount} {pkg.courseCount === 1 ? 'курс' : pkg.courseCount < 5 ? 'курса' : 'курсов'}
+                              </span>
+                              <div className="flex items-center gap-2">
+                                <span className="line-through text-muted-foreground">
+                                  {formatPrice(pkg.totalPrice)} ₽
+                                </span>
+                                <span className="font-bold text-primary">
+                                  {formatPrice(pkg.discountedPrice)} ₽
+                                </span>
+                              </div>
+                            </div>
+
+                            {/* CTA Button */}
+                            <Link href={`/package/${pkg.id}`}>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                className="w-full border-primary/50 hover:bg-primary/10 group"
+                                data-testid={`button-view-package-${pkg.id}`}
+                              >
+                                <span className="text-xs">Смотреть подборку</span>
+                                <ArrowRight className="ml-2 h-3 w-3 transition-transform group-hover:translate-x-1" />
+                              </Button>
+                            </Link>
+
+                            {/* Savings Highlight */}
+                            <p className="text-center text-xs text-muted-foreground">
+                              Экономия: <span className="text-chart-2 font-semibold">{formatPrice(pkg.totalPrice - pkg.discountedPrice)} ₽</span>
+                            </p>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+              </div>
+            )
+          }
         </div>
 
         <div className="mt-12">
@@ -1373,8 +1666,18 @@ export default function CourseDetail() {
               Отмена
             </Button>
             <Button
-              onClick={() => purchaseMutation.mutate({ useFantiks, payWithFantiks })}
-              disabled={!canAfford || purchaseMutation.isPending}
+              onClick={() => {
+                if (!canAfford) {
+                  toast({
+                    title: "Недостаточно средств",
+                    description: "Пополните баланс или измените способ оплаты.",
+                    variant: "destructive",
+                  });
+                  return;
+                }
+                purchaseMutation.mutate({ useFantiks, payWithFantiks: payWithFantiks });
+              }}
+              disabled={purchaseMutation.isPending}
               data-testid="button-dialog-confirm"
             >
               {purchaseMutation.isPending ? "Обработка..." : "Подтвердить покупку"}
@@ -1435,6 +1738,43 @@ function FrequentlyBoughtTogether({ courseId }: { courseId: string }) {
     enabled: !!user,
   });
 
+  const { data: categories } = useQuery<Category[]>({
+    queryKey: ["/api/categories"],
+  });
+
+  const { data: subcategories } = useQuery<Subcategory[]>({
+    queryKey: ["/api/subcategories"],
+  });
+
+  const getPlatformName = (platform: string): string => {
+
+    const legacyNames: Record<string, string> = {
+      wb: "Wildberries",
+      ozon: "Ozon",
+      yandex: "Яндекс.Маркет",
+    };
+
+    if (legacyNames[platform]) {
+      return legacyNames[platform];
+    }
+
+    if (categories) {
+      const category = categories.find(
+        cat => cat.slug === platform.toLowerCase() || cat.nameEn.toLowerCase() === platform.toLowerCase()
+      );
+      if (category) return category.name;
+    }
+
+    if (subcategories) {
+      const subcategory = subcategories.find(
+        sub => sub.slug === platform.toLowerCase() || sub.nameEn.toLowerCase() === platform.toLowerCase()
+      );
+      if (subcategory) return subcategory.name;
+    }
+
+    return platform;
+  };
+
   if (isLoading) {
     return (
       <Card>
@@ -1456,7 +1796,7 @@ function FrequentlyBoughtTogether({ courseId }: { courseId: string }) {
     return null;
   }
 
-  const isPurchased = (courseId: string) => userPurchases?.includes(courseId) || false;
+  const isPurchased = (id: string) => userPurchases?.includes(id) || false;
 
   return (
     <Card>
@@ -1507,9 +1847,11 @@ function FrequentlyBoughtTogether({ courseId }: { courseId: string }) {
                   <div className="p-4 flex-1 flex flex-col">
                     <div className="flex-1">
                       {/* Platform badge */}
-                      <Badge variant="outline" className="mb-2 text-xs">
-                        {course.platform}
-                      </Badge>
+                      {course.platform && (
+                        <Badge variant="outline" className="mb-2 text-xs">
+                          {getPlatformName(course.platform)}
+                        </Badge>
+                      )}
 
                       {/* Title */}
                       <h4 className="font-semibold text-sm line-clamp-2 mb-2 group-hover:text-primary transition-colors">

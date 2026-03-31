@@ -1,29 +1,31 @@
 import React, { useState } from 'react'
-import { GlassCard } from '../GlassCard';
-import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
-import { ShoppingCart, BookOpen, Sparkles, Heart, Play, ArrowRight, Edit2 } from "lucide-react";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import PreviewVideoPlayer from '../PreviewVideoPlayer';
-import { StarRating } from '../star-rating';
-import { ViewingCounter } from '../viewing-counter';
-import { CardFooter, CardHeader } from './card';
-import { formatPrice } from '@/lib/formatPrice';
-import { Category, Course, Subcategory, User } from '@shared/schema';
-import { useQuery } from '@tanstack/react-query';
-import { useLocation } from 'wouter';
-import { Section } from '@/pages/admin-course-edit';
+import { GlassCard } from '../GlassCard'
+import { Button } from "@/components/ui/button"
+import { Badge } from "@/components/ui/badge"
+import { ShoppingCart, BookOpen, Sparkles, Heart, Play, ArrowRight, Edit2, X } from "lucide-react"
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
+import PreviewVideoPlayer from '../PreviewVideoPlayer'
+import { StarRating } from '../star-rating'
+import { ViewingCounter } from '../viewing-counter'
+import { CardFooter, CardHeader } from './card'
+import { formatPrice } from '@/lib/formatPrice'
+import { Category, Course, Subcategory, User } from '@shared/schema'
+import { useLocation } from 'wouter'
+import { cn } from '@/lib/utils'
+import { TagsMarquee } from './tags-marquee'
 
 type ShopDesktopCardProps = {
-    course: Course,
-    index: number,
-    purchasedCourseIds: Set<string>,
-    favoritedCourseIds: Set<string>,
-    subcategories?: Subcategory[],
-    categories?: Category[],
-    user?: User,
-    isAuthenticated: boolean,
-    handleToggleFavorite: (courseId: string, e: React.MouseEvent) => void,
+    course: Course
+    index: number
+    purchasedCourseIds: Set<string>
+    favoritedCourseIds: Set<string>
+    subcategories?: Subcategory[]
+    categories?: Category[]
+    user?: User
+    isAuthenticated: boolean
+    handleToggleFavorite: (courseId: string, e: React.MouseEvent) => void
+    priority?: boolean
+    expandToLeft?: boolean
 }
 
 const ShopDesktopCard: React.FC<ShopDesktopCardProps> = ({
@@ -35,11 +37,14 @@ const ShopDesktopCard: React.FC<ShopDesktopCardProps> = ({
     categories,
     user,
     isAuthenticated,
-    handleToggleFavorite
+    handleToggleFavorite,
+    priority,
+    expandToLeft = false
 }) => {
-
-    const [hoveredCourseId, setHoveredCourseId] = useState<string | null>(null);
-    const [location, setLocation] = useLocation();
+    const [hoveredCourseId, setHoveredCourseId] = useState<string | null>(null)
+    const [location, setLocation] = useLocation()
+    const [isTagsModalOpen, setIsTagsModalOpen] = useState(false)
+    const [isVideoReady, setIsVideoReady] = useState(false)
 
     const isPurchased = purchasedCourseIds.has(course.id);
     const isFavorited = favoritedCourseIds.has(course.id);
@@ -48,88 +53,75 @@ const ShopDesktopCard: React.FC<ShopDesktopCardProps> = ({
     const shouldPlayVideo = hoveredCourseId === course.id && hasPreviewVideo;
     const isAdmin = user && user.isAdmin;
 
-    // Запрос подкатегорий только для этого курса
-    const { data: subcategoryIds = [] } = useQuery<string[]>({
-        queryKey: ["/api/admin/courses", course.id, "subcategories"],
-        queryFn: async () => {
-            const response = await fetch(`/api/admin/courses/${course.id}/subcategories`, {
-                credentials: "include",
-            });
-            if (!response.ok) return [];
-            return response.json();
-        },
-        staleTime: 5 * 60 * 1000,
-        enabled: !!course.id,
-    });
+    const subcategoryIds = course.subcategoryIds || [];
 
-    // Запрос секций только для этого курса
-    const { data: sections = [] } = useQuery<Section[]>({
-        queryKey: ["/api/admin/courses", course.id, "sections"],
-        queryFn: async () => {
-            const response = await fetch(`/api/admin/courses/${course.id}/sections`, {
-                credentials: "include",
-            });
-            if (!response.ok) throw new Error("Failed to fetch sections");
-            return response.json();
-        },
-        staleTime: 5 * 60 * 1000,
-        enabled: !!course.id,
-    });
+    const getAllItems = () => {
+        const items: Array<{ id?: string; name: string }> = []
 
-    // Платформы
+        platforms.forEach(p => items.push({ id: p.id, name: p.name }))
+        allLevelBadges.forEach(l => items.push({ id: l.id, name: l.name }))
+        if (course.year) {
+            items.push({ name: String(course.year) })
+        }
+
+        return items
+    }
+
     const platforms = React.useMemo(() => {
-        if (!subcategoryIds.length || !subcategories || !categories) return [];
+        if (!subcategoryIds.length || !subcategories || !categories) return []
 
         const matchedSubs = subcategories.filter(sub =>
             subcategoryIds.includes(sub.id) && sub.isActive
-        );
+        )
 
-        const categoryIds = [...new Set(matchedSubs.map(sub => sub.categoryId))];
+        const categoryIds = Array.from(new Set(matchedSubs.map(sub => sub.categoryId)))
 
         return categories.filter(cat =>
             categoryIds.includes(cat.id) && cat.isActive
-        );
-    }, [subcategoryIds, subcategories, categories]);
+        )
+    }, [subcategoryIds, subcategories, categories])
 
-    // Подкатегории (уровни)
     const selectedSubcategories = React.useMemo(() => {
-        if (!subcategories) return [];
+        if (!subcategories) return []
         return subcategories.filter(sub =>
             subcategoryIds.includes(sub.id) && sub.isActive
-        );
-    }, [subcategoryIds, subcategories]);
+        )
+    }, [subcategoryIds, subcategories])
 
     const fallbackCategories = React.useMemo(() => {
-        if (selectedSubcategories.length > 0 || !categories) return [];
+        if (selectedSubcategories.length > 0 || !categories) return []
         return categories.filter(cat =>
             course.level?.includes(cat.id) && cat.isActive
-        );
-    }, [selectedSubcategories.length, categories, course.level]);
+        )
+    }, [selectedSubcategories.length, categories, course.level])
 
     const allLevelBadges = selectedSubcategories.length > 0
         ? selectedSubcategories
-        : fallbackCategories;
+        : fallbackCategories
+
+    const items = getAllItems()
 
     return (
         <div
             key={course.id}
-            className="relative h-full group min-h-[500px]"
+            className={`relative h-full group min-h-[500px] z-[calc(50-${index})]`}
             onMouseEnter={() => {
                 if (hasPreviewVideo) {
-                    setHoveredCourseId(course.id);
+                    setHoveredCourseId(course.id)
                 }
             }}
             onMouseLeave={() => {
                 if (hasPreviewVideo) {
-                    setHoveredCourseId(null);
+                    setHoveredCourseId(null)
                 }
             }}
         >
             <GlassCard
                 variant="default"
-                glowColor="purple"
-                hover={true}
-                className="overflow-visible flex flex-col h-full group-hover:md:absolute group-hover:md:top-0 group-hover:md:left-0 group-hover:md:w-[420px] group-hover:md:z-40 "
+                glowColor="blue"
+                hover={false}
+                expandOnHover={true}
+                className={`overflow-visible flex flex-col h-full group-hover:md:absolute group-hover:md:top-0 ${expandToLeft ? 'group-hover:md:right-0' : 'group-hover:md:left-0'} group-hover:md:w-[420px] group-hover:md:z-40 `}
                 data-testid={`card-course-${course.id}`}
             >
                 <div
@@ -139,9 +131,8 @@ const ShopDesktopCard: React.FC<ShopDesktopCardProps> = ({
                         transform: 'translateZ(0)'
                     }}
                 >
-                    {/* Video/Thumbnail Section */}
                     <div
-                        className="bg-gradient-to-br from-primary/10 to-primary/5 relative overflow-hidden aspect-video w-full group-hover:md:h-[236px] group-hover:md:aspect-auto"
+                        className="bg-gradient-to-br from-primary/10 to-primary/5 relative overflow-hidden aspect-video w-full"
                         style={{
                             backfaceVisibility: 'hidden',
                             transform: 'translateZ(0)'
@@ -151,9 +142,7 @@ const ShopDesktopCard: React.FC<ShopDesktopCardProps> = ({
                             <Button
                                 size="icon"
                                 variant="ghost"
-                                className="!absolute top-3 left-3 !z-[1500] 
-                     bg-white/40 
-                     shadow-lg rounded-full"
+                                className="!absolute top-3 left-3 !z-[1500] bg-white/40 shadow-lg rounded-full"
                                 onClick={() => {
                                     window.location.replace(`/admin/courses/${course.id}/edit?subcategoryId=null&categiryId=null&parentId=null&fromStore`)
                                 }}
@@ -162,59 +151,53 @@ const ShopDesktopCard: React.FC<ShopDesktopCardProps> = ({
                             </Button>
                         }
 
-                        {/* Thumbnail Image - always visible, hidden only when video preview shows */}
                         {course.thumbnailImage ? (
                             <img
                                 src={course.thumbnailImage}
                                 alt={course.title}
-                                className={`w-full h-full object-cover absolute inset-0 ${hasPreviewVideo ? 'group-hover:opacity-0' : ''
+                                loading={priority ? "eager" : "lazy"}
+                                {...({ fetchpriority: priority ? "high" : "auto" } as any)}
+                                className={`w-full h-full object-cover absolute inset-0 transition-opacity duration-300 ${isVideoReady && shouldPlayVideo ? 'opacity-0 z-0' : 'opacity-100 z-20'
                                     }`}
                                 style={{
                                     backfaceVisibility: 'hidden',
                                     transform: 'translateZ(0)',
-                                    transition: 'opacity 20ms linear',
                                 }}
                             />
                         ) : (
-                            <div className={`w-full h-full flex items-center justify-center absolute inset-0 ${hasPreviewVideo ? 'group-hover:opacity-0' : ''
-                                }`}>
+                            <div className={`w-full h-full flex items-center justify-center absolute inset-0 transition-opacity duration-300 ${isVideoReady && shouldPlayVideo ? 'opacity-0 z-0' : 'opacity-100 z-20'}`}>
                                 <BookOpen className="h-16 w-16 text-primary/40 group-hover:text-primary/60" />
                             </div>
                         )}
 
-                        {/* Preview Video - CSS hover controlled visibility, React controls playback */}
-                        {hasPreviewVideo && (
-                            <>
-                                <div
-                                    className="relative w-full h-full overflow-visible absolute inset-0 opacity-0 group-hover:opacity-100"
-                                    style={{
-                                        transition: 'opacity 20ms linear',
-                                        pointerEvents: 'none',
-                                    }}
-                                >
-                                    <PreviewVideoPlayer
-                                        src={(course as any).previewVideoUrl}
-                                        shouldPlay={shouldPlayVideo}
-                                    />
-                                </div>
-
-                                {/* Free lesson button - outside overlay to remain clickable */}
-                                <div className="absolute bottom-3 left-3 z-10 opacity-0 group-hover:opacity-100" style={{ transition: 'opacity 20ms linear' }}>
-                                    <Button
-                                        size="sm"
-                                        className="bg-green-600 hover:bg-green-700 text-white shadow-lg"
-                                        data-testid={`button-free-lesson-${course.id}`}
-                                    >
-                                        <Play className="h-3 w-3 mr-1" />
-                                        БЕСПЛАТНЫЙ вводный урок
-                                    </Button>
-                                </div>
-                            </>
+                        {hasPreviewVideo && shouldPlayVideo && (
+                            <div
+                                className="relative w-full h-full overflow-visible absolute inset-0 animate-in fade-in duration-300"
+                                style={{
+                                    pointerEvents: 'none',
+                                }}
+                            >
+                                <PreviewVideoPlayer
+                                    src={(course as any).previewVideoUrl}
+                                    shouldPlay={shouldPlayVideo}
+                                    onVideoLoaded={() => setIsVideoReady(true)}
+                                />
+                            </div>
                         )}
 
+                        {hasPreviewVideo && (
+                            <div className="absolute bottom-3 left-3 z-10 opacity-0 group-hover:opacity-100" style={{ transition: 'opacity 200ms linear' }}>
+                                <Button
+                                    size="sm"
+                                    className="bg-green-600 hover:bg-green-700 text-white shadow-lg"
+                                    data-testid={`button-free-lesson-${course.id}`}
+                                >
+                                    <Play className="h-3 w-3 mr-1" />
+                                    БЕСПЛАТНЫЙ вводный урок
+                                </Button>
+                            </div>
+                        )}
 
-
-                        {/* Top right badges and favorite button */}
                         <div className="absolute top-3 right-3 flex items-center gap-2 z-10">
                             {isAuthenticated && !isPurchased && (
                                 <Button
@@ -248,7 +231,6 @@ const ShopDesktopCard: React.FC<ShopDesktopCardProps> = ({
                         </div>
                     </div>
 
-                    {/* Content Section */}
                     <CardHeader className="space-y-3 pb-4">
                         <h3
                             className="font-bold text-2xl group-hover:text-xl line-clamp-2"
@@ -257,7 +239,6 @@ const ShopDesktopCard: React.FC<ShopDesktopCardProps> = ({
                             <span>{course.title}</span>
                         </h3>
 
-                        {/* Rating and viewing counter */}
                         <div className="flex items-center justify-between gap-2 flex_wrap">
                             <StarRating
                                 rating={Number(course.rating || 0)}
@@ -265,58 +246,17 @@ const ShopDesktopCard: React.FC<ShopDesktopCardProps> = ({
                                 size="sm"
                             />
                             <ViewingCounter value={course.reviewsCount} courseId={course.id} />
-                            {isAdmin && (
-                                <div className="flex items-center gap-2 text-sm font-medium flex-wrap">
-                                    {sections.some(section =>
-                                        section.lessons?.some(lesson => lesson.processingStatus === 'failed')
-                                    ) && <span className="text-red-500" title="Есть уроки с ошибкой">Failed</span>}
-
-                                    {sections.some(section =>
-                                        section.lessons?.some(lesson => lesson.processingStatus === 'processing')
-                                    ) && <span className="text-purple-500" title="Уроки в очереди">Processing</span>}
-
-                                    {sections.some(section =>
-                                        section.lessons?.some(lesson => lesson.processingStatus === 'queued')
-                                    ) && <span className="text-orange-500" title="Уроки в очереди">In Queue</span>}
-
-                                    {sections.length > 0 &&
-                                        sections.some(section =>
-                                            section.lessons?.some(lesson => lesson.processingStatus === 'ready')
-                                        ) &&
-                                        !sections.some(section =>
-                                            section.lessons?.some(lesson =>
-                                                ['queued', 'processing', 'uploading', 'failed'].includes(lesson.processingStatus)
-                                            )
-                                        ) && (
-                                            <span className="text-green-500 font-medium" title="Все загруженные уроки готовы">
-                                                Ready
-                                            </span>
-                                        )}
-                                </div>
-                            )}
                         </div>
 
-                        <div className="flex flex-wrap gap-2">
-                            {platforms.map((platform) => (
-                                <Badge key={platform.id} variant="outline" className="text-sm font-medium">
-                                    {platform.name}
-                                </Badge>
-                            ))}
+                        <TagsMarquee
+                            items={items}
+                            isPaused={isTagsModalOpen}
+                            onClick={() => setIsTagsModalOpen(true)}
+                        />
 
-                            {/* Уровни — показываем уникальные по имени */}
-                            {allLevelBadges.map(item => <Badge key={item.id} variant="outline">{item.name}</Badge>)}
-
-
-                            {/* Год */}
-                            {course.year && (
-                                <Badge variant="outline" className="text-sm font-medium">
-                                    {course.year}
-                                </Badge>
-                            )}
-                        </div>
 
                         {course.description && (
-                            <p className="text-base text-muted-foreground line-clamp-2 leading-relaxed">
+                            <p className="text-base text-muted-foreground line-clamp-5 leading-relaxed">
                                 <div
                                     className="prose prose-sm dark:prose-invert max-w-none text-muted-foreground"
                                     data-testid="text-course-description"
@@ -324,7 +264,9 @@ const ShopDesktopCard: React.FC<ShopDesktopCardProps> = ({
                                 />
                             </p>
                         )}
+                    </CardHeader>
 
+                    <CardFooter className="flex flex-col gap-3 pt-0 mt-auto !items-start">
                         <div className="flex items-center gap-2">
                             <Avatar className="h-9 w-9 border-2 border-primary/20">
                                 <AvatarImage src={course.authorImage || undefined} />
@@ -337,12 +279,7 @@ const ShopDesktopCard: React.FC<ShopDesktopCardProps> = ({
                                 <span className="text-base font-medium">{course.authorName || "Неизвестен"}</span>
                             </div>
                         </div>
-                    </CardHeader>
 
-                    {/* Spacer to push footer to bottom */}
-                    <div className="flex-1" />
-
-                    <CardFooter className="flex flex-col gap-3 pt-0">
                         <div className="w-full px-1">
                             <span className="text-xs text-muted-foreground mb-2 block">Цена</span>
                             {course.isFree ? (
@@ -406,6 +343,69 @@ const ShopDesktopCard: React.FC<ShopDesktopCardProps> = ({
                         </Button>
                     </CardFooter>
                 </div>
+
+                {isTagsModalOpen && (
+                    <div
+                        className={cn(
+                            "absolute top-0 right-[-350px] mr-3 z-50 w-80",
+                            "transition-all duration-300 ease-out",
+                            isTagsModalOpen ? "opacity-100 translate-x-0" : "opacity-0 translate-x-4 pointer-events-none"
+                        )}
+                    >
+                        <GlassCard
+                            variant="default"
+                            glowColor="purple"
+                            hover={false}
+                            isActive={true}
+                        >
+                            <div className="flex items-center justify-between mb-4 py-[10px] px-[20px]">
+                                <h4 className="text-base font-semibold">Категории и уровни</h4>
+                                <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    className="h-7 w-7"
+                                    onClick={() => {
+                                        setIsTagsModalOpen(false)
+                                        setHoveredCourseId(null)
+                                    }}
+                                >
+                                    <X className="h-4 w-4" />
+                                </Button>
+                            </div>
+
+                            <div className="flex flex-wrap gap-2 mx-[20px] pb-[10px]">
+                                {platforms.map((platform) => (
+                                    <Badge
+                                        key={platform.id}
+                                        variant="outline"
+                                        className="text-xs font-medium px-2.5 py-0.5 bg-background/70"
+                                    >
+                                        {platform.name}
+                                    </Badge>
+                                ))}
+
+                                {allLevelBadges.map((item) => (
+                                    <Badge
+                                        key={item.id}
+                                        variant="outline"
+                                        className="text-xs font-medium px-2.5 py-0.5 bg-background/70"
+                                    >
+                                        {item.name}
+                                    </Badge>
+                                ))}
+
+                                {course.year && (
+                                    <Badge
+                                        variant="outline"
+                                        className="text-xs font-medium px-2.5 py-0.5 bg-background/70"
+                                    >
+                                        {course.year}
+                                    </Badge>
+                                )}
+                            </div>
+                        </GlassCard>
+                    </div>
+                )}
             </GlassCard>
         </div>
     )

@@ -25,7 +25,7 @@ interface VipTier {
 
 export default function VipPage() {
   const { isAuthenticated } = useAuth();
-  
+
   const { data: pageContent } = useQuery<VipPageContent>({
     queryKey: ["/api/vip-page-content"],
     placeholderData: {
@@ -55,7 +55,7 @@ export default function VipPage() {
 
       <main className="flex-1 container mx-auto px-3 md:px-4 py-4 md:py-8">
         <VipHeader
-          pageTitle={pageContent?.pageTitle || "VIP Пакеты"}
+          pageTitle={pageContent?.pageTitle || "VIP Паыкеты"}
           pageSubtitle={pageContent?.pageSubtitle || "Выберите подходящий тариф и получите эксклюзивный доступ к курсам, персональной поддержке и закрытым материалам для успешного обучения"}
         />
 

@@ -52,7 +52,7 @@ export const users = pgTable("users", {
   referralDiscount: integer("referral_discount").default(0).notNull(),
   isAdmin: boolean("is_admin").default(false).notNull(),
   isBlocked: boolean("is_blocked").default(false).notNull(),
-
+  lastViewedLessonId: varchar("last_viewed_lesson_id", { length: 36 }),
   require_2fa: boolean("require_2fa").default(false).notNull(),
 
   landingVisitId: varchar("landing_visit_id").references(() => landingVisits.id, { onDelete: 'set null' }),
@@ -64,6 +64,7 @@ export const users = pgTable("users", {
   registrationOs: varchar("registration_os"),
   registrationUserAgent: text("registration_user_agent"),
   lastActivityAt: timestamp("last_activity_at").defaultNow(),
+  lastReminderSent: timestamp("last_reminder_sent"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 }, (table) => [
@@ -489,13 +490,17 @@ export const userAwardsRelations = relations(userAwards, ({ one }) => ({
 }));
 
 
-export const balanceTransactions = pgTable("balance_transactions", {
-  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  userId: varchar("user_id").notNull().references(() => users.id, { onDelete: 'cascade' }),
-  amount: decimal("amount", { precision: 10, scale: 2 }).notNull(),
-  type: varchar("type", { length: 50 }).notNull(),
-  description: text("description"),
-  createdAt: timestamp("created_at").defaultNow(),
+export const balanceTransactions = pgTable('balance_transactions', {
+  id: varchar('id', { length: 36 }).primaryKey().$defaultFn(() => crypto.randomUUID()),
+  userId: varchar('user_id', { length: 36 }).notNull().references(() => users.id, { onDelete: 'cascade' }),
+  amount: decimal('amount', { precision: 10, scale: 2 }).notNull(),
+  type: varchar('type', { length: 50 }).notNull(),
+  description: text('description'),
+  status: varchar('status', { length: 50 }).notNull().default('pending'),
+  externalId: varchar('external_id', { length: 255 }),
+  currency: varchar('currency', { length: 10 }).notNull().default('RUB'),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow().$onUpdate(() => new Date()),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow()
 }, (table) => [
 
   index("idx_balance_transactions_user_id").on(table.userId),
@@ -620,17 +625,18 @@ export const lessonsRelations = relations(lessons, ({ one, many }) => ({
 
 export const lessonProgress = pgTable("lesson_progress", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  userId: varchar("user_id").notNull().references(() => users.id, { onDelete: 'cascade' }),
-  lessonId: varchar("lesson_id").notNull().references(() => lessons.id, { onDelete: 'cascade' }),
+  userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  lessonId: varchar("lesson_id").notNull().references(() => lessons.id, { onDelete: "cascade" }),
   completed: boolean("completed").default(false).notNull(),
   completedAt: timestamp("completed_at"),
   watchedSeconds: integer("watched_seconds").default(0),
-  lastAccessedAt: timestamp("last_accessed_at").defaultNow(),
+  lastWatchedSeconds: integer("last_watched_seconds").default(0),
+  lastAccessedAt: timestamp("last_accessed_at").defaultNow()
 }, (table) => [
   index("idx_lesson_progress_user").on(table.userId),
   index("idx_lesson_progress_lesson").on(table.lessonId),
-  unique("unique_user_lesson_progress").on(table.userId, table.lessonId),
-]);
+  unique("unique_user_lesson_progress").on(table.userId, table.lessonId)
+])
 
 export const lessonProgressRelations = relations(lessonProgress, ({ one }) => ({
   user: one(users, {
@@ -656,6 +662,7 @@ export const siteSettings = pgTable("site_settings", {
   headerSubtitle: text("header_subtitle"),
   referralBonusPercent: integer("referral_bonus_percent").default(30).notNull(),
   require2FA: varchar("require_2fa").default("disabled").notNull(),
+  skip2FAOnLogin: boolean("skip_2fa_on_login").default(false).notNull(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
 
@@ -974,7 +981,10 @@ export type UpsertUser = typeof users.$inferInsert;
 export type User = typeof users.$inferSelect;
 
 export type InsertCourse = z.infer<typeof insertCourseSchema>;
-export type Course = typeof courses.$inferSelect;
+export type Course = typeof courses.$inferSelect & {
+  previewVideoUrl?: string | null;
+  subcategoryIds?: string[];
+};
 
 export type InsertCourseSubcategory = z.infer<typeof insertCourseSubcategorySchema>;
 export type CourseSubcategory = typeof courseSubcategories.$inferSelect;
@@ -1670,3 +1680,110 @@ export const insertSchedulerRunSchema = createInsertSchema(schedulerRuns).omit({
 
 export type SchedulerRun = typeof schedulerRuns.$inferSelect;
 export type InsertSchedulerRun = z.infer<typeof insertSchedulerRunSchema>;
+
+
+export const chatConversations = pgTable("chat_conversations", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").references(() => users.id, { onDelete: 'cascade' }),
+  assigneeId: varchar("assignee_id").references(() => users.id),
+  status: varchar("status", { length: 20 }).notNull().default("open"),
+  priority: varchar("priority", { length: 20 }).notNull().default("normal"),
+  subject: text("subject"),
+  lastMessage: text("last_message"),
+  lastMessageAt: timestamp("last_message_at").defaultNow(),
+  unreadAdmin: integer("unread_admin").default(0).notNull(),
+  unreadUser: integer("unread_user").default(0).notNull(),
+  tags: text("tags").array().default(sql`ARRAY[]::text[]`),
+  note: text("note"),
+  guestName: varchar("guest_name", { length: 100 }),
+  guestToken: varchar("guest_token", { length: 64 }),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+}, (table) => [
+  index("idx_chat_conv_user").on(table.userId),
+  index("idx_chat_conv_assignee").on(table.assigneeId),
+  index("idx_chat_conv_status").on(table.status),
+  index("idx_chat_conv_guest").on(table.guestToken),
+]);
+
+export const chatConversationsRelations = relations(chatConversations, ({ one, many }) => ({
+  user: one(users, {
+    fields: [chatConversations.userId],
+    references: [users.id],
+  }),
+  assignee: one(users, {
+    fields: [chatConversations.assigneeId],
+    references: [users.id],
+    relationName: "assignee",
+  }),
+  messages: many(chatMessages),
+}));
+
+export const chatMessages = pgTable("chat_messages", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  conversationId: varchar("conversation_id").notNull().references(() => chatConversations.id, { onDelete: 'cascade' }),
+  senderId: varchar("sender_id").references(() => users.id, { onDelete: 'cascade' }),
+  role: varchar("role", { length: 10 }).notNull(),
+  text: text("text").notNull(),
+  isRead: boolean("is_read").default(false).notNull(),
+  reactions: jsonb("reactions").$type<string[]>().default([]),
+  fileUrl: text("file_url"),
+  fileName: text("file_name"),
+  fileType: varchar("file_type", { length: 100 }),
+  createdAt: timestamp("created_at").defaultNow(),
+}, (table) => [
+  index("idx_chat_msg_conv").on(table.conversationId),
+  index("idx_chat_msg_sender").on(table.senderId),
+]);
+
+export const chatMessagesRelations = relations(chatMessages, ({ one }) => ({
+  conversation: one(chatConversations, {
+    fields: [chatMessages.conversationId],
+    references: [chatConversations.id],
+  }),
+  sender: one(users, {
+    fields: [chatMessages.senderId],
+    references: [users.id],
+  }),
+}));
+
+export const chatTemplates = pgTable("chat_templates", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  category: varchar("category", { length: 50 }).notNull(),
+  title: varchar("title", { length: 200 }).notNull(),
+  text: text("text").notNull(),
+  uses: integer("uses").default(0).notNull(),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const chatSettings = pgTable("chat_settings", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  greeting: text("greeting").notNull().default("Добрый день! Чем могу помочь?"),
+  awayMessage: text("away_message").notNull().default("Мы сейчас не в сети. Ответим в ближайшее время."),
+  autoAssign: boolean("auto_assign").default(true).notNull(),
+  workingHours: boolean("working_hours").default(true).notNull(),
+  botEnabled: boolean("bot_enabled").default(false).notNull(),
+  telegramBotToken: text("telegram_bot_token"),
+  telegramChatId: text("telegram_chat_id"),
+  telegramEnabled: boolean("telegram_enabled").default(false).notNull(),
+  telegramNotifyNewConversation: boolean("telegram_notify_new_conversation").default(true).notNull(),
+  telegramNotifyNewMessage: boolean("telegram_notify_new_message").default(true).notNull(),
+  telegramNotifyPurchase: boolean("telegram_notify_purchase").default(true).notNull(),
+  telegramNotifyTopup: boolean("telegram_notify_topup").default(true).notNull(),
+  telegramNotifyReview: boolean("telegram_notify_review").default(true).notNull(),
+  telegramNotifyCourseRequest: boolean("telegram_notify_course_request").default(true).notNull(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertChatConversationSchema = createInsertSchema(chatConversations).omit({ id: true, createdAt: true, updatedAt: true });
+export const insertChatMessageSchema = createInsertSchema(chatMessages).omit({ id: true, createdAt: true });
+export const insertChatTemplateSchema = createInsertSchema(chatTemplates).omit({ id: true, createdAt: true, updatedAt: true });
+
+export type ChatConversation = typeof chatConversations.$inferSelect;
+export type InsertChatConversation = z.infer<typeof insertChatConversationSchema>;
+export type ChatMessage = typeof chatMessages.$inferSelect;
+export type InsertChatMessage = z.infer<typeof insertChatMessageSchema>;
+export type ChatTemplate = typeof chatTemplates.$inferSelect;
+export type InsertChatTemplate = z.infer<typeof insertChatTemplateSchema>;
+export type ChatSettings = typeof chatSettings.$inferSelect;

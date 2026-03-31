@@ -1,23 +1,16 @@
+version: '3.8'
+
 services:
   app:
+    restart: unless-stopped
     build:
       context: .
-      target: dev
+      target: dev #
     container_name: coursenexus_app_dev
     ports:
-      - "5002:5002"
+      - "5000:5000"
     env_file:
       - .env
-    environment:
-      - NODE_ENV=development
-      - PORT=5002
-      - DB_DRIVER=pg
-      - DATABASE_URL=postgresql://coursenexus:coursenexus@db:5432/coursenexus
-      - PUBLIC_OBJECT_SEARCH_PATHS=${PUBLIC_OBJECT_SEARCH_PATHS:-/dev-bucket/public}
-      - PRIVATE_OBJECT_DIR=${PRIVATE_OBJECT_DIR:-/dev-bucket/private}
-      - BUNNY_STORAGE_ZONE=${BUNNY_STORAGE_ZONE:-your-zone}
-      - BUNNY_STORAGE_API_KEY=${BUNNY_STORAGE_API_KEY:-dev-key}
-      - BUNNY_STORAGE_HOST=${BUNNY_STORAGE_HOST:-storage.bunnycdn.com}
     volumes:
       - .:/app
       - /app/node_modules
@@ -31,7 +24,22 @@ services:
       - POSTGRES_DB=coursenexus
       - POSTGRES_USER=coursenexus
       - POSTGRES_PASSWORD=coursenexus
-    ports:
-      - "55432:5432"
     volumes:
       - ./database_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+
+  pay-bot:
+    build:
+      context: .
+      target: production
+    container_name: pay_telegram_bot
+    command: npx tsx server/pay-telegram-bot.ts
+    env_file:
+      - .env
+    volumes:
+      - .:/app
+      - /app/node_modules
+    depends_on:
+      - db
+    restart: unless-stopped

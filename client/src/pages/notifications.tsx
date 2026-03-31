@@ -76,7 +76,7 @@ export default function NotificationsPage() {
     },
     onSuccess: (_, notificationId) => {
       // Optimistically update local state
-      setAllNotifications(prev => 
+      setAllNotifications(prev =>
         prev.map(n => n.id === notificationId ? { ...n, isRead: true } : n)
       );
       queryClient.invalidateQueries({ queryKey: ['/api/notifications/unread-count'] });
@@ -139,6 +139,8 @@ export default function NotificationsPage() {
         return `/package/${notification.relatedId}`;
       case 'course_request':
         return `/sniper`;
+      case 'shop':
+        return `/shop`;
       default:
         return null;
     }
@@ -153,7 +155,7 @@ export default function NotificationsPage() {
   return (
     <div className="min-h-screen flex flex-col overflow-x-hidden">
       <Header />
-      
+
       <main className="flex-1 container mx-auto px-4 py-8 flex flex-col overflow-hidden">
         <div className="max-w-4xl mx-auto w-full flex flex-col h-full">
           {/* Header */}
@@ -194,139 +196,139 @@ export default function NotificationsPage() {
                       {unreadNotifications.length}
                     </Badge>
                   </h2>
-              {unreadNotifications.map((notification) => {
-                const link = getNotificationLink(notification);
-                return (
-                  <Card 
-                    key={notification.id} 
-                    className="border-l-4 border-l-blue-500 bg-blue-50/50 dark:bg-blue-950/20"
-                    data-testid={`notification-unread-${notification.id}`}
-                  >
-                    <CardHeader>
-                      <div className="flex items-start justify-between gap-4">
-                        <div className="flex items-start gap-3 flex-1">
-                          <div className="mt-1">
-                            {getNotificationIcon(notification.type)}
-                          </div>
-                          <div className="flex-1 min-w-0">
-                            <CardTitle className="text-lg force-wrap">
-                              {notification.title}
-                            </CardTitle>
-                            <CardDescription className="mt-1 force-wrap">
-                              {notification.message}
-                            </CardDescription>
-                            <p className="text-xs text-muted-foreground mt-2">
-                              {formatDistanceToNow(new Date(notification.createdAt), { 
-                                addSuffix: true,
-                                locale: ru 
-                              })}
-                            </p>
-                          </div>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          {link && (
-                            <Link href={link}>
-                              <Button 
-                                variant="outline" 
+                  {unreadNotifications.map((notification) => {
+                    const link = getNotificationLink(notification);
+                    return (
+                      <Card
+                        key={notification.id}
+                        className="border-l-4 border-l-blue-500 bg-blue-50/50 dark:bg-blue-950/20"
+                        data-testid={`notification-unread-${notification.id}`}
+                      >
+                        <CardHeader>
+                          <div className="flex flex-col gap-4">
+                            <div className="flex items-start gap-3">
+                              <div className="mt-1">
+                                {getNotificationIcon(notification.type)}
+                              </div>
+                              <div className="flex-1 min-w-0">
+                                <CardTitle className="text-lg force-wrap">
+                                  {notification.title}
+                                </CardTitle>
+                                <CardDescription className="mt-1 force-wrap">
+                                  {notification.message}
+                                </CardDescription>
+                                <p className="text-xs text-muted-foreground mt-2">
+                                  {formatDistanceToNow(new Date(notification.createdAt), {
+                                    addSuffix: true,
+                                    locale: ru
+                                  })}
+                                </p>
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              {link && (
+                                <Link href={link}>
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    data-testid={`button-view-${notification.id}`}
+                                  >
+                                    Перейти
+                                  </Button>
+                                </Link>
+                              )}
+                              <Button
+                                variant="ghost"
                                 size="sm"
-                                data-testid={`button-view-${notification.id}`}
+                                onClick={() => markAsReadMutation.mutate(notification.id)}
+                                disabled={markAsReadMutation.isPending}
+                                data-testid={`button-mark-read-${notification.id}`}
+                                title="Пометить как прочитанное"
                               >
-                                Перейти
+                                <Check className="h-4 w-4" />
                               </Button>
-                            </Link>
-                          )}
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => markAsReadMutation.mutate(notification.id)}
-                            disabled={markAsReadMutation.isPending}
-                            data-testid={`button-mark-read-${notification.id}`}
-                            title="Пометить как прочитанное"
-                          >
-                            <Check className="h-4 w-4" />
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => setDeleteNotificationId(notification.id)}
-                            data-testid={`button-delete-${notification.id}`}
-                            title="Удалить"
-                          >
-                            <Trash2 className="h-4 w-4 text-destructive" />
-                          </Button>
-                        </div>
-                      </div>
-                    </CardHeader>
-                  </Card>
-                );
-              })}
-            </div>
-          )}
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => setDeleteNotificationId(notification.id)}
+                                data-testid={`button-delete-${notification.id}`}
+                                title="Удалить"
+                              >
+                                <Trash2 className="h-4 w-4 text-destructive" />
+                              </Button>
+                            </div>
+                          </div>
+                        </CardHeader>
+                      </Card>
+                    );
+                  })}
+                </div>
+              )}
 
-          {/* Read Notifications */}
-          {readNotifications.length > 0 && (
-            <div className="space-y-4">
-              <h2 className="text-xl font-semibold text-muted-foreground">
-                Прочитанные
-              </h2>
-              {readNotifications.map((notification) => {
-                const link = getNotificationLink(notification);
-                return (
-                  <Card 
-                    key={notification.id}
-                    className="opacity-60 hover:opacity-100 transition-opacity"
-                    data-testid={`notification-read-${notification.id}`}
-                  >
-                    <CardHeader>
-                      <div className="flex items-start justify-between gap-4">
-                        <div className="flex items-start gap-3 flex-1">
-                          <div className="mt-1">
-                            {getNotificationIcon(notification.type)}
-                          </div>
-                          <div className="flex-1 min-w-0">
-                            <CardTitle className="text-lg force-wrap">
-                              {notification.title}
-                            </CardTitle>
-                            <CardDescription className="mt-1 force-wrap">
-                              {notification.message}
-                            </CardDescription>
-                            <p className="text-xs text-muted-foreground mt-2">
-                              {formatDistanceToNow(new Date(notification.createdAt), { 
-                                addSuffix: true,
-                                locale: ru 
-                              })}
-                            </p>
-                          </div>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          {link && (
-                            <Link href={link}>
-                              <Button 
-                                variant="outline" 
+              {/* Read Notifications */}
+              {readNotifications.length > 0 && (
+                <div className="space-y-4">
+                  <h2 className="text-xl font-semibold text-muted-foreground">
+                    Прочитанные
+                  </h2>
+                  {readNotifications.map((notification) => {
+                    const link = getNotificationLink(notification);
+                    return (
+                      <Card
+                        key={notification.id}
+                        className="opacity-60 hover:opacity-100 transition-opacity"
+                        data-testid={`notification-read-${notification.id}`}
+                      >
+                        <CardHeader>
+                          <div className="flex flex-col gap-4">
+                            <div className="flex items-start gap-3">
+                              <div className="mt-1">
+                                {getNotificationIcon(notification.type)}
+                              </div>
+                              <div className="flex-1 min-w-0">
+                                <CardTitle className="text-lg force-wrap">
+                                  {notification.title}
+                                </CardTitle>
+                                <CardDescription className="mt-1 force-wrap">
+                                  {notification.message}
+                                </CardDescription>
+                                <p className="text-xs text-muted-foreground mt-2">
+                                  {formatDistanceToNow(new Date(notification.createdAt), {
+                                    addSuffix: true,
+                                    locale: ru
+                                  })}
+                                </p>
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              {link && (
+                                <Link href={link}>
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    data-testid={`button-view-${notification.id}`}
+                                  >
+                                    Перейти
+                                  </Button>
+                                </Link>
+                              )}
+                              <Button
+                                variant="ghost"
                                 size="sm"
-                                data-testid={`button-view-${notification.id}`}
+                                onClick={() => setDeleteNotificationId(notification.id)}
+                                data-testid={`button-delete-${notification.id}`}
+                                title="Удалить"
                               >
-                                Перейти
+                                <Trash2 className="h-4 w-4 text-destructive" />
                               </Button>
-                            </Link>
-                          )}
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => setDeleteNotificationId(notification.id)}
-                            data-testid={`button-delete-${notification.id}`}
-                            title="Удалить"
-                          >
-                            <Trash2 className="h-4 w-4 text-destructive" />
-                          </Button>
-                        </div>
-                      </div>
-                    </CardHeader>
-                  </Card>
-                );
-              })}
-            </div>
-          )}
+                            </div>
+                          </div>
+                        </CardHeader>
+                      </Card>
+                    );
+                  })}
+                </div>
+              )}
 
               {/* Loading State */}
               {isLoading && offset === 0 && (
@@ -345,7 +347,7 @@ export default function NotificationsPage() {
               {/* Load More Button */}
               {hasMore && !isLoading && (
                 <div className="flex justify-center py-6">
-                  <Button 
+                  <Button
                     onClick={handleLoadMore}
                     variant="outline"
                     data-testid="button-load-more"

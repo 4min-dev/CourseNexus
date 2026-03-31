@@ -6,3 +6,10 @@ vite.config.ts.*
 *.tar.gz
 .env
 database_data
+.vscode
+.npmrc
+temp# Local perf artifacts / traces / helper scripts (do not commit)
+perf-artifacts/
+LANDING-CPU-ANALYSIS.md
+scripts/perf/
+server/dev-seed.ts

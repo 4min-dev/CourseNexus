@@ -8,8 +8,10 @@ export function ParallaxBackground() {
   const targetX = useRef(0);
   const targetY = useRef(0);
   const rafId = useRef<number>();
+  const lastFrameTs = useRef<number>(0);
   const layersCache = useRef<Array<{ element: HTMLElement; speed: number }>>([]);
   const [isVisible, setIsVisible] = useState(false);
+  const [isIdle, setIsIdle] = useState(false);
 
   useEffect(() => {
     const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -46,6 +48,7 @@ export function ParallaxBackground() {
         rafId.current = undefined;
       }
       layersCache.current = [];
+      setIsIdle(false);
       return;
     }
 
@@ -61,7 +64,7 @@ export function ParallaxBackground() {
       targetY.current = e.clientY;
     };
 
-    const animate = () => {
+    const animate = (ts: number) => {
       if (!containerRef.current || !isVisible) {
         if (rafId.current) {
           cancelAnimationFrame(rafId.current);
@@ -69,6 +72,22 @@ export function ParallaxBackground() {
         }
         return;
       }
+
+      if (document.visibilityState !== 'visible') {
+        if (rafId.current) {
+          cancelAnimationFrame(rafId.current);
+          rafId.current = undefined;
+        }
+        return;
+      }
+
+      // Throttle: we don't need 60fps for a decorative background.
+      // ~30fps is visually close, significantly cheaper.
+      if (lastFrameTs.current && ts - lastFrameTs.current < 33) {
+        rafId.current = requestAnimationFrame(animate);
+        return;
+      }
+      lastFrameTs.current = ts;
 
       if (layersCache.current.length === 0) {
         const elements = containerRef.current.querySelectorAll('[data-speed]');
@@ -94,11 +113,38 @@ export function ParallaxBackground() {
       rafId.current = requestAnimationFrame(animate);
     };
 
+    const handleVisibility = () => {
+      if (document.visibilityState !== 'visible') {
+        if (rafId.current) {
+          cancelAnimationFrame(rafId.current);
+          rafId.current = undefined;
+        }
+        setIsIdle(true);
+        return;
+      }
+      setIsIdle(false);
+      if (!rafId.current) {
+        lastFrameTs.current = 0;
+        rafId.current = requestAnimationFrame(animate);
+      }
+    };
+
+    // Initialize position to avoid a big first-frame jump from 0,0.
+    const centerX = window.innerWidth / 2;
+    const centerY = window.innerHeight / 2;
+    targetX.current = centerX;
+    targetY.current = centerY;
+    mouseX.current = centerX;
+    mouseY.current = centerY;
+
     window.addEventListener('mousemove', handleMouseMove, { passive: true });
+    document.addEventListener('visibilitychange', handleVisibility);
+    setIsIdle(false);
     rafId.current = requestAnimationFrame(animate);
 
     return () => {
       window.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('visibilitychange', handleVisibility);
       if (rafId.current) {
         cancelAnimationFrame(rafId.current);
         rafId.current = undefined;
@@ -110,6 +156,7 @@ export function ParallaxBackground() {
   return (
     <div
       ref={containerRef}
+      data-parallax-idle={isIdle ? "1" : "0"}
       className="absolute inset-0 overflow-hidden pointer-events-none"
       style={{
         contain: 'layout style paint',

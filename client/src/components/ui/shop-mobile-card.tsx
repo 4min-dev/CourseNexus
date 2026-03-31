@@ -1,4 +1,4 @@
-import React from 'react'
+import React, { useRef, useEffect, useState } from 'react'
 import { GlassCard } from '../GlassCard';
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -11,8 +11,12 @@ import { CardFooter, CardHeader } from './card';
 import { formatPrice } from '@/lib/formatPrice';
 import { Category, Course, Subcategory } from '@shared/schema';
 import { useQuery } from '@tanstack/react-query';
-import { htmlToText } from '@/lib/utils';
+import { cn, htmlToText } from '@/lib/utils';
 import { useLocation } from 'wouter';
+import { TagsMarquee } from './tags-marquee';
+
+
+
 
 type ShopMobileCardProps = {
     course: Course,
@@ -21,9 +25,12 @@ type ShopMobileCardProps = {
     favoritedCourseIds: Set<string>,
     subcategories?: Subcategory[],
     categories?: Category[],
-    activeMobileCourseId: string | null,
+    isActive: boolean,
     isAuthenticated: boolean,
     handleToggleFavorite: (courseId: string, e: React.MouseEvent) => void,
+    priority?: boolean,
+    isScrolling?: boolean,
+    disablePreviewVideo?: boolean,
 }
 
 const ShopMobileCard: React.FC<ShopMobileCardProps> = ({
@@ -33,33 +40,77 @@ const ShopMobileCard: React.FC<ShopMobileCardProps> = ({
     favoritedCourseIds,
     subcategories,
     categories,
-    activeMobileCourseId,
+    isActive,
     isAuthenticated,
-    handleToggleFavorite
+    handleToggleFavorite,
+    priority,
+    isScrolling = false,
+    disablePreviewVideo = false,
 }) => {
 
-    // Один запрос только для текущего курса
-    const { data: subcategoryIds = [], isLoading: isLoadingSubcats } = useQuery<string[]>({
-        queryKey: ["/api/admin/courses", course.id, "subcategories"],
-        queryFn: async () => {
-            const response = await fetch(`/api/admin/courses/${course.id}/subcategories`, {
-                credentials: "include",
-            });
-            if (!response.ok) return [];
-            return response.json();
-        },
-        staleTime: 5 * 60 * 1000,
-        enabled: !!course.id,
-    });
+    const subcategoryIds = course.subcategoryIds || [];
 
     const [location, setLocation] = useLocation();
+
+
 
     const isPurchased = purchasedCourseIds.has(course.id);
     const isFavorited = favoritedCourseIds.has(course.id);
     const price = parseFloat(course.price || "0");
-    const hasPreviewVideo = !!(course as any).previewVideoUrl;
-    const isActive = activeMobileCourseId === course.id;
-    const shouldPlayVideo = isActive && hasPreviewVideo;
+    const hasPreviewVideo = !disablePreviewVideo && !!(course as any).previewVideoUrl;
+
+    const [isInView, setIsInView] = useState(true);
+    const cardRootRef = useRef<HTMLDivElement | null>(null);
+    const shouldPlayVideo = isActive && !isScrolling && hasPreviewVideo && isInView;
+
+    // ✅ ОПТИМИЗАЦИЯ: Lazy loading видео - рендерим только после первой активации
+    const [hasBeenActive, setHasBeenActive] = useState(false);
+
+    // ✅ НОВОЕ: Отслеживаем загрузку видео, чтобы показывать изображение пока видео грузится
+    const [isVideoReady, setIsVideoReady] = useState(false);
+
+    // ✅ RETRY: Счётчик попыток загрузки изображения
+    const [imageRetryCount, setImageRetryCount] = useState(0);
+    const [imageError, setImageError] = useState(false);
+    const MAX_IMAGE_RETRIES = 3;
+
+    // Генерируем src с cache-busting при retry
+    const imageSrc = React.useMemo(() => {
+        if (!course.thumbnailImage) return '';
+        if (imageRetryCount === 0) return course.thumbnailImage;
+        // Добавляем параметр для обхода кэша при retry
+        const separator = course.thumbnailImage.includes('?') ? '&' : '?';
+        return `${course.thumbnailImage}${separator}_retry=${imageRetryCount}`;
+    }, [course.thumbnailImage, imageRetryCount]);
+
+    // Обработчик ошибки загрузки изображения
+    const handleImageError = React.useCallback(() => {
+        if (imageRetryCount < MAX_IMAGE_RETRIES) {
+            // Retry с задержкой
+            setTimeout(() => {
+                setImageRetryCount(prev => prev + 1);
+            }, 1000);
+        } else {
+            setImageError(true);
+        }
+    }, [imageRetryCount]);
+
+    // Сброс retry при смене курса
+    useEffect(() => {
+        setImageRetryCount(0);
+        setImageError(false);
+    }, [course.id]);
+
+    useEffect(() => {
+        if (isActive && !hasBeenActive) {
+            setHasBeenActive(true);
+        }
+    }, [isActive, hasBeenActive]);
+
+    // Reset isVideoReady когда меняется курс
+    useEffect(() => {
+        setIsVideoReady(false);
+    }, [course.id]);
 
     // Платформы (родительские категории из подкатегорий)
     const platforms = React.useMemo(() => {
@@ -69,7 +120,7 @@ const ShopMobileCard: React.FC<ShopMobileCardProps> = ({
             subcategoryIds.includes(sub.id) && sub.isActive
         );
 
-        const categoryIds = [...new Set(matchedSubs.map(sub => sub.categoryId))];
+        const categoryIds = Array.from(new Set(matchedSubs.map(sub => sub.categoryId)));
 
         return categories.filter(cat =>
             categoryIds.includes(cat.id) && cat.isActive
@@ -96,12 +147,43 @@ const ShopMobileCard: React.FC<ShopMobileCardProps> = ({
         ? selectedSubcategories
         : fallbackCategories;
 
+    useEffect(() => {
+        if (typeof IntersectionObserver === 'undefined') return;
+        if (!cardRootRef.current) return;
+
+        const observer = new IntersectionObserver(
+            ([entry]) => {
+                setIsInView(entry.isIntersecting);
+            },
+            {
+                threshold: 0.05,
+                rootMargin: '120px 0px'
+            }
+        );
+
+        observer.observe(cardRootRef.current);
+        return () => observer.disconnect();
+    }, []);
+
+    const allItems = React.useMemo(() => {
+
+        const items: Array<{ id?: string; name: string }> = [];
+
+        platforms.forEach(p => items.push({ id: p.id, name: p.name }))
+        allLevelBadges.forEach(l => items.push({ id: l.id, name: l.name }))
+        if (course.year) {
+            items.push({ name: String(course.year) })
+        }
+
+        return items;
+    }, [platforms, allLevelBadges, course.year]);
+
     return (
-        <div key={course.id}>
+        <div key={course.id} className="h-full" ref={cardRootRef}>
             <GlassCard
                 variant="default"
-                glowColor="purple"
-                hover={true}
+                glowColor="blue"
+                hover={false}
                 isActive={isActive}
                 className="flex flex-col h-full w-full overflow-hidden transition-all duration-300"
                 data-testid={`card-course-${course.id}`}
@@ -111,39 +193,40 @@ const ShopMobileCard: React.FC<ShopMobileCardProps> = ({
                     <div className="bg-gradient-to-br from-primary/10 to-primary/5 relative overflow-hidden aspect-video w-full"
                         style={{ backfaceVisibility: 'hidden', transform: 'translateZ(0)' }}>
                         {/* Thumbnail */}
-                        {course.thumbnailImage ? (
+                        {course.thumbnailImage && !imageError ? (
                             <img
-                                src={course.thumbnailImage}
+                                src={imageSrc}
                                 alt={course.title}
-                                loading="lazy"
+                                loading={priority ? "eager" : "lazy"}
+                                {...({ fetchpriority: priority ? "high" : "auto" } as any)}
                                 decoding="async"
-                                className={`w-full h-full object-cover absolute inset-0 transition-opacity duration-300 ${isActive && hasPreviewVideo ? 'opacity-0' : 'opacity-100'
+                                onError={handleImageError}
+                                className={`w-full h-full object-cover absolute inset-0 transition-opacity duration-300 ${isVideoReady && isActive ? 'opacity-0 z-0' : 'opacity-100 z-20'
                                     }`}
                                 style={{ backfaceVisibility: 'hidden', transform: 'translateZ(0)' }}
                             />
                         ) : (
-                            <div className={`w-full h-full flex items-center justify-center absolute inset-0 transition-opacity duration-300 ${isActive && hasPreviewVideo ? 'opacity-0' : 'opacity-100'
+                            <div className={`w-full h-full flex items-center justify-center absolute inset-0 transition-opacity duration-300 ${isVideoReady && isActive ? 'opacity-0 z-0' : 'opacity-100 z-20'
                                 }`}>
                                 <BookOpen className="h-16 w-16 text-primary/40" />
                             </div>
                         )}
 
-                        {/* Preview Video */}
-                        {hasPreviewVideo && (
+                        {/* Preview Video - lazy loaded only after first activation */}
+                        {hasBeenActive && hasPreviewVideo && (
                             <>
                                 <div
-                                    className={`relative w-full h-full overflow-visible absolute inset-0 transition-opacity duration-300 ${isActive ? 'opacity-100' : 'opacity-0'
-                                        }`}
+                                    className="relative w-full h-full overflow-visible absolute inset-0 animate-in fade-in duration-300"
                                     style={{ pointerEvents: 'none' }}
                                 >
                                     <PreviewVideoPlayer
                                         src={(course as any).previewVideoUrl}
                                         shouldPlay={shouldPlayVideo}
+                                        onVideoLoaded={() => setIsVideoReady(true)}
                                     />
                                 </div>
 
-                                <div className={`absolute bottom-3 left-3 z-10 transition-opacity duration-300 ${isActive ? 'opacity-100' : 'opacity-0'
-                                    }`}>
+                                <div className="absolute bottom-3 left-3 z-10 animate-in fade-in duration-300">
                                     <Button size="sm" className="bg-green-600 hover:bg-green-700 text-white shadow-lg">
                                         <Play className="h-3 w-3 mr-1" />
                                         Вводный урок
@@ -159,8 +242,8 @@ const ShopMobileCard: React.FC<ShopMobileCardProps> = ({
                                     size="icon"
                                     variant="ghost"
                                     className={`h-8 w-8 rounded-full shadow-lg ${isFavorited
-                                            ? 'bg-red-500 hover:bg-red-600 text-white'
-                                            : 'bg-white/90 hover:bg-white text-red-500'
+                                        ? 'bg-red-500 hover:bg-red-600 text-white'
+                                        : 'bg-white/90 hover:bg-white text-red-500'
                                         }`}
                                     onClick={(e) => {
                                         e.stopPropagation();
@@ -189,7 +272,10 @@ const ShopMobileCard: React.FC<ShopMobileCardProps> = ({
 
                     {/* Content */}
                     <CardHeader className="space-y-3 pb-4">
-                        <h3 className="font-bold text-2xl line-clamp-2" data-testid={`text-course-title-${course.id}`}>
+                        <h3
+                            className="font-bold text-2xl leading-tight line-clamp-2 min-h-[3.5rem]"
+                            data-testid={`text-course-title-${course.id}`}
+                        >
                             {course.title}
                         </h3>
 
@@ -198,31 +284,16 @@ const ShopMobileCard: React.FC<ShopMobileCardProps> = ({
                             <ViewingCounter value={course.reviewsCount} courseId={course.id} />
                         </div>
 
-                        <div className="flex flex-wrap gap-2">
-                            {/* Платформы */}
-                            {platforms.map((platform) => (
-                                <Badge key={platform.id} variant="outline" className="text-sm font-medium">
-                                    {platform.name}
-                                </Badge>
-                            ))}
+                        <TagsMarquee
+                            items={allItems}
+                            isPaused={!isInView}
+                            repeatCount={3}
+                            itemClassName="mx-1.5 bg-background/80"
+                        />
 
-                            {/* Уровни / подкатегории */}
-                            {allLevelBadges.map((item) => (
-                                <Badge key={item.id} variant="outline" className="text-sm font-medium">
-                                    {item.name}
-                                </Badge>
-                            ))}
-
-                            {/* Год */}
-                            {course.year && (
-                                <Badge variant="outline" className="text-sm font-medium">
-                                    {course.year}
-                                </Badge>
-                            )}
-                        </div>
 
                         {course.description && (
-                            <p className="text-base text-muted-foreground line-clamp-2 leading-relaxed">
+                            <p className="text-base text-muted-foreground line-clamp-5 leading-relaxed">
                                 {htmlToText(course.description)}
                             </p>
                         )}
@@ -268,15 +339,15 @@ const ShopMobileCard: React.FC<ShopMobileCardProps> = ({
 
                         <Button
                             className={`w-full relative overflow-hidden backdrop-blur-sm font-semibold shadow-lg transition-all duration-300 group ${isPurchased
-                                    ? 'bg-white/5 border-2 border-blue-500/30 text-white hover:shadow-blue-500/50'
-                                    : 'bg-white/5 border-2 border-purple-500/30 text-white hover:shadow-purple-500/50'
+                                ? 'bg-white/5 border-2 border-blue-500/30 text-white hover:shadow-blue-500/50'
+                                : 'bg-white/5 border-2 border-purple-500/30 text-white hover:shadow-purple-500/50'
                                 }`}
                             size="lg"
                             onClick={() => setLocation(`/course/${course.id}`)}
                         >
                             <div className={`absolute inset-0 transition-opacity duration-700 ${isPurchased
-                                    ? 'bg-gradient-to-r from-blue-600 via-cyan-600 to-teal-600 opacity-0 group-hover:opacity-100'
-                                    : 'bg-gradient-to-r from-purple-600 via-fuchsia-600 to-pink-600 opacity-0 group-hover:opacity-100'
+                                ? 'bg-gradient-to-r from-blue-600 via-cyan-600 to-teal-600 opacity-0 group-hover:opacity-100'
+                                : 'bg-gradient-to-r from-purple-600 via-fuchsia-600 to-pink-600 opacity-0 group-hover:opacity-100'
                                 }`} />
                             <span className="relative flex items-center justify-center">
                                 {isPurchased ? (
@@ -293,4 +364,4 @@ const ShopMobileCard: React.FC<ShopMobileCardProps> = ({
     )
 }
 
-export default ShopMobileCard
+export default React.memo(ShopMobileCard)
